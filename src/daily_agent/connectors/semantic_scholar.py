@@ -1,0 +1,93 @@
+from __future__ import annotations
+
+import os
+from datetime import datetime, timedelta, timezone
+from typing import Any
+
+import httpx
+
+from daily_agent.config import AppConfig, DomainConfig
+from daily_agent.models import DigestItem
+
+SEMANTIC_SCHOLAR_SEARCH_URL = "https://api.semanticscholar.org/graph/v1/paper/search"
+FIELDS = "paperId,title,abstract,url,year,publicationDate,venue,citationCount,influentialCitationCount,authors,externalIds,openAccessPdf,fieldsOfStudy"
+
+
+def fetch_semantic_scholar(config: AppConfig, target_date: datetime | None = None, window_days: int | None = None) -> list[DigestItem]:
+    source_config = config.sources.get("semantic_scholar", {}) or {}
+    if not source_config.get("enabled", False):
+        return []
+    target = target_date or datetime.now(timezone.utc)
+    days = int(window_days or source_config.get("recent_days", config.sources.get("arxiv", {}).get("recent_days", 7)))
+    max_results = int(source_config.get("max_results_per_query", 10))
+    timeout = float(source_config.get("timeout_seconds", 30))
+    cutoff = (target - timedelta(days=days)).date().isoformat()
+    items: list[DigestItem] = []
+    seen_queries: set[str] = set()
+    with httpx.Client(timeout=timeout, follow_redirects=True, headers=_headers(source_config)) as client:
+        for domain in config.domains:
+            for query in _queries(domain):
+                if query in seen_queries:
+                    continue
+                seen_queries.add(query)
+                try:
+                    response = client.get(SEMANTIC_SCHOLAR_SEARCH_URL, params={"query": query, "limit": max_results, "fields": FIELDS})
+                    response.raise_for_status()
+                except httpx.HTTPError:
+                    continue
+                for paper in response.json().get("data", []) or []:
+                    item = _paper_to_item(paper, domain)
+                    if not item.published_at or item.published_at >= cutoff:
+                        items.append(item)
+    return items
+
+
+def _headers(source_config: dict[str, Any]) -> dict[str, str]:
+    headers = {"User-Agent": "Daily-Agent/0.1"}
+    env_name = str(source_config.get("api_key_env") or "SEMANTIC_SCHOLAR_API_KEY")
+    token = os.environ.get(env_name)
+    if token:
+        headers["x-api-key"] = token
+    return headers
+
+
+def _queries(domain: DomainConfig) -> list[str]:
+    return domain.include_keywords or domain.github_queries or [domain.name]
+
+
+def _paper_to_item(paper: dict[str, Any], domain: DomainConfig) -> DigestItem:
+    external = paper.get("externalIds") or {}
+    fields = [str(item) for item in paper.get("fieldsOfStudy", []) or [] if item]
+    doi = _normalize_doi(external.get("DOI"))
+    paper_id = str(paper.get("paperId") or "")
+    return DigestItem(
+        id=paper_id,
+        source="semantic_scholar",
+        item_type="paper",
+        title=str(paper.get("title") or "untitled"),
+        url=paper.get("url") or (f"https://www.semanticscholar.org/paper/{paper_id}" if paper_id else ""),
+        pdf_url=(paper.get("openAccessPdf") or {}).get("url"),
+        authors=[str(author.get("name")) for author in paper.get("authors", []) or [] if author.get("name")],
+        abstract=paper.get("abstract"),
+        published_at=paper.get("publicationDate") or (str(paper.get("year")) if paper.get("year") else None),
+        updated_at=paper.get("publicationDate") or (str(paper.get("year")) if paper.get("year") else None),
+        source_tags=["semantic_scholar", domain.name, *fields],
+        categories=fields,
+        arxiv_id=external.get("ArXiv"),
+        doi=doi,
+        quota_group=domain.quota_group,
+        raw={
+            "domain": domain.name,
+            "semantic_scholar_id": paper_id,
+            "semantic_scholar_url": paper.get("url"),
+            "venue": paper.get("venue"),
+            "citation_count": paper.get("citationCount"),
+            "influential_citation_count": paper.get("influentialCitationCount"),
+        },
+    )
+
+
+def _normalize_doi(value: Any) -> str | None:
+    if not value:
+        return None
+    return str(value).removeprefix("https://doi.org/").removeprefix("http://doi.org/").lower()
