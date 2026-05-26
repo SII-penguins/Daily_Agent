@@ -1,0 +1,26 @@
+liked:
+  tags: []
+  keywords: []
+
+disliked:
+  tags: []
+  keywords: []
+
+events:
+  enabled: true
+  lookback_days: 90
+  half_life_days: 30
+  exact_item_like_weight: 8
+  exact_item_dislike_weight: -10
+  tag_like_weight: 2
+  tag_dislike_weight: -3
+  keyword_like_weight: 3
+  keyword_dislike_weight: -4
+  max_feedback_score: 12
+  min_feedback_score: -15
+
+feishu_comments:
+  enabled: false
+  file_type: "docx"
+  page_size: 50
+  include_replies: true

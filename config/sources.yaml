@@ -1,0 +1,84 @@
+arxiv:
+  enabled: true
+  recent_days: 7
+  fallback_windows_days: [30, 90, 180, 365]
+  max_results_per_query: 25
+  request_delay_seconds: 3
+
+github:
+  enabled: true
+  search_enabled: true
+  trending_enabled: true
+  normal_active_days: 30
+  high_relevance_active_days: 90
+  max_results_per_query: 10
+  update_signal_max_repos: 10
+  min_stars: 5
+  trending_languages:
+    - python
+    - typescript
+    - jupyter-notebook
+    - rust
+
+openalex:
+  enabled: true
+  recent_days: 7
+  max_results_per_query: 10
+  timeout_seconds: 30
+
+semantic_scholar:
+  enabled: true
+  recent_days: 7
+  max_results_per_query: 10
+  timeout_seconds: 30
+  api_key_env: SEMANTIC_SCHOLAR_API_KEY
+
+crossref:
+  enabled: true
+  recent_days: 7
+  max_results_per_query: 10
+  timeout_seconds: 30
+
+ieee:
+  enabled: true
+  recent_days: 7
+  max_results_per_query: 10
+  timeout_seconds: 30
+  api_key_env: IEEE_XPLORE_API_KEY
+
+openreview:
+  enabled: true
+  recent_days: 30
+  max_results_per_venue: 25
+  timeout_seconds: 30
+  venues:
+    - name: ICLR 2026
+      invitation: ICLR.cc/2026/Conference/-/Submission
+    - name: ICLR 2025
+      invitation: ICLR.cc/2025/Conference/-/Submission
+
+pmlr:
+  enabled: true
+  recent_days: 365
+  max_results_per_volume: 25
+  timeout_seconds: 30
+  volumes:
+    - venue: ICML 2025
+      url: https://proceedings.mlr.press/v267/
+    - venue: ICML 2024
+      url: https://proceedings.mlr.press/v235/
+
+neurips:
+  enabled: true
+  recent_days: 365
+  max_results_per_year: 25
+  timeout_seconds: 30
+  years:
+    - 2025
+    - 2024
+
+selection:
+  repeat_suppression_days: 30
+  historical_min_score: 25
+  top_candidates_for_llm: 10
+  debug_include_rejected: false

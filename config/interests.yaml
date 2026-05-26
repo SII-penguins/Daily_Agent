@@ -1,0 +1,106 @@
+domains:
+  - name: quantum_ai
+    quota_group: quantum
+    priority: 1.0
+    description: Quantum AI, quantum circuit design, optimization, compilation, world models, surrogate models, RL, error mitigation/correction, and QNN.
+    keywords:
+      include:
+        - quantum ai
+        - quantum machine learning
+        - quantum circuit
+        - quantum circuit design
+        - quantum circuit optimization
+        - quantum compilation
+        - quantum compiler
+        - quantum world model
+        - quantum surrogate
+        - quantum reinforcement learning
+        - variational quantum
+        - quantum neural network
+        - qnn
+        - quantum error mitigation
+        - quantum error correction
+        - vqe
+        - qaoa
+      exclude: []
+    arxiv_categories:
+      - quant-ph
+      - cs.AI
+      - cs.LG
+      - cs.ET
+      - cs.PL
+      - cs.SE
+    github_queries:
+      - quantum circuit optimization
+      - quantum compiler
+      - quantum machine learning
+      - variational quantum algorithm
+      - quantum error mitigation
+      - qiskit optimization
+  - name: embodied_and_agents
+    quota_group: exploratory
+    priority: 0.75
+    description: World models, VLA, embodied intelligence, UAV navigation, autonomous driving, LLMs, and agents.
+    keywords:
+      include:
+        - world model
+        - vision language action
+        - VLA
+        - embodied intelligence
+        - embodied agent
+        - UAV navigation
+        - drone navigation
+        - autonomous driving
+        - LLM agent
+        - AI agent
+        - MCP
+        - RAG
+        - SWE agent
+        - computer use agent
+        - multimodal agent
+      exclude: []
+    arxiv_categories:
+      - cs.AI
+      - cs.CL
+      - cs.CV
+      - cs.RO
+      - cs.LG
+      - cs.SE
+      - cs.HC
+    github_queries:
+      - world model robotics
+      - vision language action
+      - embodied agent
+      - autonomous driving LLM
+      - llm agent framework
+      - mcp server agent
+      - rag agent
+      - swe agent
+
+fixed_tags:
+  - quantum_ai
+  - quantum_circuit
+  - quantum_compilation
+  - quantum_error_mitigation
+  - quantum_error_correction
+  - quantum_rl
+  - quantum_world_model
+  - qnn
+  - world_model
+  - vla
+  - embodied_ai
+  - uav_navigation
+  - autonomous_driving
+  - llm
+  - agent
+  - mcp
+  - rag
+  - swe_agent
+  - multimodal
+
+quota:
+  max_items: 10
+  quantum_target: 6
+  exploratory_target: 4
+  paper_target: 7
+  github_target: 3

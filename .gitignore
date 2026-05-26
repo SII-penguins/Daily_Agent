@@ -1,0 +1,44 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+.venv/
+venv/
+env/
+dist/
+build/
+*.egg-info/
+
+# Local environment and secrets
+.env
+.env.*
+*.local.yaml
+*.local.yml
+
+# OS/editor files
+.DS_Store
+.idea/
+.vscode/
+
+# Daily Agent runtime artifacts
+data/
+reports/
+logs/
+tmp/
+
+# Local planning/specification documents not intended for GitHub upload
+APP_FLOW.md
+BACKEND_STRUCTURE.md
+CLAUDE.md
+FRONTEND_GUIDELINES.md
+IMPLEMENTATION_PLAN.md
+PRD.md
+SOUL.md
+TEAM.md
+TECH_STACK.md
+progress.txt

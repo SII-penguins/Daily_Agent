@@ -1,0 +1,35 @@
+report:
+  title_prefix: "Daily Agent 日报"
+  timezone: "Asia/Shanghai"
+  output_dir: "reports"
+  selected_dir: "data/selected"
+  state_dir: "data/state"
+  logs_dir: "data/logs"
+
+retention:
+  selected_keep_weeks: 2
+  weekly_markdown_keep_days: 30
+  weekly_html_keep_days: 30
+  logs_keep_days: 7
+
+delivery:
+  default: "local"
+  cc_connect:
+    enabled: true
+    send_file: true
+  feishu:
+    enabled: true
+    prefer_cloud_doc: true
+    weekly_doc_title: "Daily Agent 日报"
+    app_id_env: "DAILY_AGENT_FEISHU_APP_ID"
+    app_secret_env: "DAILY_AGENT_FEISHU_APP_SECRET"
+    folder_token_env: "DAILY_AGENT_FEISHU_FOLDER_TOKEN"
+    doc_token_env: "DAILY_AGENT_FEISHU_DOC_TOKEN"
+    fallback_to_cc_connect: true
+    request_timeout_seconds: 30
+
+schedule:
+  production_time: "02:00"
+  review_time: "07:20"
+  target_time: "08:00"
+  preproduction_time: "07:20"
