@@ -41,6 +41,13 @@ pip install -e ".[test]"
 
 The project requires Python 3.11 or newer.
 
+Install MCP support when you want Codex or Claude Code to call Daily Agent as a tool:
+
+```bash
+pip install -e ".[mcp,test]"
+which daily-agent-mcp
+```
+
 ## Configuration
 
 The default configuration lives in `config/`:
@@ -64,7 +71,22 @@ export DAILY_AGENT_FEISHU_DOC_TOKEN="..."
 
 All credentials are optional except when a credential-protected source or delivery mode is enabled.
 
-## Usage
+## Quick Start for Codex and Claude Code
+
+```bash
+codex mcp add daily-agent -- daily-agent-mcp
+claude mcp add daily-agent -- daily-agent-mcp
+```
+
+Then tell your agent:
+
+```text
+Start using Daily Agent. First call setup_checklist, then ask me to customize sources, topic preferences, work time nodes, and delivery method. After that, run source_check and a dry-run report.
+```
+
+Normal use does not require you to run `daily-agent-mcp` manually. Codex or Claude Code starts it when it needs the tool.
+
+## Manual CLI Usage
 
 Run a local dry run:
 
@@ -96,82 +118,32 @@ Preview scheduler setup:
 PYTHONPATH="./src" python3 -m daily_agent.cli schedule preview --root "." --backend cc-connect
 ```
 
-## Agent Tool Integration
+## What the MCP Tool Gives Your Agent
 
-Daily Agent is not a hosted web app or an MCP server. The integration model is intentionally simple: mainstream agent tools call the local CLI, inspect generated artifacts, and optionally schedule the same commands.
+Daily Agent is intended to be used like a local tool for Codex or Claude Code. After one-time MCP registration, the agent can call Daily Agent to check sources, run collection, generate reports, inspect feedback, and help you tune the configuration.
 
-### Codex
+Daily Agent exposes these MCP tools:
 
-Use Codex as a local operator or coding agent inside the repository:
+- `setup_checklist`: tells the agent what to ask you before first use.
+- `source_check`: checks enabled sources without writing report state.
+- `run_digest`: runs a dry-run or formal digest.
+- `schedule_preview`: prints cc-connect or launchd schedule setup.
+- `feedback_show`: shows recent feedback events.
+- `feedback_add_text`: records natural-language feedback.
 
-```bash
-cd Daily_Agent
-PYTHONPATH="./src" python3 -m daily_agent.cli source check --root "." --date today --window-days 7
-PYTHONPATH="./src" python3 -m daily_agent.cli run --root "." --date today --dry-run --llm
-PYTHONPATH="./src" python3 -m daily_agent.cli feedback show --root "." --limit 20
-```
+Claude Code is also used internally when `run_digest(..., use_llm=True)` is selected. If the local `claude` command is unavailable, Daily Agent falls back to the rule-based writer.
 
-Typical Codex tasks:
+## Daily Workflow
 
-- Adjust `config/interests.yaml` when your research interests change.
-- Run `source check` before enabling scheduled delivery.
-- Run a dry run and inspect `reports/`, `data/selected/`, and `data/state/health.json`.
-- Add tests before changing connectors, scoring, rendering, or feedback behavior.
-- Keep API keys in environment variables or external local config, never in prompts or repository files.
+The default timezone is `Asia/Shanghai`, configured in `config/delivery.yaml`. Let Codex, Claude Code, cc-connect, or launchd schedule this flow:
 
-### Claude Code
+| Time | Stage | Agent goal |
+| --- | --- | --- |
+| 02:00 | Overnight collection | Run `run_digest(dry_run=True, use_llm=True)` to fetch sources, deduplicate, score, draft, review, and render local Markdown/HTML without publishing. |
+| 07:20 | Review checkpoint | Sync or inspect feedback, call `source_check`, and ask the user whether sources, preferences, time nodes, or delivery settings need adjustment. |
+| 08:00 | Formal delivery | Run `run_digest(dry_run=False, send="feishu", use_llm=True)` to publish the formal report, update feedback targeting, and push to Feishu when configured. |
 
-Claude Code can be used in two ways:
-
-1. As an operator, by running the same CLI commands in this repository.
-2. As the optional editorial drafting helper used by `--llm`.
-
-When `--llm` is passed, Daily Agent tries to call the local Claude Code CLI:
-
-```bash
-claude -p "<structured editorial prompt>" --output-format json
-```
-
-If the `claude` command is unavailable or returns invalid output, the pipeline falls back to the rule-based writer and still generates a report.
-
-Useful Claude Code commands:
-
-```bash
-PYTHONPATH="./src" python3 -m daily_agent.cli run --root "." --date today --dry-run --llm
-PYTHONPATH="./src" python3 -m daily_agent.cli run --root "." --date today --send feishu --llm
-```
-
-### cc-connect
-
-If you use cc-connect for scheduling and delivery, generate cron commands first:
-
-```bash
-PYTHONPATH="./src" python3 -m daily_agent.cli schedule preview --root "." --backend cc-connect
-```
-
-Review the printed commands before enabling them. The preview is read-only.
-
-### launchd
-
-For macOS-native scheduling, preview LaunchAgent plist content:
-
-```bash
-PYTHONPATH="./src" python3 -m daily_agent.cli schedule preview --root "." --backend launchd
-```
-
-The command only prints plist content. You must install and load the LaunchAgent manually after review.
-
-## Recommended Daily Workflow
-
-The default timezone is `Asia/Shanghai`, configured in `config/delivery.yaml`.
-
-| Time | Stage | Recommended command | What happens |
-| --- | --- | --- | --- |
-| 02:00 | Overnight dry run | `PYTHONPATH="./src" python3 -m daily_agent.cli run --root "." --date today --dry-run --llm` | Fetches sources, deduplicates, scores, drafts, reviews, renders local Markdown/HTML, writes dry-run selected/editorial/health artifacts, but does not publish, deliver, or mark items as formally shown. |
-| 07:20 | Review / preflight window | `PYTHONPATH="./src" python3 -m daily_agent.cli feedback sync --root "." --source feishu --week latest --dry-run` and `PYTHONPATH="./src" python3 -m daily_agent.cli source check --root "." --date today --window-days 7` | Pulls rank-based Feishu comments for inspection, checks source availability, and gives the user or an agent time to inspect overnight artifacts before final delivery. There is currently no dedicated review-only pipeline command; rerun the dry run if the overnight draft is missing or clearly broken. |
-| 08:00 | Formal delivery | `PYTHONPATH="./src" python3 -m daily_agent.cli run --root "." --date today --send feishu --llm` | Generates the formal report, writes weekly Markdown/HTML, writes selected JSON, marks approved materials as published, updates `published_index.json` for feedback targeting, and delivers to Feishu when configured. |
-
-The built-in `schedule preview` currently emits the 02:00 overnight dry-run job and the 08:00 formal delivery job. The 07:20 review/preflight slot is documented in configuration and should be scheduled explicitly if you want that operational checkpoint.
+The built-in `schedule_preview` currently prints the 02:00 dry-run and 08:00 formal delivery jobs. Add a separate 07:20 checkpoint if you want the agent to explicitly review feedback and configuration before delivery.
 
 ## Feedback
 

@@ -10,9 +10,11 @@ dependencies = [
 
 [project.optional-dependencies]
 test = ["pytest>=8.0.0"]
+mcp = ["mcp[cli]>=1.0.0"]
 
 [project.scripts]
 daily-agent = "daily_agent.cli:main"
+daily-agent-mcp = "daily_agent.mcp_server:main"
 
 [build-system]
 requires = ["hatchling"]
