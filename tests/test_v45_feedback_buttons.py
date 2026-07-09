@@ -58,11 +58,12 @@ def test_html_feedback_block_contains_local_post_buttons():
     assert "javascript:" not in html
 
 
-def test_markdown_feedback_line_contains_local_click_links_for_feishu_docs():
+def test_markdown_feedback_line_stays_compact_for_feishu_docs():
     markdown = render_daily_markdown([_approved_paper()], date(2026, 5, 27), RunStatus())
 
-    assert "[有用](http://127.0.0.1:8765/feedback?date=2026-05-27&rank=1&signal=like)" in markdown
-    assert "[不相关](http://127.0.0.1:8765/feedback?date=2026-05-27&rank=1&signal=dislike)" in markdown
+    assert "飞书评论可写「第 1 条不错」或「第 1 条不相关」" in markdown
+    assert "127.0.0.1:8765" not in markdown
+    assert "daily-agent feedback add" not in markdown
 
 
 def test_record_feedback_request_writes_idempotent_html_button_event(tmp_path):
@@ -110,3 +111,24 @@ def test_feedback_http_handler_accepts_form_post(tmp_path):
     assert "反馈已记录" in html
     events = load_feedback_events(config)
     assert [(event.rank, event.signal, event.origin) for event in events] == [(1, "dislike", "html_button")]
+
+
+def test_feedback_http_handler_supports_head_health_check(tmp_path):
+    from http.server import ThreadingHTTPServer
+
+    config = _config(tmp_path)
+    server = ThreadingHTTPServer(("127.0.0.1", 0), make_feedback_handler(config))
+    thread = Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    try:
+        host, port = server.server_address
+        request = Request(f"http://{host}:{port}/health", method="HEAD")
+        with urlopen(request, timeout=3) as response:
+            body = response.read()
+    finally:
+        server.shutdown()
+        server.server_close()
+        thread.join(timeout=3)
+
+    assert response.status == 200
+    assert body == b""

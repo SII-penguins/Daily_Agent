@@ -64,6 +64,16 @@ def make_feedback_handler(config: AppConfig) -> type[BaseHTTPRequestHandler]:
                 return
             self._handle_feedback(_flatten_query(parse_qs(parsed.query, keep_blank_values=True)))
 
+        def do_HEAD(self) -> None:
+            parsed = urlparse(self.path)
+            if parsed.path in {"", "/", "/health"}:
+                self._send_head(200, "text/plain; charset=utf-8")
+                return
+            if parsed.path == "/feedback":
+                self._send_head(405, "text/plain; charset=utf-8")
+                return
+            self._send_head(404, "text/plain; charset=utf-8")
+
         def do_POST(self) -> None:
             parsed = urlparse(self.path)
             if parsed.path != "/feedback":
@@ -96,6 +106,12 @@ def make_feedback_handler(config: AppConfig) -> type[BaseHTTPRequestHandler]:
             self.send_header("Content-Length", str(len(payload)))
             self.end_headers()
             self.wfile.write(payload)
+
+        def _send_head(self, status: int, content_type: str) -> None:
+            self.send_response(status)
+            self.send_header("Content-Type", content_type)
+            self.send_header("Content-Length", "0")
+            self.end_headers()
 
         def log_message(self, format: str, *args) -> None:
             return

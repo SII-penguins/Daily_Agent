@@ -6,6 +6,8 @@ from typing import Any
 import httpx
 
 from daily_agent.config import AppConfig, DomainConfig
+from daily_agent.connectors.publication_types import allowed_publication_types, publication_type_allowed
+from daily_agent.connectors.queries import scholarly_queries
 from daily_agent.models import DigestItem
 
 OPENALEX_WORKS_URL = "https://api.openalex.org/works"
@@ -19,11 +21,16 @@ def fetch_openalex(config: AppConfig, target_date: datetime | None = None, windo
     days = int(window_days or source_config.get("recent_days", config.sources.get("arxiv", {}).get("recent_days", 7)))
     max_results = int(source_config.get("max_results_per_query", 10))
     timeout = float(source_config.get("timeout_seconds", 30))
+    max_queries_per_domain = int(source_config.get("max_queries_per_domain", 0) or 0)
+    allowed_types = allowed_publication_types(source_config)
     items: list[DigestItem] = []
     seen_queries: set[str] = set()
     with httpx.Client(timeout=timeout, follow_redirects=True) as client:
         for domain in config.domains:
-            for query in _queries(domain):
+            queries = _queries(domain)
+            if max_queries_per_domain > 0:
+                queries = queries[:max_queries_per_domain]
+            for query in queries:
                 if query in seen_queries:
                     continue
                 seen_queries.add(query)
@@ -33,12 +40,14 @@ def fetch_openalex(config: AppConfig, target_date: datetime | None = None, windo
                 except httpx.HTTPError:
                     continue
                 for work in response.json().get("results", []) or []:
+                    if not publication_type_allowed(work.get("type"), allowed_types):
+                        continue
                     items.append(_work_to_item(work, domain))
     return _dedupe(items)
 
 
 def _queries(domain: DomainConfig) -> list[str]:
-    return domain.include_keywords or domain.github_queries or [domain.name]
+    return scholarly_queries(domain)
 
 
 def _params(query: str, target: datetime, days: int, max_results: int) -> dict[str, str | int]:
@@ -83,6 +92,7 @@ def _work_to_item(work: dict[str, Any], domain: DomainConfig) -> DigestItem:
             "cited_by_count": work.get("cited_by_count"),
             "open_access_url": pdf_url,
             "openalex_url": openalex_url,
+            "publication_type": work.get("type"),
         },
     )
 

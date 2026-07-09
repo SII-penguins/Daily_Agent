@@ -2,14 +2,16 @@ from __future__ import annotations
 
 from datetime import date
 
-from daily_agent.feedback.server import feedback_url
+from daily_agent.insights import build_daily_insights
 from daily_agent.models import ApprovedItem, RunStatus
 
 
-def render_daily_markdown(items: list[ApprovedItem], run_date: date, status: RunStatus) -> str:
+def render_daily_markdown(items: list[ApprovedItem], run_date: date, status: RunStatus, insight_config: dict | None = None) -> str:
     lines: list[str] = [f"# Daily Agent 日报｜{run_date.isoformat()}", ""]
     ranks = {item.key: index for index, item in enumerate(items, start=1)}
     lines.extend(_render_must_read(items))
+    if _insights_enabled_for_report(insight_config):
+        lines.extend(_render_insights(items, insight_config))
     papers = [item for item in items if item.item_type == "paper"]
     repos = [item for item in items if item.item_type == "repo"]
     lines.extend(_render_papers(papers, ranks, run_date))
@@ -29,6 +31,20 @@ def _render_must_read(items: list[ApprovedItem]) -> list[str]:
     return lines
 
 
+def _render_insights(items: list[ApprovedItem], insight_config: dict | None = None) -> list[str]:
+    lines = ["## 今日洞察", ""]
+    for insight in build_daily_insights(items, settings=insight_config):
+        lines.append(f"- {insight}")
+    lines.append("")
+    return lines
+
+
+def _insights_enabled_for_report(insight_config: dict | None) -> bool:
+    if not insight_config:
+        return True
+    return bool(insight_config.get("enabled", True) and insight_config.get("include_in_reports", True))
+
+
 def _render_papers(items: list[ApprovedItem], ranks: dict[str, int], run_date: date) -> list[str]:
     lines = ["## 最新论文", ""]
     if not items:
@@ -41,13 +57,19 @@ def _render_papers(items: list[ApprovedItem], ranks: dict[str, int], run_date: d
         prefix = f"{rank}. " if rank else ""
         lines.append(f"### {prefix}{_prefix_label(item)}{item.title}")
         lines.append(f"- 解决问题：{_value(fields.get('problem'))}")
-        lines.append(f"- 方法/技术路线：{_value(fields.get('technical_route') or fields.get('method'))}")
+        lines.append(f"- 方法：{_value(fields.get('method'))}")
+        lines.append(f"- 为什么有效：{_value(fields.get('why_it_works'))}")
+        lines.append(f"- 新意/差异：{_value(fields.get('novelty_or_difference'))}")
+        lines.append(f"- 技术路线：{_value(fields.get('technical_route') or fields.get('method'))}")
         lines.append(f"- 关键步骤：{_list_value(fields.get('method_steps'))}")
         lines.append(f"- 结果/发现：{_value(fields.get('key_result'))}")
         lines.append(f"- 可能用途/影响：{_value(fields.get('possible_use_or_impact'))}")
         lines.append(f"- 局限：{_value(fields.get('limitations'))}")
         lines.append(f"- 来源/时间：{_paper_time(material)}")
         lines.append(f"- 入选理由：{_recommendation_reason(material)}")
+        citation_context = _citation_context_text(material)
+        if citation_context:
+            lines.append(f"- 引用脉络：{citation_context}")
         lines.append(f"- 标签：{_tags(item)}")
         lines.append(f"- 链接：{' / '.join(_paper_links(material))}")
         if rank:
@@ -131,14 +153,17 @@ def _source_label(material) -> str:
         "arxiv": "arXiv",
         "openalex": "OpenAlex",
         "semantic_scholar": "Semantic Scholar",
+        "google_scholar": "Google Scholar",
         "crossref": "Crossref",
+        "core": "CORE",
+        "dblp": "DBLP",
         "ieee": "IEEE",
         "openreview": "OpenReview",
         "pmlr": "PMLR",
         "neurips": "NeurIPS",
     }
     aliases = material.source_aliases or {material.source: material.key}
-    ordered = [labels[source] for source in ["arxiv", "openreview", "pmlr", "neurips", "openalex", "semantic_scholar", "crossref", "ieee"] if source in aliases]
+    ordered = [labels[source] for source in ["arxiv", "openreview", "pmlr", "neurips", "dblp", "core", "openalex", "semantic_scholar", "google_scholar", "crossref", "ieee"] if source in aliases]
     return " / ".join(ordered) if ordered else labels.get(material.source, material.source)
 
 
@@ -146,12 +171,36 @@ def _paper_links(material) -> list[str]:
     links = [f"[abs]({material.url})"]
     if material.pdf_url:
         links.append(f"[PDF]({material.pdf_url})")
+    if material.raw.get("local_pdf_report_url"):
+        links.append(f"[本地PDF]({material.raw['local_pdf_report_url']})")
     if material.doi:
         links.append(f"[DOI](https://doi.org/{material.doi})")
     if "openalex" in material.source_aliases:
         links.append(f"[OpenAlex]({material.raw.get('openalex_url') or material.url})")
     if material.raw.get("semantic_scholar_url"):
         links.append(f"[Semantic Scholar]({material.raw['semantic_scholar_url']})")
+    if material.raw.get("google_scholar_url"):
+        links.append(f"[Google Scholar]({material.raw['google_scholar_url']})")
+    if material.raw.get("google_scholar_cited_by_url"):
+        links.append(f"[Scholar cited by]({material.raw['google_scholar_cited_by_url']})")
+    if material.raw.get("google_scholar_related_url"):
+        links.append(f"[Scholar related]({material.raw['google_scholar_related_url']})")
+    if material.raw.get("google_scholar_versions_url"):
+        links.append(f"[Scholar versions]({material.raw['google_scholar_versions_url']})")
+    if material.raw.get("google_scholar_bibtex_url"):
+        links.append(f"[Scholar BibTeX]({material.raw['google_scholar_bibtex_url']})")
+    if material.raw.get("google_scholar_endnote_url"):
+        links.append(f"[Scholar EndNote]({material.raw['google_scholar_endnote_url']})")
+    if material.raw.get("google_scholar_refman_url"):
+        links.append(f"[Scholar RefMan]({material.raw['google_scholar_refman_url']})")
+    if material.raw.get("google_scholar_refworks_url"):
+        links.append(f"[Scholar RefWorks]({material.raw['google_scholar_refworks_url']})")
+    if material.raw.get("unpaywall_url"):
+        links.append(f"[Unpaywall]({material.raw['unpaywall_url']})")
+    if material.raw.get("dblp_url"):
+        links.append(f"[DBLP]({material.raw['dblp_url']})")
+    if material.raw.get("core_url"):
+        links.append(f"[CORE]({material.raw['core_url']})")
     if material.raw.get("ieee_url"):
         links.append(f"[IEEE]({material.raw['ieee_url']})")
     if material.raw.get("openreview_url"):
@@ -171,6 +220,7 @@ def _recommendation_reason(material) -> str:
         ("freshness", "新鲜度"),
         ("venue", "顶会/权威来源"),
         ("scholarly_impact", "引用影响"),
+        ("citation_discovery", "引用邻域发现"),
         ("evidence", "证据完整"),
         ("github_quality", "GitHub质量"),
         ("history", "更新信号"),
@@ -179,12 +229,94 @@ def _recommendation_reason(material) -> str:
     reasons = []
     if len(material.source_aliases or {}) > 1:
         reasons.append("多源交叉验证")
+    if material.item_type == "paper":
+        full_text_reason = _full_text_reason(material.paper_text_status or {})
+        if full_text_reason:
+            reasons.append(full_text_reason)
+        citation_reason = _citation_reason((material.raw or {}).get("citation_context") or {})
+        if citation_reason:
+            reasons.append(citation_reason)
+        if (material.raw or {}).get("google_scholar_url") or "google_scholar" in (material.source_aliases or {}):
+            reasons.append("Google Scholar 可追溯")
     reasons.extend(label for key, label in labels if float(breakdown.get(key) or 0) > 0)
     if material.update_label == "version_update":
         reasons.append("版本更新")
     if material.update_label == "major_update":
         reasons.append("重大更新")
-    return "、".join(reasons[:5]) if reasons else "规则评分靠前"
+    return "、".join(_dedupe(reasons)[:8]) if reasons else "规则评分靠前"
+
+
+def _full_text_reason(status: dict) -> str:
+    if not status.get("sufficient_for_deep_summary"):
+        return ""
+    sections = {str(section).strip().lower() for section in status.get("sections_found") or []}
+    labels = []
+    if {"method", "methods", "methodology"} & sections:
+        labels.append("方法")
+    if {"result", "results", "evaluation", "experiment", "experiments"} & sections:
+        labels.append("结果")
+    if {"limitation", "limitations", "discussion"} & sections:
+        labels.append("局限")
+    if labels:
+        return "全文证据覆盖" + "/".join(labels)
+    return "全文证据充足"
+
+
+def _citation_reason(context: dict) -> str:
+    if not isinstance(context, dict):
+        return ""
+    cited_by = _safe_int(context.get("cited_by_count"))
+    if cited_by:
+        return f"引用脉络被引 {cited_by} 次"
+    if context.get("citing") or context.get("referenced"):
+        return "引用脉络可追溯"
+    return ""
+
+
+def _citation_context_text(material) -> str:
+    context = (material.raw or {}).get("citation_context") or {}
+    if not isinstance(context, dict) or not context:
+        return ""
+    parts = []
+    cited_by = context.get("cited_by_count")
+    if cited_by is not None:
+        parts.append(f"被引 {cited_by} 次")
+    citing_titles = _citation_titles(context.get("citing"))
+    if citing_titles:
+        parts.append(f"近期引用：{'、'.join(citing_titles)}")
+    referenced_titles = _citation_titles(context.get("referenced"))
+    if referenced_titles:
+        parts.append(f"关键参考：{'、'.join(referenced_titles)}")
+    return "；".join(parts)
+
+
+def _safe_int(value) -> int:
+    try:
+        return int(value or 0)
+    except (TypeError, ValueError):
+        return 0
+
+
+def _dedupe(values: list[str]) -> list[str]:
+    seen = set()
+    result = []
+    for value in values:
+        if value and value not in seen:
+            result.append(value)
+            seen.add(value)
+    return result
+
+
+def _citation_titles(values, limit: int = 2) -> list[str]:
+    if not isinstance(values, list):
+        return []
+    titles = []
+    for value in values:
+        if isinstance(value, dict) and value.get("title"):
+            titles.append(str(value["title"]))
+        if len(titles) >= limit:
+            break
+    return titles
 
 
 def _tags(item: ApprovedItem) -> str:
@@ -193,15 +325,7 @@ def _tags(item: ApprovedItem) -> str:
 
 
 def _feedback_text(run_date: date, rank: int) -> str:
-    like_command = f"daily-agent feedback add --date {run_date.isoformat()} --rank {rank} --signal like"
-    dislike_command = f"daily-agent feedback add --date {run_date.isoformat()} --rank {rank} --signal dislike"
-    like_url = feedback_url(run_date.isoformat(), rank, "like")
-    dislike_url = feedback_url(run_date.isoformat(), rank, "dislike")
-    return (
-        f"飞书评论可写「第 {rank} 条不错」或「第 {rank} 条不相关」；"
-        f"本地按钮服务（先运行 `daily-agent feedback serve`）：[有用]({like_url}) / [不相关]({dislike_url})；"
-        f"CLI：`{like_command}` / `{dislike_command}`"
-    )
+    return f"飞书评论可写「第 {rank} 条不错」或「第 {rank} 条不相关」。"
 
 
 def _value(value) -> str:

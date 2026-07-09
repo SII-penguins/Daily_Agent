@@ -20,6 +20,7 @@ def fetch_neurips(config: AppConfig, target_date: datetime | None = None, window
     target = target_date or datetime.now(timezone.utc)
     years = source_config.get("years") or [target.year - 1, target.year]
     max_results = int(source_config.get("max_results_per_year", source_config.get("max_results_per_query", 25)))
+    max_detail_pages = int(source_config.get("max_detail_pages_per_year", max_results) or 0)
     timeout = float(source_config.get("timeout_seconds", 30))
     items: list[DigestItem] = []
     with httpx.Client(timeout=timeout, follow_redirects=True, headers={"User-Agent": "Daily-Agent/0.1"}) as client:
@@ -30,8 +31,11 @@ def fetch_neurips(config: AppConfig, target_date: datetime | None = None, window
                 response.raise_for_status()
             except httpx.HTTPError:
                 continue
-            for title, paper_url in _paper_links(response.text, url)[:max_results]:
-                item = _fetch_detail(client, title, paper_url, int(year))
+            for index, (title, paper_url) in enumerate(_paper_links(response.text, url)[:max_results]):
+                if max_detail_pages <= 0 or index < max_detail_pages:
+                    item = _fetch_detail(client, title, paper_url, int(year))
+                else:
+                    item = _paper_stub(title, paper_url, int(year))
                 if _matches_interest(item, config):
                     items.append(item)
     return items
@@ -75,6 +79,22 @@ def _fetch_detail(client: httpx.Client, title: str, url: str, year: int) -> Dige
         source_tags=["neurips", f"NeurIPS {year}"],
         categories=[f"NeurIPS {year}"],
         raw={"neurips_id": neurips_id, "neurips_url": url, "venue": f"NeurIPS {year}"},
+    )
+
+
+def _paper_stub(title: str, url: str, year: int) -> DigestItem:
+    neurips_id = url.rstrip("/").rsplit("/", 1)[-1].removesuffix(".html")
+    return DigestItem(
+        id=neurips_id,
+        source="neurips",
+        item_type="paper",
+        title=title,
+        url=url,
+        published_at=str(year),
+        updated_at=str(year),
+        source_tags=["neurips", f"NeurIPS {year}"],
+        categories=[f"NeurIPS {year}"],
+        raw={"neurips_id": neurips_id, "neurips_url": url, "venue": f"NeurIPS {year}", "detail_skipped": True},
     )
 
 

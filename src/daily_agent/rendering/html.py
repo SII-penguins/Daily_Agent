@@ -5,21 +5,26 @@ from html import escape
 from urllib.parse import urlparse
 
 from daily_agent.feedback.server import feedback_form_action
+from daily_agent.insights import build_daily_insights
 from daily_agent.models import ApprovedItem, RunStatus
-from daily_agent.rendering.markdown import _list_value, _paper_time, _prefix_label, _recommendation_reason, _tags, _value
+from daily_agent.rendering.markdown import _citation_context_text, _list_value, _paper_time, _prefix_label, _recommendation_reason, _tags, _value
 
 
-def render_daily_html(items: list[ApprovedItem], run_date: date, status: RunStatus) -> str:
+def render_daily_html(items: list[ApprovedItem], run_date: date, status: RunStatus, insight_config: dict | None = None) -> str:
     ranks = {item.key: index for index, item in enumerate(items, start=1)}
     papers = [item for item in items if item.item_type == "paper"]
     repos = [item for item in items if item.item_type == "repo"]
     sections = [
         f"<h1>Daily Agent 日报｜{_text(run_date.isoformat())}</h1>",
         _render_must_read(items),
+    ]
+    if _insights_enabled_for_report(insight_config):
+        sections.append(_render_insights(items, insight_config))
+    sections.extend([
         _render_papers(papers, ranks, run_date),
         _render_repos(repos, ranks, run_date),
         _render_status(status),
-    ]
+    ])
     return "\n".join(sections).rstrip() + "\n"
 
 
@@ -34,6 +39,20 @@ def _render_must_read(items: list[ApprovedItem]) -> str:
         lines.append("</ul>")
     lines.append("</section>")
     return "\n".join(lines)
+
+
+def _render_insights(items: list[ApprovedItem], insight_config: dict | None = None) -> str:
+    lines = ['<section class="daily-insights">', "<h2>今日洞察</h2>", "<ul>"]
+    for insight in build_daily_insights(items, settings=insight_config):
+        lines.append(f"<li>{_text(insight)}</li>")
+    lines.extend(["</ul>", "</section>"])
+    return "\n".join(lines)
+
+
+def _insights_enabled_for_report(insight_config: dict | None) -> bool:
+    if not insight_config:
+        return True
+    return bool(insight_config.get("enabled", True) and insight_config.get("include_in_reports", True))
 
 
 def _render_papers(items: list[ApprovedItem], ranks: dict[str, int], run_date: date) -> str:
@@ -53,13 +72,17 @@ def _render_papers(items: list[ApprovedItem], ranks: dict[str, int], run_date: d
                 f"<h3>{_text(prefix)}{_text(_prefix_label(item))}{_text(item.title)}</h3>",
                 "<dl>",
                 _field("解决问题", _value(fields.get("problem"))),
-                _field("方法/技术路线", _value(fields.get("technical_route") or fields.get("method"))),
+                _field("方法", _value(fields.get("method"))),
+                _field("为什么有效", _value(fields.get("why_it_works"))),
+                _field("新意/差异", _value(fields.get("novelty_or_difference"))),
+                _field("技术路线", _value(fields.get("technical_route") or fields.get("method"))),
                 _field("关键步骤", _list_value(fields.get("method_steps"))),
                 _field("结果/发现", _value(fields.get("key_result"))),
                 _field("可能用途/影响", _value(fields.get("possible_use_or_impact"))),
                 _field("局限", _value(fields.get("limitations"))),
                 _field("来源/时间", _paper_time(material)),
                 _field("入选理由", _recommendation_reason(material)),
+                _field("引用脉络", _citation_context_text(material)) if _citation_context_text(material) else "",
                 _field("标签", _tags(item)),
                 f"<dt>链接</dt><dd>{_paper_links(material)}</dd>",
             ]
@@ -132,12 +155,36 @@ def _paper_links(material) -> str:
     links = [_safe_link("abs", material.url)]
     if material.pdf_url:
         links.append(_safe_link("PDF", material.pdf_url))
+    if material.raw.get("local_pdf_report_url"):
+        links.append(_safe_local_pdf_link("本地PDF", material.raw["local_pdf_report_url"]))
     if getattr(material, "doi", None):
         links.append(_safe_link("DOI", f"https://doi.org/{material.doi}"))
     if "openalex" in getattr(material, "source_aliases", {}):
         links.append(_safe_link("OpenAlex", material.raw.get("openalex_url") or material.url))
     if material.raw.get("semantic_scholar_url"):
         links.append(_safe_link("Semantic Scholar", material.raw["semantic_scholar_url"]))
+    if material.raw.get("google_scholar_url"):
+        links.append(_safe_link("Google Scholar", material.raw["google_scholar_url"]))
+    if material.raw.get("google_scholar_cited_by_url"):
+        links.append(_safe_link("Scholar cited by", material.raw["google_scholar_cited_by_url"]))
+    if material.raw.get("google_scholar_related_url"):
+        links.append(_safe_link("Scholar related", material.raw["google_scholar_related_url"]))
+    if material.raw.get("google_scholar_versions_url"):
+        links.append(_safe_link("Scholar versions", material.raw["google_scholar_versions_url"]))
+    if material.raw.get("google_scholar_bibtex_url"):
+        links.append(_safe_link("Scholar BibTeX", material.raw["google_scholar_bibtex_url"]))
+    if material.raw.get("google_scholar_endnote_url"):
+        links.append(_safe_link("Scholar EndNote", material.raw["google_scholar_endnote_url"]))
+    if material.raw.get("google_scholar_refman_url"):
+        links.append(_safe_link("Scholar RefMan", material.raw["google_scholar_refman_url"]))
+    if material.raw.get("google_scholar_refworks_url"):
+        links.append(_safe_link("Scholar RefWorks", material.raw["google_scholar_refworks_url"]))
+    if material.raw.get("unpaywall_url"):
+        links.append(_safe_link("Unpaywall", material.raw["unpaywall_url"]))
+    if material.raw.get("dblp_url"):
+        links.append(_safe_link("DBLP", material.raw["dblp_url"]))
+    if material.raw.get("core_url"):
+        links.append(_safe_link("CORE", material.raw["core_url"]))
     if material.raw.get("ieee_url"):
         links.append(_safe_link("IEEE", material.raw["ieee_url"]))
     if material.raw.get("openreview_url"):
@@ -154,21 +201,21 @@ def _field(label: str, value: str) -> str:
 
 
 def _feedback_html(run_date: date, rank: int) -> str:
-    like_command = f"daily-agent feedback add --date {run_date.isoformat()} --rank {rank} --signal like"
-    dislike_command = f"daily-agent feedback add --date {run_date.isoformat()} --rank {rank} --signal dislike"
     comment_hint = f"飞书评论：第 {rank} 条不错 / 第 {rank} 条不相关"
     action = feedback_form_action()
     return (
-        f"{_text(comment_hint)}<br>"
-        "按钮服务：先运行 <code>daily-agent feedback serve</code>"
+        '<div class="feedback-panel">'
+        '<div class="feedback-copy">'
+        f'<span class="feedback-title">{_text(comment_hint)}</span>'
+        '<span class="feedback-note">按钮反馈由 Daily Agent 本地预览服务记录</span>'
+        "</div>"
         f'<form class="feedback-actions" method="post" action="{_attr(action)}">'
         f'<input type="hidden" name="date" value="{_attr(run_date.isoformat())}">'
         f'<input type="hidden" name="rank" value="{_attr(rank)}">'
         '<button type="submit" name="signal" value="like">有用</button>'
         '<button type="submit" name="signal" value="dislike">不相关</button>'
         "</form>"
-        f"有用：<code>{_text(like_command)}</code><br>"
-        f"不相关：<code>{_text(dislike_command)}</code>"
+        "</div>"
     )
 
 
@@ -185,9 +232,25 @@ def _safe_link(label: str, url: str | None) -> str:
     return f'<a href="{_attr(url)}" rel="noreferrer noopener">{_text(label)}</a>'
 
 
+def _safe_local_pdf_link(label: str, url: str | None) -> str:
+    if not url or not _is_safe_local_pdf_url(url):
+        return _text(label)
+    return f'<a href="{_attr(url)}">{_text(label)}</a>'
+
+
 def _is_safe_url(url: str) -> bool:
     parsed = urlparse(url)
     return parsed.scheme in {"http", "https"} and bool(parsed.netloc)
+
+
+def _is_safe_local_pdf_url(url: str) -> bool:
+    parsed = urlparse(url)
+    if parsed.scheme or parsed.netloc:
+        return False
+    if not url.startswith("../data/pdfs/") or not url.endswith(".pdf"):
+        return False
+    tail = url[len("../data/pdfs/") :]
+    return "\\" not in tail and "\x00" not in tail and ".." not in tail.split("/")
 
 
 def _text(value) -> str:

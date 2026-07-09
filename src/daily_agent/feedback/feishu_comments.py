@@ -11,6 +11,7 @@ from daily_agent.delivery.feishu import BASE_URL, _headers, _load_cc_connect_fei
 from daily_agent.feedback.ingest import record_feedback_text
 from daily_agent.feedback.suggestions import process_suggestion_response_text
 from daily_agent.models import FeedbackEvent
+from daily_agent.secrets import credential_value
 from daily_agent.storage import load_feishu_delivery_state
 
 
@@ -186,8 +187,6 @@ def _timestamp_iso(value: Any) -> str | None:
 
 
 def _feedback_env_value(config: AppConfig, key: str) -> str | None:
-    import os
-
     feishu_config = config.delivery.get("delivery", {}).get("feishu", {}) or {}
     env_name = str(feishu_config.get(key) or "")
-    return os.environ.get(env_name) if env_name else None
+    return credential_value(env_name) if env_name else None

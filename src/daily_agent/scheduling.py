@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import sys
 from dataclasses import dataclass
 from pathlib import Path
 from plistlib import dumps
@@ -49,10 +50,13 @@ def build_schedule_preview(config: Any, backend: str = "cc-connect") -> Schedule
 def build_schedule_jobs(config: Any) -> list[ScheduleJob]:
     schedule = config.delivery.get("schedule", {}) or {}
     production_time = _parse_hhmm(schedule.get("production_time", "02:00"), "production_time")
+    review_time = _parse_hhmm(schedule.get("review_time", schedule.get("preproduction_time", "07:20")), "review_time")
     target_time = _parse_hhmm(schedule.get("target_time", "08:00"), "target_time")
     root = Path(config.root)
-    dry_run_command = _pipeline_command(root, dry_run=True, send=None)
-    feishu_command = _pipeline_command(root, dry_run=False, send="feishu")
+    python_executable = _python_executable(config)
+    dry_run_command = _overnight_dry_run_command(root, python_executable)
+    review_command = _review_checkpoint_command(root, python_executable)
+    feishu_command = _formal_delivery_command(root, python_executable)
     return [
         ScheduleJob(
             name="overnight-dry-run",
@@ -60,6 +64,13 @@ def build_schedule_jobs(config: Any) -> list[ScheduleJob]:
             time=production_time,
             command=dry_run_command,
             launchd_label="com.daily-agent.overnight-dry-run",
+        ),
+        ScheduleJob(
+            name="morning-review-checkpoint",
+            description="Daily_Agent morning source and feedback review checkpoint",
+            time=review_time,
+            command=review_command,
+            launchd_label="com.daily-agent.morning-review-checkpoint",
         ),
         ScheduleJob(
             name="formal-feishu-delivery",
@@ -99,10 +110,10 @@ def render_launchd_preview(jobs: list[ScheduleJob], root: Path) -> str:
     return "\n".join(parts)
 
 
-def _pipeline_command(root: Path, dry_run: bool, send: str | None) -> str:
+def _pipeline_command(root: Path, python_executable: str, dry_run: bool, send: str | None, require_full: bool = False) -> str:
     parts = [
         f"PYTHONPATH={quote(str(root / 'src'))}",
-        "python3",
+        quote(python_executable),
         "-m",
         "daily_agent.cli",
         "run",
@@ -116,7 +127,90 @@ def _pipeline_command(root: Path, dry_run: bool, send: str | None) -> str:
         parts.append("--dry-run")
     if send:
         parts.extend(["--send", quote(send)])
+    if require_full:
+        parts.append("--require-full")
     return " ".join(parts)
+
+
+def _review_checkpoint_command(root: Path, python_executable: str) -> str:
+    return (
+        f"{_quality_enforce_command(root, python_executable)} && "
+        f"{_quality_check_command(root, python_executable)} && "
+        f"{_source_check_command(root, python_executable)}"
+    )
+
+
+def _overnight_dry_run_command(root: Path, python_executable: str) -> str:
+    return (
+        f"{_quality_enforce_command(root, python_executable)} && "
+        f"{_quality_check_command(root, python_executable, require_full=True)} && "
+        f"{_pipeline_command(root, python_executable, dry_run=True, send=None, require_full=True)}"
+    )
+
+
+def _formal_delivery_command(root: Path, python_executable: str) -> str:
+    return (
+        f"{_quality_enforce_command(root, python_executable)} && "
+        f"{_quality_check_command(root, python_executable, require_full=True)} && "
+        f"{_pipeline_command(root, python_executable, dry_run=False, send='feishu', require_full=True)}"
+    )
+
+
+def _quality_enforce_command(root: Path, python_executable: str) -> str:
+    parts = [
+        f"PYTHONPATH={quote(str(root / 'src'))}",
+        quote(python_executable),
+        "-m",
+        "daily_agent.cli",
+        "quality",
+        "enforce-full",
+        "--root",
+        quote(str(root)),
+        "--write",
+    ]
+    return " ".join(parts)
+
+
+def _quality_check_command(root: Path, python_executable: str, require_full: bool = False) -> str:
+    parts = [
+        f"PYTHONPATH={quote(str(root / 'src'))}",
+        quote(python_executable),
+        "-m",
+        "daily_agent.cli",
+        "quality",
+        "check",
+        "--root",
+        quote(str(root)),
+    ]
+    if require_full:
+        parts.append("--require-full")
+    return " ".join(parts)
+
+
+def _source_check_command(root: Path, python_executable: str) -> str:
+    parts = [
+        f"PYTHONPATH={quote(str(root / 'src'))}",
+        quote(python_executable),
+        "-m",
+        "daily_agent.cli",
+        "source",
+        "check",
+        "--root",
+        quote(str(root)),
+        "--date",
+        "today",
+        "--window-days",
+        "7",
+    ]
+    return " ".join(parts)
+
+
+def _python_executable(config: Any) -> str:
+    runtime = config.delivery.get("runtime", {}) or {}
+    configured = runtime.get("python_executable")
+    if configured:
+        return str(configured)
+    return sys.executable
 
 
 def _launchd_plist(job: ScheduleJob, root: Path) -> bytes:

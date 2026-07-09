@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import os
 import re
 from datetime import datetime, timedelta, timezone
 from typing import Any
@@ -10,6 +9,7 @@ import httpx
 
 from daily_agent.config import AppConfig, DomainConfig
 from daily_agent.models import DigestItem, MaterialRecord, SelectedRecord
+from daily_agent.secrets import credential_value
 
 GITHUB_API = "https://api.github.com"
 TRENDING_URL = "https://github.com/trending"
@@ -23,10 +23,12 @@ def fetch_github(config: AppConfig, target_date: datetime | None = None, window_
     target = target_date or datetime.now(timezone.utc)
     max_results = int(source_config.get("max_results_per_query", 10))
     search_window_days = int(window_days or source_config.get("normal_active_days", 30))
+    max_queries_per_domain = int(source_config.get("max_queries_per_domain", 0) or 0)
+    timeout_seconds = float(source_config.get("timeout_seconds", 30))
     items: list[DigestItem] = []
-    with httpx.Client(timeout=30, follow_redirects=True, headers=_headers()) as client:
+    with httpx.Client(timeout=timeout_seconds, follow_redirects=True, headers=_headers()) as client:
         if source_config.get("search_enabled", True):
-            items.extend(_fetch_search(client, config, target, max_results, search_window_days))
+            items.extend(_fetch_search(client, config, target, max_results, search_window_days, max_queries_per_domain))
         if source_config.get("trending_enabled", True):
             items.extend(_fetch_trending(client, config, target, max_results))
     return items
@@ -34,7 +36,7 @@ def fetch_github(config: AppConfig, target_date: datetime | None = None, window_
 
 def _headers() -> dict[str, str]:
     headers = {"Accept": "application/vnd.github+json", "User-Agent": "Daily-Agent/0.1"}
-    token = os.environ.get("GITHUB_TOKEN") or os.environ.get("GH_TOKEN")
+    token = credential_value("GITHUB_TOKEN") or credential_value("GH_TOKEN")
     if token:
         headers["Authorization"] = f"Bearer {token}"
     return headers
@@ -46,11 +48,12 @@ def _fetch_search(
     target: datetime,
     max_results: int,
     window_days: int,
+    max_queries_per_domain: int,
 ) -> list[DigestItem]:
     items: list[DigestItem] = []
     seen_queries: set[str] = set()
     for domain in config.domains:
-        for query in domain.github_queries or domain.include_keywords:
+        for query in _search_queries(domain, max_queries_per_domain):
             if query in seen_queries:
                 continue
             seen_queries.add(query)
@@ -73,6 +76,40 @@ def _fetch_search(
                 _mark_activity_window(item, config, target)
                 items.append(item)
     return items
+
+
+def _search_queries(domain: DomainConfig, max_queries: int = 0) -> list[str]:
+    if domain.github_queries:
+        enabled_expanded = [keyword for keyword in domain.expanded_keywords if keyword in domain.include_keywords]
+        queries = _interleave(domain.github_queries, enabled_expanded)
+        queries.extend(domain.base_include_keywords)
+    else:
+        queries = domain.include_keywords or [domain.name]
+    unique = _unique_queries(queries)
+    return unique[:max_queries] if max_queries > 0 else unique
+
+
+def _interleave(primary: list[str], secondary: list[str]) -> list[str]:
+    result: list[str] = []
+    longest = max(len(primary), len(secondary))
+    for index in range(longest):
+        if index < len(primary):
+            result.append(primary[index])
+        if index < len(secondary):
+            result.append(secondary[index])
+    return result
+
+
+def _unique_queries(queries: list[str]) -> list[str]:
+    seen: set[str] = set()
+    result: list[str] = []
+    for query in queries:
+        text = str(query).strip()
+        key = text.lower()
+        if text and key not in seen:
+            seen.add(key)
+            result.append(text)
+    return result
 
 
 def _fetch_trending(
