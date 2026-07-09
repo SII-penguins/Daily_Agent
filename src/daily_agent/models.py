@@ -4,7 +4,7 @@ from dataclasses import asdict, dataclass, field
 from datetime import datetime, timezone
 from typing import Any, Literal
 
-SourceName = Literal["arxiv", "github", "openalex", "semantic_scholar", "crossref", "ieee", "openreview", "pmlr", "neurips"]
+SourceName = Literal["arxiv", "github", "openalex", "semantic_scholar", "google_scholar", "crossref", "core", "dblp", "ieee", "openreview", "pmlr", "neurips"]
 ItemType = Literal["paper", "repo"]
 UpdateLabel = Literal["version_update", "major_update"] | None
 QualityStatus = Literal["candidate", "library", "rejected", "published", "archived"]
@@ -26,8 +26,14 @@ def _source_aliases_from_item(item: "DigestItem") -> dict[str, str]:
         aliases["openalex"] = str(item.raw["openalex_id"])
     if item.source == "semantic_scholar" and item.raw.get("semantic_scholar_id"):
         aliases["semantic_scholar"] = str(item.raw["semantic_scholar_id"])
+    if item.source == "google_scholar" and item.raw.get("google_scholar_id"):
+        aliases["google_scholar"] = str(item.raw["google_scholar_id"])
     if item.source == "crossref" and item.doi:
         aliases["crossref"] = item.doi.lower()
+    if item.source == "core" and item.raw.get("core_id"):
+        aliases["core"] = str(item.raw["core_id"])
+    if item.source == "dblp" and item.raw.get("dblp_key"):
+        aliases["dblp"] = str(item.raw["dblp_key"])
     if item.source == "ieee" and item.raw.get("ieee_article_number"):
         aliases["ieee"] = str(item.raw["ieee_article_number"])
     if item.source == "openreview" and item.raw.get("openreview_id"):
@@ -46,6 +52,7 @@ def _evidence_from_item(item: "DigestItem") -> dict[str, Any]:
                 "title": item.title,
                 "url": item.url,
                 "pdf_url": item.pdf_url,
+                "pdf_urls": item.raw.get("pdf_urls") or [],
                 "abstract": item.abstract,
                 "doi": item.doi,
                 "published_at": item.published_at,
@@ -141,6 +148,8 @@ class MaterialRecord:
     abstract: str | None = None
     repo_description: str | None = None
     readme_excerpt: str | None = None
+    paper_text_excerpt: str | None = None
+    paper_text_status: dict[str, Any] = field(default_factory=dict)
     categories: list[str] = field(default_factory=list)
     language: str | None = None
     stars: int | None = None
@@ -225,6 +234,7 @@ class MaterialRecord:
             update_label=item.update_label,
             source_aliases={**_source_aliases_from_item(item), **(item.raw.get("source_aliases") or {})},
             evidence=_merge_evidence(_evidence_from_item(item), item.raw.get("evidence") or {}),
+            paper_text_status=item.raw.get("paper_text_status") or {},
             raw={
                 **item.raw,
                 "arxiv_version": item.arxiv_version,
@@ -346,7 +356,7 @@ class RunStatus:
                 state = "成功" if source.ok else "失败"
                 detail = f"{source.item_count} 条" if source.ok else (source.error or "未知错误")
             parts.append(f"{source.name} {state}（{detail}）")
-        return "；".join(parts) if parts else "无数据源状态"
+        return "；".join(parts) if parts else "未记录数据源状态（可能由离线重渲染或素材库 fallback 生成）"
 
 
 @dataclass
@@ -357,6 +367,8 @@ class SelectedRecord:
     title: str
     url: str
     selected_at: str
+    pdf_url: str | None = None
+    local_pdf_path: str | None = None
     arxiv_version: str | None = None
     github_pushed_at: str | None = None
     github_latest_release_tag: str | None = None
@@ -381,6 +393,8 @@ class SelectedRecord:
             title=item.title,
             url=item.url,
             selected_at=selected_at or utc_now_iso(),
+            pdf_url=item.pdf_url,
+            local_pdf_path=item.raw.get("local_pdf_path"),
             arxiv_version=item.arxiv_version,
             github_pushed_at=item.raw.get("pushed_at") if item.source == "github" else None,
             github_latest_release_tag=item.raw.get("latest_release_tag") if item.source == "github" else None,
@@ -403,6 +417,8 @@ class SelectedRecord:
             title=material.title,
             url=material.url,
             selected_at=selected_at or utc_now_iso(),
+            pdf_url=material.pdf_url,
+            local_pdf_path=material.raw.get("local_pdf_path"),
             arxiv_version=material.raw.get("arxiv_version"),
             github_pushed_at=material.raw.get("pushed_at") if material.source == "github" else None,
             github_latest_release_tag=material.raw.get("latest_release_tag") if material.source == "github" else None,

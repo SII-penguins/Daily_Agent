@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import os
 from dataclasses import dataclass
 from datetime import date, datetime, timezone
 from pathlib import Path
@@ -10,21 +9,32 @@ from daily_agent.config import AppConfig, load_config
 from daily_agent.connectors import (
     enrich_github_update_signals,
     fetch_arxiv,
+    fetch_citation_discovery,
+    fetch_core,
     fetch_crossref,
+    fetch_dblp,
     fetch_github,
+    fetch_google_scholar,
     fetch_ieee,
     fetch_neurips,
+    enrich_open_access_links,
+    enrich_unpaywall_links,
     fetch_openalex,
     fetch_openreview,
     fetch_pmlr,
     fetch_semantic_scholar,
+    google_scholar_skip_reason,
 )
+from daily_agent.connectors.paper_text import enrich_paper_texts
+from daily_agent.connectors.citation_context import enrich_citation_contexts
+from daily_agent.connectors.pdf_cache import cache_selected_pdfs
 from daily_agent.delivery.feishu import deliver_weekly_report
 from daily_agent.editorial import approve_publication, build_shortlist, draft_report_items, review_draft
 from daily_agent.health import evaluate_run_health
 from daily_agent.models import ApprovedItem, DeliveryStatus, DigestItem, MaterialRecord, RunStatus, SourceStatus
 from daily_agent.rendering import render_daily_html, render_daily_markdown
 from daily_agent.scoring import apply_feedback_scores, deduplicate_items, score_items, select_items
+from daily_agent.secrets import credential_value
 from daily_agent.storage import (
     cleanup_retention,
     load_health_report,
@@ -34,7 +44,13 @@ from daily_agent.storage import (
     select_library_candidates,
     upsert_materials,
     write_editorial_artifacts,
+    write_bibtex_export,
+    write_csv_export,
+    write_daily_html_report,
+    write_daily_report,
+    write_endnote_xml_export,
     write_published_index,
+    write_ris_export,
     write_health_report,
     write_run_log,
     write_selected,
@@ -48,9 +64,15 @@ class PipelineResult:
     run_date: date
     items: list[ApprovedItem]
     daily_markdown: str
+    daily_report_path: Path
+    daily_html_path: Path
     weekly_report_path: Path
     weekly_html_path: Path
     selected_path: Path
+    bibtex_path: Path
+    ris_path: Path
+    csv_path: Path
+    endnote_xml_path: Path
     status: RunStatus
     health: dict[str, Any]
     health_path: Path
@@ -60,7 +82,7 @@ def run_pipeline(
     root: str | Path | None = None,
     run_date: date | None = None,
     dry_run: bool = True,
-    use_llm: bool = False,
+    use_llm: bool = True,
     delivery_mode: str = "local",
 ) -> PipelineResult:
     config = load_config(root)
@@ -92,18 +114,30 @@ def run_pipeline(
         upsert_materials(config, selected_items, today)
     library = load_material_library(config)
     shortlist = _build_shortlist_from_library(config, library, today)
+    shortlist = enrich_open_access_links(shortlist, config)
+    shortlist = enrich_unpaywall_links(shortlist, config)
+    shortlist = enrich_paper_texts(shortlist, config)
+    shortlist = enrich_citation_contexts(shortlist, config)
     drafts = draft_report_items(config, shortlist, use_llm=use_llm)
     reviews = review_draft(config, drafts, use_llm=use_llm)
     approved = approve_publication(config, shortlist, drafts, reviews)
+    approved = cache_selected_pdfs(approved, config, today)
 
     if not approved:
         status.fallback = "编辑部未批准任何候选内容"
 
-    daily_markdown = render_daily_markdown(approved, today, status)
-    daily_html = render_daily_html(approved, today, status)
+    insight_config = config.sources.get("insights", {}) or {}
+    daily_markdown = render_daily_markdown(approved, today, status, insight_config=insight_config)
+    daily_html = render_daily_html(approved, today, status, insight_config=insight_config)
+    daily_report_path = write_daily_report(config, today, daily_markdown)
+    daily_html_path = write_daily_html_report(config, today, daily_html)
     weekly_report_path = write_weekly_report(config, today, daily_markdown)
     weekly_html_path = write_weekly_html_report(config, today, daily_html)
     selected_path = write_selected(config, approved, today, dry_run=dry_run)
+    bibtex_path = write_bibtex_export(config, approved, today, dry_run=dry_run)
+    ris_path = write_ris_export(config, approved, today, dry_run=dry_run)
+    csv_path = write_csv_export(config, approved, today, dry_run=dry_run)
+    endnote_xml_path = write_endnote_xml_export(config, approved, today, dry_run=dry_run)
     editorial_path = write_editorial_artifacts(config, today, shortlist, drafts, reviews, approved)
     if not dry_run:
         mark_materials_published(config, [item.material for item in approved], today)
@@ -126,20 +160,37 @@ def run_pipeline(
             status.errors.append(f"Delivery: {exc}")
     if status.delivery and not status.delivery.ok and status.delivery.error:
         _add_error_once(status, f"Delivery: {status.delivery.error}")
-    _run_post_delivery_checks(status, approved, weekly_report_path, weekly_html_path, selected_path, delivery_mode, dry_run)
+    _run_post_delivery_checks(
+        status,
+        approved,
+        weekly_report_path,
+        weekly_html_path,
+        selected_path,
+        delivery_mode,
+        dry_run,
+        config=config,
+        daily_report_path=daily_report_path,
+        daily_html_path=daily_html_path,
+    )
 
     write_run_log(config, today, status, dry_run=dry_run)
     previous_health = load_health_report(config)
-    health = evaluate_run_health(config, today, dry_run, status, approved, shortlist, drafts, reviews, weekly_report_path, weekly_html_path, selected_path, editorial_path, previous_health)
+    health = evaluate_run_health(config, today, dry_run, status, approved, shortlist, drafts, reviews, weekly_report_path, weekly_html_path, selected_path, editorial_path, previous_health, use_llm=use_llm)
     health_path = write_health_report(config, health)
 
     return PipelineResult(
         run_date=today,
         items=approved,
         daily_markdown=daily_markdown,
+        daily_report_path=daily_report_path,
+        daily_html_path=daily_html_path,
         weekly_report_path=weekly_report_path,
         weekly_html_path=weekly_html_path,
         selected_path=selected_path,
+        bibtex_path=bibtex_path,
+        ris_path=ris_path,
+        csv_path=csv_path,
+        endnote_xml_path=endnote_xml_path,
         status=status,
         health=health,
         health_path=health_path,
@@ -170,7 +221,11 @@ def _fetch_windowed_sources(config: AppConfig, target_dt: datetime, arxiv_window
     raw_items.extend(_fetch_source(f"GitHub/{github_window}d", lambda: fetch_github(config, target_dt, window_days=github_window), status))
     raw_items.extend(_fetch_source(f"OpenAlex/{arxiv_window}d", lambda: fetch_openalex(config, target_dt, window_days=arxiv_window), status))
     raw_items.extend(_fetch_source(f"Semantic Scholar/{arxiv_window}d", lambda: fetch_semantic_scholar(config, target_dt, window_days=arxiv_window), status))
+    raw_items.extend(_fetch_source(f"Citation Discovery/{arxiv_window}d", lambda: fetch_citation_discovery(config, target_dt, window_days=arxiv_window, library=load_material_library(config)), status))
+    raw_items.extend(_fetch_source(f"Google Scholar/{arxiv_window}d", lambda: fetch_google_scholar(config, target_dt, window_days=arxiv_window), status, skip_reason=google_scholar_skip_reason(config)))
     raw_items.extend(_fetch_source(f"Crossref/{arxiv_window}d", lambda: fetch_crossref(config, target_dt, window_days=arxiv_window), status))
+    raw_items.extend(_fetch_source(f"CORE/{arxiv_window}d", lambda: fetch_core(config, target_dt, window_days=arxiv_window), status, skip_reason=_core_skip_reason(config)))
+    raw_items.extend(_fetch_source(f"DBLP/{arxiv_window}d", lambda: fetch_dblp(config, target_dt, window_days=arxiv_window), status))
     raw_items.extend(_fetch_source(f"IEEE/{arxiv_window}d", lambda: fetch_ieee(config, target_dt, window_days=arxiv_window), status, skip_reason=_ieee_skip_reason(config)))
     raw_items.extend(_fetch_source(f"OpenReview/{arxiv_window}d", lambda: fetch_openreview(config, target_dt, window_days=arxiv_window), status))
     raw_items.extend(_fetch_source(f"PMLR/{arxiv_window}d", lambda: fetch_pmlr(config, target_dt, window_days=arxiv_window), status))
@@ -201,6 +256,8 @@ def upsert_materials_preview(library: dict[str, MaterialRecord], items: list[Dig
             incoming.published_dates = existing.published_dates
             incoming.quality_status = existing.quality_status if existing.quality_status in {"published", "archived", "rejected"} else incoming.quality_status
             incoming.readme_excerpt = existing.readme_excerpt or incoming.readme_excerpt
+            incoming.paper_text_excerpt = existing.paper_text_excerpt or incoming.paper_text_excerpt
+            incoming.paper_text_status = incoming.paper_text_status or existing.paper_text_status
             incoming.detail = {**existing.detail, **incoming.detail}
             incoming.source_aliases = {**existing.source_aliases, **incoming.source_aliases}
             incoming.evidence = {"sources": {**((existing.evidence or {}).get("sources", {}) or {}), **((incoming.evidence or {}).get("sources", {}) or {})}}
@@ -215,7 +272,11 @@ def _build_shortlist_from_library(config: AppConfig, library: dict[str, Material
 
 def _shortlist_target(config: AppConfig) -> int:
     max_items = int(config.quota.get("max_items", 10))
-    return min(max_items, int(config.sources.get("selection", {}).get("top_candidates_for_llm", max_items)))
+    paper_target = int(config.quota.get("paper_target", 7))
+    github_target = int(config.quota.get("github_target", 3))
+    multiplier = max(1, int(config.quota.get("paper_review_multiplier", 2)))
+    paper_review_target = max(paper_target, int(config.quota.get("paper_review_target", paper_target * multiplier)))
+    return max(max_items, paper_review_target + github_target)
 
 
 def _run_post_delivery_checks(
@@ -226,13 +287,25 @@ def _run_post_delivery_checks(
     selected_path: Path,
     delivery_mode: str,
     dry_run: bool,
+    config: AppConfig | None = None,
+    daily_report_path: Path | None = None,
+    daily_html_path: Path | None = None,
 ) -> None:
     if not approved:
         _add_error_once(status, "No approved items")
+    if config is not None:
+        min_papers = int(config.quota.get("paper_target", 7))
+        approved_papers = sum(1 for item in approved if getattr(item, "item_type", None) == "paper")
+        if approved_papers < min_papers:
+            _add_error_once(status, f"Approved papers below target: {approved_papers}/{min_papers}")
     if not weekly_report_path.exists():
         _add_error_once(status, f"Weekly report missing: {weekly_report_path}")
     if not weekly_html_path.exists():
         _add_error_once(status, f"Weekly HTML report missing: {weekly_html_path}")
+    if daily_report_path is not None and not daily_report_path.exists():
+        _add_error_once(status, f"Daily report missing: {daily_report_path}")
+    if daily_html_path is not None and not daily_html_path.exists():
+        _add_error_once(status, f"Daily HTML report missing: {daily_html_path}")
     if not selected_path.exists():
         _add_error_once(status, f"Selected JSON missing: {selected_path}")
     if dry_run or delivery_mode != "feishu" or not status.delivery:
@@ -278,7 +351,17 @@ def _ieee_skip_reason(config: AppConfig) -> str | None:
     if not source_config.get("enabled", False):
         return "source disabled"
     env_name = str(source_config.get("api_key_env") or "IEEE_XPLORE_API_KEY")
-    if not os.environ.get(env_name):
+    if not credential_value(env_name):
+        return f"missing {env_name}"
+    return None
+
+
+def _core_skip_reason(config: AppConfig) -> str | None:
+    source_config = config.sources.get("core", {}) or {}
+    if not source_config.get("enabled", False):
+        return "source disabled"
+    env_name = str(source_config.get("api_key_env") or "CORE_API_KEY")
+    if not credential_value(env_name):
         return f"missing {env_name}"
     return None
 

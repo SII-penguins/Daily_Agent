@@ -17,6 +17,8 @@ build/
 # Local environment and secrets
 .env
 .env.*
+secrets.toml
+*.secrets.toml
 *.local.yaml
 *.local.yml
 

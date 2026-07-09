@@ -13,6 +13,22 @@ from daily_agent.rendering.markdown import render_daily_markdown
 from daily_agent.storage import load_health_report, load_material_library, write_material_library, write_selected
 
 
+def _stub_other_pipeline_sources(monkeypatch):
+    for name in [
+        "fetch_openalex",
+        "fetch_semantic_scholar",
+        "fetch_google_scholar",
+        "fetch_crossref",
+        "fetch_dblp",
+        "fetch_ieee",
+        "fetch_openreview",
+        "fetch_pmlr",
+        "fetch_neurips",
+    ]:
+        monkeypatch.setattr(f"daily_agent.pipeline.{name}", lambda config, target_dt, window_days=None: [])
+    monkeypatch.setattr("daily_agent.pipeline.enrich_paper_texts", lambda records, config: records)
+
+
 def test_arxiv_fetch_uses_submitted_date_window_and_marks_historical(tmp_path, monkeypatch):
     config = load_config("/Users/wuzixie/Daily_Agent")
     config.sources["arxiv"]["request_delay_seconds"] = 0
@@ -234,6 +250,7 @@ def test_pipeline_expands_fallback_window_when_shortlist_is_insufficient(tmp_pat
     monkeypatch.setattr("daily_agent.pipeline.load_config", lambda root=None: config)
     monkeypatch.setattr("daily_agent.pipeline.fetch_arxiv", fake_fetch_arxiv)
     monkeypatch.setattr("daily_agent.pipeline.fetch_github", lambda config, target_dt, window_days=None: [])
+    _stub_other_pipeline_sources(monkeypatch)
 
     result = run_pipeline(root=tmp_path, run_date=date(2026, 5, 18), dry_run=True, use_llm=False)
 
@@ -244,6 +261,55 @@ def test_pipeline_expands_fallback_window_when_shortlist_is_insufficient(tmp_pat
     assert not (tmp_path / "data" / "selected" / "selected-2026-05-18.json").exists()
     assert load_material_library(config)["arxiv:2401.00002"].raw["is_historical_supplement"] is True
     assert load_health_report(config)["current"]["run_date"] == "2026-05-18"
+
+
+def test_pipeline_uses_paper_review_buffer_to_keep_seven_approved_papers(tmp_path, monkeypatch):
+    config = load_config("/Users/wuzixie/Daily_Agent")
+    object.__setattr__(config, "root", tmp_path)
+    config.quota["max_items"] = 10
+    config.quota["paper_target"] = 7
+    config.quota["github_target"] = 0
+    config.quota["paper_review_multiplier"] = 2
+    config.sources["arxiv"]["fallback_windows_days"] = []
+
+    papers = []
+    for index in range(14):
+        has_method = index >= 7
+        papers.append(
+            DigestItem(
+                id=f"2401.{index:05d}",
+                source="arxiv",
+                item_type="paper",
+                title=f"Quantum paper {index}",
+                url=f"https://arxiv.org/abs/2401.{index:05d}v1",
+                abstract=(
+                    "This paper discusses a relevant quantum research problem without concrete method evidence."
+                    if not has_method
+                    else "We propose a concrete quantum error correction method. Experiments show improved logical error rates."
+                ),
+                categories=["quant-ph"],
+                arxiv_id=f"2401.{index:05d}",
+                arxiv_version="v1",
+                updated_at="2026-05-18T00:00:00+00:00",
+                pdf_url=f"https://arxiv.org/pdf/2401.{index:05d}v1",
+                score=100 - index,
+            )
+        )
+
+    monkeypatch.setattr("daily_agent.pipeline.load_config", lambda root=None: config)
+    monkeypatch.setattr("daily_agent.pipeline.fetch_arxiv", lambda config, target_dt, window_days=None: papers)
+    monkeypatch.setattr("daily_agent.pipeline.fetch_github", lambda config, target_dt, window_days=None: [])
+    monkeypatch.setattr("daily_agent.pipeline.score_items", lambda items, config, history, target_dt: sorted(items, key=lambda item: item.score, reverse=True))
+    _stub_other_pipeline_sources(monkeypatch)
+
+    result = run_pipeline(root=tmp_path, run_date=date(2026, 5, 18), dry_run=True, use_llm=False)
+    approved_papers = [item for item in result.items if item.item_type == "paper"]
+    library = load_material_library(config)
+
+    assert len(approved_papers) == 7
+    assert all(int(item.key.rsplit(".", 1)[1]) >= 7 for item in approved_papers)
+    assert len(library) == 14
+    assert not any("Approved papers below target" in error for error in result.status.errors)
 
 
 def test_pipeline_enriches_github_update_signals_before_history_scoring(tmp_path, monkeypatch):
@@ -289,6 +355,7 @@ def test_pipeline_enriches_github_update_signals_before_history_scoring(tmp_path
     monkeypatch.setattr("daily_agent.pipeline.load_config", lambda root=None: config)
     monkeypatch.setattr("daily_agent.pipeline.fetch_arxiv", lambda config, target_dt, window_days=None: [])
     monkeypatch.setattr("daily_agent.pipeline.fetch_github", lambda config, target_dt, window_days=None: [current])
+    _stub_other_pipeline_sources(monkeypatch)
     monkeypatch.setattr("daily_agent.pipeline.enrich_github_update_signals", fake_enrich)
     monkeypatch.setattr("daily_agent.editorial.enrich_github_readmes", lambda records: records)
 
@@ -335,6 +402,7 @@ def test_pipeline_expansion_respects_recent_publication_suppression(tmp_path, mo
     monkeypatch.setattr("daily_agent.pipeline.load_config", lambda root=None: config)
     monkeypatch.setattr("daily_agent.pipeline.fetch_arxiv", lambda config, target_dt, window_days=None: [older])
     monkeypatch.setattr("daily_agent.pipeline.fetch_github", lambda config, target_dt, window_days=None: [])
+    _stub_other_pipeline_sources(monkeypatch)
 
     result = run_pipeline(root=tmp_path, run_date=date(2026, 5, 18), dry_run=True, use_llm=False)
 

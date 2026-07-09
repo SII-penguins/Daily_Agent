@@ -1,4 +1,5 @@
 from datetime import date
+from types import SimpleNamespace
 
 import httpx
 
@@ -165,6 +166,212 @@ def test_send_local_is_formal_run(monkeypatch):
     assert main(["run", "--root", "/tmp/project", "--date", "2026-05-17", "--send", "local"]) == 0
     assert captured["dry_run"] is False
     assert captured["delivery_mode"] == "local"
+    assert captured["use_llm"] is True
+
+
+def test_run_cli_allows_explicit_no_llm(monkeypatch):
+    captured = {}
+
+    def fake_run_pipeline(**kwargs):
+        captured.update(kwargs)
+
+        class Result:
+            weekly_report_path = "report.md"
+            weekly_html_path = "report.html"
+            selected_path = "selected.json"
+            items = []
+
+            class Status:
+                delivery = None
+                errors = []
+
+            status = Status()
+
+        return Result()
+
+    monkeypatch.setattr("daily_agent.cli.run_pipeline", fake_run_pipeline)
+    assert main(["run", "--root", "/tmp/project", "--date", "2026-05-17", "--send", "local", "--no-llm"]) == 0
+    assert captured["use_llm"] is False
+
+
+def test_run_cli_prints_llm_writer_fallback_warning(monkeypatch, capsys):
+    def fake_run_pipeline(**kwargs):
+        class Result:
+            weekly_report_path = "report.md"
+            weekly_html_path = "report.html"
+            selected_path = "selected.json"
+            items = []
+            health = {
+                "current": {
+                    "overall": "warning",
+                    "checks": [{"id": "llm_writer_fallback", "status": "fail"}],
+                    "signals": {
+                        "writer": {
+                            "llm_requested": True,
+                            "llm_draft_count": 3,
+                            "rule_draft_count": 2,
+                            "llm_fallback_count": 2,
+                        }
+                    },
+                }
+            }
+
+            class Status:
+                delivery = None
+                errors = []
+
+            status = Status()
+
+        return Result()
+
+    monkeypatch.setattr("daily_agent.cli.run_pipeline", fake_run_pipeline)
+
+    assert main(["run", "--root", "/tmp/project", "--date", "2026-05-17", "--send", "local"]) == 0
+
+    assert "Writer: LLM requested, 2 rule fallback drafts" in capsys.readouterr().out
+
+
+def test_run_cli_blocks_formal_external_delivery_when_quality_is_degraded(monkeypatch, capsys):
+    from daily_agent.quality import QualityCheck, QualityProfile
+
+    called = False
+
+    def fake_run_pipeline(**kwargs):
+        nonlocal called
+        called = True
+        raise AssertionError("pipeline should not run when full-quality preflight fails")
+
+    profile = QualityProfile(
+        overall="degraded",
+        checks=[QualityCheck(key="ieee", name="IEEE Xplore", status="missing", ok=False, detail="missing IEEE_XPLORE_API_KEY")],
+    )
+    monkeypatch.setattr("daily_agent.cli.load_config", lambda root=None: load_config("/Users/wuzixie/Daily_Agent"))
+    monkeypatch.setattr("daily_agent.cli.run_quality_check", lambda config: profile)
+    monkeypatch.setattr("daily_agent.cli.run_pipeline", fake_run_pipeline)
+
+    code = main(["run", "--root", "/tmp/project", "--date", "2026-05-17", "--send", "feishu"])
+
+    assert code == 2
+    assert called is False
+    assert "Full-quality preflight failed" in capsys.readouterr().out
+
+
+def test_run_cli_require_full_blocks_degraded_dry_run(monkeypatch, capsys):
+    from daily_agent.quality import QualityCheck, QualityProfile
+
+    called = False
+
+    def fake_run_pipeline(**kwargs):
+        nonlocal called
+        called = True
+        raise AssertionError("pipeline should not run when required full-quality preflight fails")
+
+    profile = QualityProfile(
+        overall="degraded",
+        checks=[QualityCheck(key="core", name="CORE", status="missing", ok=False, detail="missing CORE_API_KEY")],
+    )
+    monkeypatch.setattr("daily_agent.cli.load_config", lambda root=None: load_config("/Users/wuzixie/Daily_Agent"))
+    monkeypatch.setattr("daily_agent.cli.run_quality_check", lambda config: profile)
+    monkeypatch.setattr("daily_agent.cli.run_pipeline", fake_run_pipeline)
+
+    code = main(["run", "--root", "/tmp/project", "--date", "2026-05-17", "--dry-run", "--require-full"])
+
+    assert code == 2
+    assert called is False
+    assert "Full-quality preflight failed" in capsys.readouterr().out
+
+
+def test_run_cli_require_full_overrides_allow_degraded(monkeypatch):
+    from daily_agent.quality import QualityCheck, QualityProfile
+
+    def fake_run_pipeline(**kwargs):
+        raise AssertionError("pipeline should not run when --require-full is explicit")
+
+    profile = QualityProfile(
+        overall="degraded",
+        checks=[QualityCheck(key="ieee", name="IEEE Xplore", status="missing", ok=False, detail="missing IEEE_XPLORE_API_KEY")],
+    )
+    monkeypatch.setattr("daily_agent.cli.load_config", lambda root=None: load_config("/Users/wuzixie/Daily_Agent"))
+    monkeypatch.setattr("daily_agent.cli.run_quality_check", lambda config: profile)
+    monkeypatch.setattr("daily_agent.cli.run_pipeline", fake_run_pipeline)
+
+    assert main(["run", "--root", "/tmp/project", "--date", "2026-05-17", "--dry-run", "--require-full", "--allow-degraded"]) == 2
+
+
+def test_run_cli_allow_degraded_bypasses_formal_delivery_preflight(monkeypatch):
+    from daily_agent.quality import QualityCheck, QualityProfile
+
+    captured = {}
+
+    def fake_run_pipeline(**kwargs):
+        captured.update(kwargs)
+
+        class Result:
+            weekly_report_path = "report.md"
+            weekly_html_path = "report.html"
+            selected_path = "selected.json"
+            items = []
+
+            class Status:
+                delivery = None
+                errors = []
+
+            status = Status()
+
+        return Result()
+
+    profile = QualityProfile(
+        overall="degraded",
+        checks=[QualityCheck(key="ieee", name="IEEE Xplore", status="missing", ok=False, detail="missing IEEE_XPLORE_API_KEY")],
+    )
+    monkeypatch.setattr("daily_agent.cli.load_config", lambda root=None: load_config("/Users/wuzixie/Daily_Agent"))
+    monkeypatch.setattr("daily_agent.cli.run_quality_check", lambda config: profile)
+    monkeypatch.setattr("daily_agent.cli.run_pipeline", fake_run_pipeline)
+
+    code = main(["run", "--root", "/tmp/project", "--date", "2026-05-17", "--send", "feishu", "--allow-degraded"])
+
+    assert code == 0
+    assert captured["delivery_mode"] == "feishu"
+
+
+def test_run_cli_prints_quality_blockers_from_health(monkeypatch, capsys):
+    def fake_run_pipeline(**kwargs):
+        return SimpleNamespace(
+            weekly_report_path="report.md",
+            weekly_html_path="report.html",
+            selected_path="selected.json",
+            items=[],
+            status=SimpleNamespace(delivery=None, errors=[]),
+            health={
+                "current": {
+                    "overall": "warning",
+                    "checks": [{"status": "fail"}],
+                    "signals": {
+                        "quality": {
+                            "overall": "degraded",
+                            "missing_count": 1,
+                            "fallback_count": 1,
+                            "blockers": [
+                                {"name": "IEEE Xplore", "status": "missing"},
+                                {"name": "GitHub", "status": "fallback"},
+                            ],
+                        }
+                    },
+                }
+            },
+        )
+
+    monkeypatch.setattr("daily_agent.cli.enforce_full_profile", lambda root, write=True: SimpleNamespace(changed=False))
+    monkeypatch.setattr("daily_agent.cli.run_pipeline", fake_run_pipeline)
+
+    code = main(["run", "--root", "/tmp/project", "--date", "2026-05-17", "--dry-run"])
+    output = capsys.readouterr().out
+
+    assert code == 0
+    assert "Health: warning (1 issue)" in output
+    assert "Quality: degraded (1 missing, 1 fallback/partial, 2 blockers)" in output
+    assert "Quality blocker: IEEE Xplore missing" in output
+    assert "Quality blocker: GitHub fallback" in output
 
 
 def test_feishu_disabled_falls_back_to_local(tmp_path):

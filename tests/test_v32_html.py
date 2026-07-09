@@ -10,6 +10,22 @@ from daily_agent.rendering.html import render_daily_html
 from daily_agent.storage import cleanup_retention, load_health_report, weekly_html_report_path, write_material_library, write_weekly_html_report
 
 
+def _stub_other_pipeline_sources(monkeypatch):
+    for name in [
+        "fetch_openalex",
+        "fetch_semantic_scholar",
+        "fetch_google_scholar",
+        "fetch_crossref",
+        "fetch_dblp",
+        "fetch_ieee",
+        "fetch_openreview",
+        "fetch_pmlr",
+        "fetch_neurips",
+    ]:
+        monkeypatch.setattr(f"daily_agent.pipeline.{name}", lambda config, target_dt, window_days=None: [])
+    monkeypatch.setattr("daily_agent.pipeline.enrich_paper_texts", lambda records, config: records)
+
+
 def _paper(update_label=None, unsafe=False):
     title = 'Quantum <script>alert(1)</script> & paper' if unsafe else "Quantum circuit method"
     url = "javascript:alert(1)" if unsafe else "https://arxiv.org/abs/2401.00001v1"
@@ -88,7 +104,9 @@ def test_render_daily_html_sections_fields_labels_and_ranks():
     assert "1. 【历史补充/版本更新】Quantum circuit method" in html
     assert "2. 【重大更新】owner/repo" in html
     assert "解决问题" in html
-    assert "方法/技术路线" in html
+    assert "方法" in html
+    assert "为什么有效" in html
+    assert "技术路线" in html
     assert "核心能力" in html
     assert "stars/language/updated_at" in html
     assert "反馈编号" in html
@@ -166,6 +184,7 @@ def test_pipeline_writes_html_and_health_tracks_it(tmp_path, monkeypatch):
     monkeypatch.setattr("daily_agent.pipeline.load_config", lambda root=None: config)
     monkeypatch.setattr("daily_agent.pipeline.fetch_arxiv", lambda config, target_dt, window_days=None: [])
     monkeypatch.setattr("daily_agent.pipeline.fetch_github", lambda config, target_dt, window_days=None: [])
+    _stub_other_pipeline_sources(monkeypatch)
 
     result = run_pipeline(root=tmp_path, run_date=date(2026, 5, 18), dry_run=True, use_llm=False)
     health = load_health_report(config)
@@ -185,8 +204,9 @@ def test_cli_prints_html_report_path(tmp_path, monkeypatch, capsys):
     monkeypatch.setattr("daily_agent.pipeline.load_config", lambda root=None: config)
     monkeypatch.setattr("daily_agent.pipeline.fetch_arxiv", lambda config, target_dt, window_days=None: [])
     monkeypatch.setattr("daily_agent.pipeline.fetch_github", lambda config, target_dt, window_days=None: [])
+    _stub_other_pipeline_sources(monkeypatch)
 
-    assert main(["run", "--root", str(tmp_path), "--date", "2026-05-18", "--dry-run"]) == 0
+    assert main(["run", "--root", str(tmp_path), "--date", "2026-05-18", "--dry-run", "--no-llm"]) == 0
     output = capsys.readouterr().out
 
     assert "Daily Agent report generated:" in output

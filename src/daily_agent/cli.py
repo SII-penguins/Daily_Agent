@@ -1,17 +1,24 @@
 from __future__ import annotations
 
 import argparse
+import contextlib
 from datetime import date, datetime, timezone
+import os
 from pathlib import Path
 
 from daily_agent.config import load_config
+from daily_agent.connectors.google_scholar import SCHOLARLY_RUNTIME_ENV
 from daily_agent.feedback.feishu_comments import sync_feishu_feedback
 from daily_agent.feedback.ingest import build_feedback_event, record_feedback_text
 from daily_agent.feedback.profile import build_feedback_profile, render_feedback_profile
 from daily_agent.feedback.server import DEFAULT_FEEDBACK_HOST, DEFAULT_FEEDBACK_PORT, feedback_form_action, serve_feedback
 from daily_agent.feedback.suggestions import apply_feedback_suggestion, format_suggestion, generate_feedback_suggestions, process_suggestion_response_text, reject_feedback_suggestion, save_feedback_suggestions
+from daily_agent.full_profile import enforce_full_profile, render_full_profile_result
 from daily_agent.pipeline import run_pipeline
+from daily_agent.preview import DEFAULT_REPORT_PORT, serve_preview, start_preview_server
+from daily_agent.quality import render_quality_check, run_quality_check
 from daily_agent.scheduling import build_schedule_preview
+from daily_agent.secrets import render_external_secrets_template, render_missing_external_secrets_template, render_secrets_status, write_external_secrets_template, write_missing_external_secrets_template
 from daily_agent.source_check import render_source_check, run_source_check
 from daily_agent.storage import append_feedback_event, load_feedback_events, load_feedback_suggestions, load_material_library, resolve_published_item, set_feedback_event_status
 
@@ -25,7 +32,12 @@ def main(argv: list[str] | None = None) -> int:
     run_parser.add_argument("--date", default="today", help="YYYY-MM-DD or today")
     run_parser.add_argument("--dry-run", action="store_true", default=False)
     run_parser.add_argument("--send", choices=["local", "cc-connect", "cc_connect", "feishu"], default="local")
-    run_parser.add_argument("--llm", action="store_true", help="Use local Claude Code for structured summaries")
+    run_parser.set_defaults(llm=True)
+    run_parser.add_argument("--llm", dest="llm", action="store_true", help="Use local Claude Code for structured summaries (default)")
+    run_parser.add_argument("--no-llm", dest="llm", action="store_false", help="Disable local Claude Code drafting and use rule-based summaries only")
+    run_parser.add_argument("--allow-degraded", action="store_true", help="Allow formal external delivery even when the full-quality preflight is not full")
+    run_parser.add_argument("--require-full", action="store_true", help="Require a full-quality preflight even for dry-run or local runs")
+    run_parser.add_argument("--supervised-scholar-fallback", action="store_true", help="Temporarily enable the scholarly Google Scholar fallback for this supervised run")
 
     schedule_parser = subparsers.add_parser("schedule", help="Preview scheduled run setup")
     schedule_subparsers = schedule_parser.add_subparsers(dest="schedule_command")
@@ -40,6 +52,40 @@ def main(argv: list[str] | None = None) -> int:
     source_check.add_argument("--date", default="today", help="YYYY-MM-DD or today")
     source_check.add_argument("--window-days", type=int, default=7)
     source_check.add_argument("--sample-limit", type=int, default=3)
+    source_check.add_argument("--supervised-scholar-fallback", action="store_true", help="Temporarily enable the scholarly Google Scholar fallback for this supervised check")
+    source_check.add_argument("--no-enforce-full", action="store_true", help="Inspect the current config without first repairing the full-quality profile")
+
+    preview_parser = subparsers.add_parser("preview", help="Serve generated reports and feedback buttons")
+    preview_subparsers = preview_parser.add_subparsers(dest="preview_command")
+    preview_start = preview_subparsers.add_parser("start", help="Start local report preview and feedback services in the background")
+    preview_start.add_argument("--root", default=str(Path(__file__).resolve().parents[2]))
+    preview_start.add_argument("--host", default=DEFAULT_FEEDBACK_HOST)
+    preview_start.add_argument("--report-port", type=int, default=DEFAULT_REPORT_PORT)
+    preview_start.add_argument("--feedback-port", type=int, default=DEFAULT_FEEDBACK_PORT)
+    preview_start.add_argument("--report", choices=["latest", "daily", "weekly"], default="latest")
+    preview_serve = preview_subparsers.add_parser("serve", help="Run local report preview and feedback services in the foreground")
+    preview_serve.add_argument("--root", default=str(Path(__file__).resolve().parents[2]))
+    preview_serve.add_argument("--host", default=DEFAULT_FEEDBACK_HOST)
+    preview_serve.add_argument("--report-port", type=int, default=DEFAULT_REPORT_PORT)
+    preview_serve.add_argument("--feedback-port", type=int, default=DEFAULT_FEEDBACK_PORT)
+
+    quality_parser = subparsers.add_parser("quality", help="Inspect full-quality runtime readiness")
+    quality_subparsers = quality_parser.add_subparsers(dest="quality_command")
+    quality_check = quality_subparsers.add_parser("check", help="Check full-text, LLM, source, schedule, and delivery readiness")
+    quality_check.add_argument("--root", default=str(Path(__file__).resolve().parents[2]))
+    quality_check.add_argument("--require-full", action="store_true", help="Return a non-zero exit code unless every quality check is full")
+    quality_check.add_argument("--supervised-scholar-fallback", action="store_true", help="Report Google Scholar as supervised scholarly fallback when SerpAPI is missing and scholarly is installed")
+    quality_check.add_argument("--no-enforce-full", action="store_true", help="Inspect the current config without first repairing the full-quality profile")
+    enforce_full = quality_subparsers.add_parser("enforce-full", help="Report or apply the full-quality config profile")
+    enforce_full.add_argument("--root", default=str(Path(__file__).resolve().parents[2]))
+    enforce_mode = enforce_full.add_mutually_exclusive_group()
+    enforce_mode.add_argument("--dry-run", action="store_true", help="Only report config drift; this is the default")
+    enforce_mode.add_argument("--write", action="store_true", help="Write full-quality settings to config files")
+    secrets_template = quality_subparsers.add_parser("secrets-template", help="Print or write an external secrets TOML template")
+    secrets_template.add_argument("--path", default=None, help="Write the template to this external path instead of printing it")
+    secrets_template.add_argument("--force", action="store_true", help="Overwrite --path if it already exists")
+    secrets_template.add_argument("--missing-only", action="store_true", help="Include only missing or placeholder full-quality credentials")
+    quality_subparsers.add_parser("secrets-status", help="Report required full-quality credential status without printing secret values")
 
     feedback_parser = subparsers.add_parser("feedback", help="Manage feedback events")
     feedback_subparsers = feedback_parser.add_subparsers(dest="feedback_command")
@@ -126,6 +172,20 @@ def main(argv: list[str] | None = None) -> int:
     if args.command == "source":
         if args.source_command == "check":
             return _source_check(args)
+    if args.command == "preview":
+        if args.preview_command == "start":
+            return _preview_start(args)
+        if args.preview_command == "serve":
+            return _preview_serve(args)
+    if args.command == "quality":
+        if args.quality_command == "check":
+            return _quality_check(args)
+        if args.quality_command == "enforce-full":
+            return _quality_enforce_full(args)
+        if args.quality_command == "secrets-template":
+            return _quality_secrets_template(args)
+        if args.quality_command == "secrets-status":
+            return _quality_secrets_status(args)
     if args.command == "feedback":
         if args.feedback_command == "add":
             return _feedback_add(args)
@@ -175,16 +235,119 @@ def _schedule_preview(args) -> int:
 
 
 def _source_check(args) -> int:
+    with _supervised_scholar_runtime(bool(getattr(args, "supervised_scholar_fallback", False))):
+        if not getattr(args, "no_enforce_full", False):
+            _enforce_full_profile_for_runtime(args.root)
+        config = load_config(args.root)
+        run_date = date.today() if args.date == "today" else date.fromisoformat(args.date)
+        target_dt = datetime(run_date.year, run_date.month, run_date.day, tzinfo=timezone.utc)
+        results = run_source_check(config, target_dt, window_days=args.window_days, sample_limit=args.sample_limit)
+        print(render_source_check(results, run_date, args.window_days))
+        return 0
+
+
+def _preview_start(args) -> int:
     config = load_config(args.root)
-    run_date = date.today() if args.date == "today" else date.fromisoformat(args.date)
-    target_dt = datetime(run_date.year, run_date.month, run_date.day, tzinfo=timezone.utc)
-    results = run_source_check(config, target_dt, window_days=args.window_days, sample_limit=args.sample_limit)
-    print(render_source_check(results, run_date, args.window_days))
+    try:
+        result = start_preview_server(
+            config,
+            host=args.host,
+            report_port=args.report_port,
+            feedback_port=args.feedback_port,
+            report=args.report,
+        )
+    except ValueError as exc:
+        print(f"Preview error: {exc}")
+        return 1
+    state = "already running" if result.get("already_running") else f"started pid={result.get('pid')}"
+    print(f"Daily Agent preview {state}")
+    print(f"HTML report: {result['html_url']}")
+    if result.get("markdown_url"):
+        print(f"Markdown report: {result['markdown_url']}")
+    print(f"Feedback buttons: {result['feedback_url']}")
     return 0
 
 
+def _preview_serve(args) -> int:
+    config = load_config(args.root)
+    print(f"Daily Agent preview: http://{args.host}:{args.report_port}/")
+    print(f"Feedback buttons: http://{args.host}:{args.feedback_port}/")
+    print("Press Ctrl-C to stop.")
+    try:
+        serve_preview(config, host=args.host, report_port=args.report_port, feedback_port=args.feedback_port)
+    except KeyboardInterrupt:
+        print("\nDaily Agent preview stopped.")
+    return 0
+
+
+def _quality_check(args) -> int:
+    with _supervised_scholar_runtime(bool(getattr(args, "supervised_scholar_fallback", False))):
+        if not getattr(args, "no_enforce_full", False):
+            _enforce_full_profile_for_runtime(args.root)
+        config = load_config(args.root)
+        profile = run_quality_check(config)
+        print(render_quality_check(profile))
+        if args.require_full and profile.overall != "full":
+            print(f"Required full-quality profile but got {profile.overall}")
+            return 2
+        return 0
+
+
+def _quality_enforce_full(args) -> int:
+    result = enforce_full_profile(args.root, write=bool(args.write))
+    print(render_full_profile_result(result))
+    if result.changed and not result.written:
+        return 1
+    return 0
+
+
+def _quality_secrets_template(args) -> int:
+    if not args.path:
+        print(render_missing_external_secrets_template() if args.missing_only else render_external_secrets_template())
+        return 0
+    try:
+        writer = write_missing_external_secrets_template if args.missing_only else write_external_secrets_template
+        path = writer(args.path, force=args.force)
+    except FileExistsError:
+        print(f"Secrets template already exists: {args.path}. Use --force to overwrite.")
+        return 1
+    print(f"Secrets template written: {path}")
+    print(f"Set DAILY_AGENT_SECRETS_FILE={path} before running full-quality checks.")
+    return 0
+
+
+def _quality_secrets_status(args) -> int:
+    print(render_secrets_status())
+    return 0
+
+
+def _enforce_full_profile_for_runtime(root: str) -> None:
+    result = enforce_full_profile(root, write=True)
+    if result.changed:
+        print(render_full_profile_result(result))
+
+
 def _run(args) -> int:
+    with _supervised_scholar_runtime(bool(getattr(args, "supervised_scholar_fallback", False))):
+        return _run_with_runtime(args)
+
+
+def _run_with_runtime(args) -> int:
     run_date = date.today() if args.date == "today" else date.fromisoformat(args.date)
+    enforce_result = enforce_full_profile(args.root, write=True)
+    if enforce_result.changed:
+        print(render_full_profile_result(enforce_result))
+    preflight_required = bool(args.require_full or (not args.dry_run and args.send not in {"local"} and not args.allow_degraded))
+    if preflight_required:
+        config = load_config(args.root)
+        profile = run_quality_check(config)
+        if profile.overall != "full":
+            print(render_quality_check(profile))
+            if args.require_full:
+                print(f"Full-quality preflight failed: {profile.overall}. Remove --require-full only if you intentionally want a degraded local validation run.")
+            else:
+                print(f"Full-quality preflight failed: {profile.overall}. Use --allow-degraded only if you intentionally want external delivery anyway.")
+            return 2
     result = run_pipeline(
         root=args.root,
         run_date=run_date,
@@ -196,6 +359,14 @@ def _run(args) -> int:
     if getattr(result, "weekly_html_path", None):
         print(f"HTML report: {result.weekly_html_path}")
     print(f"Selected JSON: {result.selected_path}")
+    if getattr(result, "bibtex_path", None):
+        print(f"BibTeX export: {result.bibtex_path}")
+    if getattr(result, "ris_path", None):
+        print(f"RIS export: {result.ris_path}")
+    if getattr(result, "csv_path", None):
+        print(f"CSV export: {result.csv_path}")
+    if getattr(result, "endnote_xml_path", None):
+        print(f"EndNote XML export: {result.endnote_xml_path}")
     print(f"Selected items: {len(result.items)}")
     if result.status.delivery:
         print(f"Delivery: {result.status.delivery.final_mode} ({'ok' if result.status.delivery.ok else 'failed'})")
@@ -207,11 +378,43 @@ def _run(args) -> int:
         issue_word = "issue" if len(failed_checks) == 1 else "issues"
         suffix = f" ({len(failed_checks)} {issue_word})" if failed_checks else ""
         print(f"Health: {current_health.get('overall', 'unknown')}{suffix}")
+        signals = current_health.get("signals") or {}
+        writer = signals.get("writer") or {}
+        if writer.get("llm_requested") and int(writer.get("llm_fallback_count") or 0) > 0:
+            print(f"Writer: LLM requested, {int(writer.get('llm_fallback_count') or 0)} rule fallback drafts")
+        quality = (signals.get("quality") or {})
+        if quality.get("overall") and quality.get("overall") != "full":
+            blockers = quality.get("blockers") or []
+            missing_count = int(quality.get("missing_count") or 0)
+            fallback_count = int(quality.get("fallback_count") or 0)
+            print(f"Quality: {quality.get('overall')} ({missing_count} missing, {fallback_count} fallback/partial, {len(blockers)} blockers)")
+            for blocker in blockers[:5]:
+                name = blocker.get("name") or blocker.get("key") or "unknown"
+                status = blocker.get("status") or "unknown"
+                print(f"- Quality blocker: {name} {status}")
+            if len(blockers) > 5:
+                print(f"- Quality blocker: +{len(blockers) - 5} more")
     if result.status.errors:
         print("Errors:")
         for error in result.status.errors:
             print(f"- {error}")
     return 0
+
+
+@contextlib.contextmanager
+def _supervised_scholar_runtime(enabled: bool):
+    if not enabled:
+        yield
+        return
+    previous = os.environ.get(SCHOLARLY_RUNTIME_ENV)
+    os.environ[SCHOLARLY_RUNTIME_ENV] = "1"
+    try:
+        yield
+    finally:
+        if previous is None:
+            os.environ.pop(SCHOLARLY_RUNTIME_ENV, None)
+        else:
+            os.environ[SCHOLARLY_RUNTIME_ENV] = previous
 
 
 def _feedback_add(args) -> int:

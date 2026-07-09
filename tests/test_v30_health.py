@@ -5,7 +5,24 @@ from daily_agent.config import load_config
 from daily_agent.health import evaluate_run_health
 from daily_agent.models import ApprovedItem, DeliveryStatus, EditorialDraft, EditorialReview, MaterialRecord, RunStatus, SourceStatus
 from daily_agent.pipeline import run_pipeline
+from daily_agent.quality import QualityCheck, QualityProfile
 from daily_agent.storage import load_health_report, write_material_library
+
+
+def _stub_other_pipeline_sources(monkeypatch):
+    for name in [
+        "fetch_openalex",
+        "fetch_semantic_scholar",
+        "fetch_google_scholar",
+        "fetch_crossref",
+        "fetch_dblp",
+        "fetch_ieee",
+        "fetch_openreview",
+        "fetch_pmlr",
+        "fetch_neurips",
+    ]:
+        monkeypatch.setattr(f"daily_agent.pipeline.{name}", lambda config, target_dt, window_days=None: [])
+    monkeypatch.setattr("daily_agent.pipeline.enrich_paper_texts", lambda records, config: records)
 
 
 def _material(key="github:owner/repo", update_label=None):
@@ -44,7 +61,7 @@ def _paths(tmp_path):
     return report, html, selected, editorial
 
 
-def _health(tmp_path, approved=None, drafts=None, reviews=None, status=None, previous=None):
+def _health(tmp_path, approved=None, drafts=None, reviews=None, status=None, previous=None, use_llm=False):
     config = load_config("/Users/wuzixie/Daily_Agent")
     object.__setattr__(config, "root", tmp_path)
     report, html, selected, editorial = _paths(tmp_path)
@@ -62,6 +79,7 @@ def _health(tmp_path, approved=None, drafts=None, reviews=None, status=None, pre
         selected,
         editorial,
         previous,
+        use_llm=use_llm,
     )
 
 
@@ -137,6 +155,84 @@ def test_health_counts_quality_signals(tmp_path):
     assert health["current"]["overall"] == "warning"
 
 
+def test_health_records_quality_profile_without_local_paths(tmp_path, monkeypatch):
+    profile = QualityProfile(
+        overall="degraded",
+        checks=[
+            QualityCheck("python_runtime", "Python runtime", "full", True, "Python at /Users/wuzixie/anaconda3/bin/python3"),
+            QualityCheck("ieee", "IEEE Xplore", "missing", False, "missing IEEE_XPLORE_API_KEY"),
+            QualityCheck("github", "GitHub", "fallback", True, "missing GITHUB_TOKEN"),
+        ],
+    )
+    monkeypatch.setattr("daily_agent.health.run_quality_check", lambda config: profile, raising=False)
+
+    health = _health(tmp_path)
+    payload = json.dumps(health, ensure_ascii=False)
+
+    assert health["current"]["summary"]["quality_overall"] == "degraded"
+    assert health["current"]["summary"]["quality_missing_count"] == 1
+    assert health["current"]["summary"]["quality_fallback_count"] == 1
+    assert health["current"]["summary"]["quality_blocker_count"] == 2
+    assert any(check["id"] == "quality_profile_degraded" and check["status"] == "fail" for check in health["current"]["checks"])
+    checks = {check["id"]: check for check in health["current"]["checks"]}
+    assert checks["quality_profile_degraded"]["metrics"]["blockers"] == 2
+    assert health["current"]["signals"]["quality"]["checks"][0] == {"key": "python_runtime", "name": "Python runtime", "status": "full", "ok": True}
+    assert health["current"]["signals"]["quality"]["blockers"] == [
+        {"key": "ieee", "name": "IEEE Xplore", "status": "missing", "ok": False, "action": None},
+        {"key": "github", "name": "GitHub", "status": "fallback", "ok": True, "action": None},
+    ]
+    assert "/Users/" not in payload
+
+
+def test_health_flags_rule_writer_fallback_when_llm_requested(tmp_path):
+    drafts = [
+        EditorialDraft(
+            key="github:owner/repo",
+            item_type="repo",
+            title="owner/repo",
+            draft_fields={"core_capabilities": "API tools"},
+            writer_notes="规则写手草稿：基于 README 片段、项目描述和元数据生成；未说明处标记 not_stated。",
+        )
+    ]
+
+    health = _health(tmp_path, drafts=drafts, use_llm=True)
+    summary = health["current"]["summary"]
+    checks = {check["id"]: check for check in health["current"]["checks"]}
+
+    assert summary["llm_requested"] is True
+    assert summary["llm_draft_count"] == 0
+    assert summary["rule_draft_count"] == 1
+    assert summary["llm_fallback_count"] == 1
+    assert checks["llm_writer_fallback"]["status"] == "fail"
+    assert health["current"]["signals"]["writer"] == {
+        "llm_requested": True,
+        "llm_draft_count": 0,
+        "rule_draft_count": 1,
+        "llm_fallback_count": 1,
+    }
+
+
+def test_health_does_not_flag_llm_draft_when_llm_requested(tmp_path):
+    drafts = [
+        EditorialDraft(
+            key="github:owner/repo",
+            item_type="repo",
+            title="owner/repo",
+            draft_fields={"core_capabilities": "API tools"},
+            writer_notes="LLM写手草稿：validated",
+        )
+    ]
+
+    health = _health(tmp_path, drafts=drafts, use_llm=True)
+    summary = health["current"]["summary"]
+    checks = {check["id"]: check for check in health["current"]["checks"]}
+
+    assert summary["llm_draft_count"] == 1
+    assert summary["rule_draft_count"] == 0
+    assert summary["llm_fallback_count"] == 0
+    assert checks["llm_writer_fallback"]["status"] == "pass"
+
+
 def test_health_counts_consecutive_problem_runs(tmp_path):
     previous = {"schema_version": 1, "history": [{"overall": "healthy"}, {"overall": "warning"}, {"overall": "failed"}]}
     health = _health(tmp_path, previous=previous)
@@ -153,6 +249,7 @@ def test_pipeline_dry_run_writes_health_json(tmp_path, monkeypatch):
     monkeypatch.setattr("daily_agent.pipeline.load_config", lambda root=None: config)
     monkeypatch.setattr("daily_agent.pipeline.fetch_arxiv", lambda config, target_dt, window_days=None: [])
     monkeypatch.setattr("daily_agent.pipeline.fetch_github", lambda config, target_dt, window_days=None: [])
+    _stub_other_pipeline_sources(monkeypatch)
 
     result = run_pipeline(root=tmp_path, run_date=date(2026, 5, 18), dry_run=True, use_llm=False)
     payload = json.dumps(load_health_report(config), ensure_ascii=False)

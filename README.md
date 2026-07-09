@@ -6,15 +6,24 @@ Daily Agent is a local-first research intelligence assistant that collects recen
 
 ## What It Does
 
-- Collects scholarly items from arXiv, OpenAlex, Semantic Scholar, Crossref, IEEE Xplore metadata, OpenReview, PMLR, and NeurIPS proceedings.
+- Collects scholarly items from arXiv, OpenAlex, Semantic Scholar, Google Scholar, Crossref, CORE, DBLP, IEEE Xplore metadata, OpenReview, PMLR, and NeurIPS proceedings.
 - Collects GitHub repositories through GitHub Search, trending pages, releases, tags, and README evidence.
-- Deduplicates papers across arXiv IDs, DOI, OpenAlex IDs, Semantic Scholar IDs, IEEE article numbers, conference IDs, and title/year fallback keys.
+- Deduplicates papers across arXiv IDs, DOI, OpenAlex IDs, Semantic Scholar IDs, Google Scholar IDs, CORE IDs, DBLP keys, IEEE article numbers, conference IDs, and title/year fallback keys.
+- Expands configured topic keywords with related terms from `keywords.expand`, improving recall across scholarly sources without scraping search result pages.
 - Scores candidates with domain relevance, freshness, top-conference signals, citations, evidence quality, GitHub quality, update signals, and user feedback.
-- Produces weekly Markdown and static HTML reports with daily blocks.
+- Explains each selected item with evidence-aware recommendation reasons, including multi-source agreement, full-text section coverage, citation context, and Scholar traceability when available.
+- Produces weekly Markdown and static HTML reports with daily blocks. Paper entries include problem, method, why it works, novelty/difference from prior work, results, limitations, links, and feedback controls.
+- Adds a compact cross-item insight section for shared trends, method differences, research gaps, citation context, and follow-up signals.
+- Enriches approved papers with OpenAlex citation context, so reports can show upstream references, downstream citing papers, and citation counts without adding a separate graph UI.
+- Discovers new papers from the citation neighborhood of previously selected or high-scoring papers, using OpenAlex citing-paper queries as a no-key personalization source.
+- Resolves open-access PDF or landing-page links through OpenAlex before full-text extraction, increasing the chance that DOI-only papers can still be read beyond their abstract.
+- Resolves DOI-based open-access PDFs and landing pages through Unpaywall when `UNPAYWALL_EMAIL` is configured. Unpaywall is used as an enrichment layer, not as a primary search source.
+- Caches verified open-access PDFs for approved papers under `data/pdfs/YYYY-MM-DD/` and adds a local PDF link to the report when a valid PDF is available.
+- Writes BibTeX, RIS, CSV, and EndNote XML sidecars next to `selected-*.json`, so promising items can move into Zotero, EndNote, LaTeX, spreadsheets, or a reading queue without manual retyping.
 - Supports Feishu delivery and Feishu comment feedback sync.
 - Supports local HTML feedback buttons through a localhost-only feedback receiver.
 
-Daily Agent does not scrape Google Scholar or IEEE web pages. Scholar-like coverage is provided through OpenAlex, Semantic Scholar, Crossref, and official publisher/conference APIs where available.
+Google Scholar support is configurable. The stable unattended path uses SerpAPI's Google Scholar API through `SERPAPI_API_KEY`. An experimental `scholarly` fallback can be installed for supervised local use, but runtime use is disabled by default because it may trigger captcha/browser automation and hang scheduled jobs. CORE uses the official CORE API through `CORE_API_KEY`. DBLP is used as a no-key computer-science bibliography source. IEEE coverage uses the official IEEE Xplore Metadata API only.
 
 ## Repository Layout
 
@@ -34,7 +43,7 @@ Runtime outputs such as `data/`, `reports/`, `logs/`, and `tmp/` are intentional
 
 ```bash
 cd Daily_Agent
-python3 -m venv .venv
+python3.11 -m venv .venv
 source .venv/bin/activate
 pip install -e ".[test]"
 ```
@@ -48,6 +57,12 @@ pip install -e ".[mcp,test]"
 which daily-agent-mcp
 ```
 
+Install the full-quality local profile when you want stronger PDF extraction and experimental Google Scholar fallback:
+
+```bash
+pip install -e ".[full,test]"
+```
+
 ## Configuration
 
 The default configuration lives in `config/`:
@@ -57,19 +72,113 @@ The default configuration lives in `config/`:
 - `config/delivery.yaml`: report paths, retention, delivery, and schedule intent.
 - `config/feedback.yaml`: feedback scoring and Feishu comment sync settings.
 
-Optional credentials are read from environment variables, not from repository files:
+Optional credentials are read from environment variables or external local secret files, not from repository files:
 
 ```bash
 export GITHUB_TOKEN="..."
 export SEMANTIC_SCHOLAR_API_KEY="..."
+export SERPAPI_API_KEY="..."
 export IEEE_XPLORE_API_KEY="..."
+export CORE_API_KEY="..."
+export UNPAYWALL_EMAIL="you@example.com"
 export DAILY_AGENT_FEISHU_APP_ID="..."
 export DAILY_AGENT_FEISHU_APP_SECRET="..."
 export DAILY_AGENT_FEISHU_FOLDER_TOKEN="..."
 export DAILY_AGENT_FEISHU_DOC_TOKEN="..."
 ```
 
-All credentials are optional except when a credential-protected source or delivery mode is enabled.
+You can also keep credentials in an external TOML file and point Daily Agent to it:
+
+```bash
+python -m daily_agent.cli quality secrets-template --path "$HOME/.daily-agent/secrets.toml"
+export DAILY_AGENT_SECRETS_FILE="$HOME/.daily-agent/secrets.toml"
+```
+
+Check credential readiness without printing secret values:
+
+```bash
+python -m daily_agent.cli quality secrets-status
+```
+
+Generate a template containing only missing or placeholder full-quality credentials:
+
+```bash
+python -m daily_agent.cli quality secrets-template --missing-only --path "$HOME/.daily-agent/missing-secrets.toml"
+```
+
+```toml
+[daily_agent.env]
+GITHUB_TOKEN = "..."
+SEMANTIC_SCHOLAR_API_KEY = "..."
+SERPAPI_API_KEY = "..."
+IEEE_XPLORE_API_KEY = "..."
+CORE_API_KEY = "..."
+UNPAYWALL_EMAIL = "you@example.com"
+
+[feishu]
+app_id = "..."
+app_secret = "..."
+folder_token = "..."
+doc_token = "..."
+```
+
+When `DAILY_AGENT_SECRETS_FILE` is not set, Daily Agent also checks `$HOME/.daily-agent/secrets.toml`, `$HOME/.config/daily-agent/secrets.toml`, and `$HOME/.cc-connect/config.toml`. The cc-connect Feishu `projects.platforms.options` shape is supported. Environment variables always override external secret files. Placeholder values such as `replace-me` are treated as missing.
+
+All credentials are optional except when a credential-protected source or delivery mode is enabled. With the default high-recall configuration, Google Scholar uses `SERPAPI_API_KEY` when present; without it, Google Scholar is skipped unless you explicitly enable the supervised `scholarly` fallback. CORE is skipped unless `CORE_API_KEY` is available. Unpaywall OA-link enrichment is skipped unless `UNPAYWALL_EMAIL` is available.
+
+For a one-off supervised Google Scholar experiment without editing config, install the full extra and pass the runtime flag:
+
+```bash
+pip install -e ".[full,test]"
+python -m daily_agent.cli quality check --root "." --supervised-scholar-fallback
+python -m daily_agent.cli source check --root "." --supervised-scholar-fallback
+python -m daily_agent.cli run --root "." --date today --dry-run --supervised-scholar-fallback
+```
+
+Use this only for local supervised runs. The supervised fallback has a runtime budget (`google_scholar.scholarly_runtime_timeout_seconds`) and returns no Google Scholar items for that run if Scholar/captcha automation stalls. For unattended 02:00/07:20/08:00 schedules, prefer `SERPAPI_API_KEY`.
+
+## Full-Quality Profile
+
+The checked-in `config/sources.yaml` is tuned for a high-recall personal radar:
+
+- Larger candidate pools for arXiv, GitHub, OpenAlex, Semantic Scholar, Crossref, CORE, DBLP, IEEE, OpenReview, PMLR, and NeurIPS.
+- GitHub search includes multiple trending languages (`python`, `typescript`, `jupyter-notebook`, and `rust`) so project discovery is not limited to a single ecosystem.
+- OpenAlex, Semantic Scholar, and Crossref use publication-type allowlists in the full profile, keeping articles, reviews, conference/proceedings papers, and preprints while filtering lower-value metadata records such as books, chapters, datasets, and editorials when the source exposes a type field.
+- Google Scholar enabled through SerpAPI first; the optional `scholarly` fallback is installed/configurable but runtime-disabled by default for unattended runs.
+- SerpAPI Google Scholar queries are date-sorted by default (`scisbd=2`) and paginated in 20-result pages, so `max_results_per_query` above 20 is honored instead of silently collapsing to one Scholar page.
+- Query expansion enabled. Each domain can define `keywords.expand` terms that are merged into scholarly source queries when `query_expansion.enabled=true`, similar to PaperLens-style synonym expansion but fully local and explicit. GitHub search interleaves explicit `github_queries` with enabled expansion terms, while scholarly sources ignore GitHub-only queries and fall back to the domain name when no paper keywords are configured.
+- Google Scholar PDF resources are preserved as ordered full-text candidates, so if a publisher PDF fails, later open-access PDF links from the same Scholar result can still be tried by the full-text stage.
+- OpenAlex open-access link resolving is enabled before full-text extraction. For DOI, OpenAlex, or arXiv-backed papers that do not already have a PDF, Daily Agent asks OpenAlex for the primary OA PDF, best OA location, and landing page, then stores those links as evidence for the PDF/HTML reader.
+- Unpaywall DOI resolving is enabled after the OpenAlex resolver and before full-text extraction. When `UNPAYWALL_EMAIL` is present, Daily Agent asks the official Unpaywall API for `best_oa_location.url_for_pdf` first and `url_for_landing_page` second, then feeds those links into the same PDF/HTML reader and report-link layer. Resolved DOI links are cached under `data/cache/unpaywall.json`, so repeated or historical candidates can reuse known OA links even when the API is unavailable for a later run.
+- Google Scholar traceability links are preserved when SerpAPI returns them: cited-by, related pages, versions, cached page, and cite endpoints are kept in metadata, with cited-by/related/versions exposed in the report links.
+- SerpAPI Google Scholar Cite enrichment is enabled. For up to 50 Scholar results per run, Daily Agent calls the official `google_scholar_cite` endpoint, stores MLA/APA/Chicago-style snippets when returned, and exposes Scholar BibTeX/EndNote/RefMan/RefWorks export links in the report.
+- PDF/full-text excerpt extraction enabled for up to 50 papers per run, with larger PDF and HTML landing-page budgets. Daily Agent scans a larger raw text window before selecting the final excerpt, so Methods, Results, and Limitations sections are less likely to be hidden behind a long introduction. The full-text stage is still bounded for unattended operation: it streams downloads, tries at most four full-text URLs per paper, and uses a 180-second run budget before gracefully downgrading remaining papers to metadata/abstract evidence.
+- OpenAlex citation-context enrichment enabled for up to 30 papers per run, adding top downstream citing papers and key upstream references to the writing evidence and report.
+- Citation-neighborhood discovery enabled. Daily Agent uses up to 20 previously selected or high-scoring seed papers, fetches up to five recent citing papers per seed from OpenAlex, and gives those candidates an explicit `citation_discovery` ranking signal.
+- Selected PDF caching is enabled for up to 10 approved papers per run. Daily Agent verifies that downloaded content starts with a PDF header, stores valid OA PDFs under `data/pdfs/YYYY-MM-DD/`, adds a local PDF link to the Markdown/HTML report, and cleans old PDF cache directories with the selected-item retention window.
+- Full-text evidence coverage is recorded for each enriched paper, including source type, section coverage, method/results/limitations notes, missing evidence, and whether the excerpt is strong enough for a deep summary. Run health flags approved papers whose full-text evidence is weak.
+- Writer outputs include `novelty_or_difference`, so each paper can explain how it differs from prior work, key references, or common baselines instead of only restating the abstract.
+- Paper recommendation reasons are evidence-aware rather than label-only: reports can say when an item has multi-source agreement, full-text method/result/limitation coverage, citation-context impact, and Google Scholar traceability.
+- A rule-based daily insight layer is explicitly enabled in `config/sources.yaml`; it compares approved items and adds up to five cross-item notes before the paper list: common trends, method differences, research gaps, citation-context signals, and follow-up signals.
+- BibTeX, RIS, CSV, and EndNote XML sidecar exports are enabled, writing `selected-YYYY-MM-DD.bib/.ris/.csv/.xml` or `selected-YYYY-MM-DD.dry-run.bib/.ris/.csv/.xml` alongside the selected JSON for the day.
+- Feedback events and Feishu comment reply sync are part of the full-quality profile, so likes/dislikes from HTML, CLI, or Feishu can keep shaping future ranking instead of becoming a separate manual chore.
+- `selection.top_candidates_for_llm` set to 50 and `paper_review_multiplier` set to 4 so Codex/Claude Code can review more candidates before the final digest.
+- Final report size remains capped by `config/interests.yaml` so the digest stays readable.
+
+Check whether the current machine is actually running this full-quality profile:
+
+```bash
+python -m daily_agent.cli quality check --root "."
+```
+
+The quality check first repairs config drift back to the full-quality profile, then reports whether local Claude Code drafting, PDF/HTML text extraction, OpenAlex OA link resolving, Unpaywall DOI resolving, citation-context enrichment, citation-neighborhood discovery, query expansion, section-note extraction, daily insight synthesis, high-recall source limits, Google Scholar, CORE, IEEE, Feishu delivery, major conference sources, and the 02:00/07:20/08:00 workflow are full, fallback, disabled, or missing. Add `--no-enforce-full` only when you intentionally want to inspect the current config without repairing it.
+
+Repair config drift back to the full-quality profile:
+
+```bash
+python -m daily_agent.cli quality enforce-full --root "." --dry-run
+python -m daily_agent.cli quality enforce-full --root "." --write
+```
 
 ## Quick Start for Codex and Claude Code
 
@@ -81,41 +190,71 @@ claude mcp add daily-agent -- daily-agent-mcp
 Then tell your agent:
 
 ```text
-Start using Daily Agent. First call setup_checklist, then ask me to customize sources, topic preferences, work time nodes, and delivery method. After that, run source_check and a dry-run report.
+Start using Daily Agent. First call setup_checklist, then ask me to customize sources, topic preferences, work time nodes, and delivery method. After that, run strict quality_check, source_check, and a require_full dry-run report.
 ```
 
 Normal use does not require you to run `daily-agent-mcp` manually. Codex or Claude Code starts it when it needs the tool.
 
 ## Manual CLI Usage
 
+Manual `run` and the Python `run_pipeline()` API use the full-quality LLM drafting path by default. Add `--no-llm` or pass `use_llm=false` only when you explicitly want the rule-based fallback.
+
 Run a local dry run:
 
 ```bash
-PYTHONPATH="./src" python3 -m daily_agent.cli run --root "." --date today --dry-run
+python -m daily_agent.cli run --root "." --date today --dry-run
+```
+
+Require full-quality readiness even for a local dry run:
+
+```bash
+python -m daily_agent.cli run --root "." --date today --dry-run --require-full
 ```
 
 Run a formal local report:
 
 ```bash
-PYTHONPATH="./src" python3 -m daily_agent.cli run --root "." --date today --send local
+python -m daily_agent.cli run --root "." --date today --send local
 ```
 
 Run with Feishu delivery:
 
 ```bash
-PYTHONPATH="./src" python3 -m daily_agent.cli run --root "." --date today --send feishu
+python -m daily_agent.cli run --root "." --date today --send feishu
 ```
+
+Formal external delivery runs a full-quality preflight first. If the profile is not full, the command exits before publishing. Use `--allow-degraded` only for an intentional emergency override.
 
 Check source connectivity without writing report state:
 
 ```bash
-PYTHONPATH="./src" python3 -m daily_agent.cli source check --root "." --date today --window-days 7
+python -m daily_agent.cli source check --root "." --date today --window-days 7
+```
+
+`source check` first repairs config drift back to the full-quality profile, then uses bounded probe limits so the review checkpoint can return quickly even when the full digest profile has high-recall source limits. Full collection still happens in `run`, where the supervised Google Scholar fallback is also protected by its runtime budget. Add `--no-enforce-full` only when debugging a specific non-full config state.
+
+Check full-quality runtime readiness:
+
+```bash
+python -m daily_agent.cli quality check --root "."
+```
+
+Check the supervised `scholarly` fallback path when SerpAPI is not configured:
+
+```bash
+python -m daily_agent.cli quality check --root "." --supervised-scholar-fallback
+```
+
+Fail fast unless every quality capability is full:
+
+```bash
+python -m daily_agent.cli quality check --root "." --require-full
 ```
 
 Preview scheduler setup:
 
 ```bash
-PYTHONPATH="./src" python3 -m daily_agent.cli schedule preview --root "." --backend cc-connect
+python -m daily_agent.cli schedule preview --root "." --backend cc-connect
 ```
 
 ## What the MCP Tool Gives Your Agent
@@ -125,9 +264,14 @@ Daily Agent is intended to be used like a local tool for Codex or Claude Code. A
 Daily Agent exposes these MCP tools:
 
 - `setup_checklist`: tells the agent what to ask you before first use.
-- `source_check`: checks enabled sources without writing report state.
-- `run_digest`: runs a dry-run or formal digest.
+- `quality_check`: repairs the full-quality profile, then requires LLM drafting, PDF extraction, Scholar/CORE/IEEE credentials, Feishu delivery, and schedule settings to be full by default. Pass `require_full=false` only when the agent should report gaps without blocking, `supervised_scholar_fallback=true` for a local supervised Scholar fallback check, and `enforce_full=false` only for config drift debugging.
+- `enforce_full_profile`: reports or applies the full-quality config profile, including high-recall source limits, conference source lists, query expansion, OpenAlex OA link resolving, Unpaywall DOI resolving, full-text extraction, citation-context enrichment, citation-neighborhood discovery, insight generation, and the 02:00/07:20/08:00 schedule.
+- `secrets_template`: prints or writes an external TOML credential template so the agent can help you fill the keys needed for full mode without touching repository files. Pass `missing_only=true` to include only missing or placeholder credentials.
+- `secrets_status`: reports full-quality credential readiness without exposing secret values.
+- `source_check`: repairs the full-quality profile, then checks enabled sources without writing report state. Pass `supervised_scholar_fallback=true` only for local supervised Scholar fallback checks, and `enforce_full=false` only for config drift debugging.
+- `run_digest`: runs a dry-run or formal digest. MCP defaults to `require_full=true`, so degraded dry-run/local runs are blocked unless you explicitly pass `require_full=false` for debugging. Pass `supervised_scholar_fallback=true` only for supervised local runs without SerpAPI.
 - `schedule_preview`: prints cc-connect or launchd schedule setup.
+- `preview_report`: starts the local report preview and feedback-button receiver, then returns clickable HTML/Markdown URLs.
 - `feedback_show`: shows recent feedback events.
 - `feedback_add_text`: records natural-language feedback.
 
@@ -139,39 +283,45 @@ The default timezone is `Asia/Shanghai`, configured in `config/delivery.yaml`. L
 
 | Time | Stage | Agent goal |
 | --- | --- | --- |
-| 02:00 | Overnight collection | Run `run_digest(dry_run=True, use_llm=True)` to fetch sources, deduplicate, score, draft, review, and render local Markdown/HTML without publishing. |
-| 07:20 | Review checkpoint | Sync or inspect feedback, call `source_check`, and ask the user whether sources, preferences, time nodes, or delivery settings need adjustment. |
-| 08:00 | Formal delivery | Run `run_digest(dry_run=False, send="feishu", use_llm=True)` to publish the formal report, update feedback targeting, and push to Feishu when configured. |
+| 02:00 | Overnight collection | Run `enforce_full_profile(write=True)`, then `quality_check(require_full=True)`; only if the profile is full, run `run_digest(dry_run=True, use_llm=True)` to fetch sources, deduplicate, score, draft, review, and render local Markdown/HTML without publishing. MCP `run_digest` defaults to `require_full=true`. |
+| 07:20 | Review checkpoint | Run `enforce_full_profile(write=True)`, inspect feedback, call `quality_check` and `source_check`, and ask the user whether sources, preferences, time nodes, or delivery settings need adjustment. |
+| 08:00 | Formal delivery | Run `enforce_full_profile(write=True)`, then `quality_check(require_full=True)`; only if the profile is full, run `run_digest(dry_run=False, send="feishu", use_llm=True)` to publish the formal report and update feedback targeting. MCP `run_digest` defaults to `require_full=true`. |
 
-The built-in `schedule_preview` currently prints the 02:00 dry-run and 08:00 formal delivery jobs. Add a separate 07:20 checkpoint if you want the agent to explicitly review feedback and configuration before delivery.
+The built-in `schedule_preview` prints all three jobs with the same sequence: repair full-quality config, run the relevant checks, then run the dry-run, checkpoint, or Feishu delivery command.
 
 ## Feedback
+
+For normal use, ask Codex or Claude Code to open the report, for example:
+
+> Open the latest Daily Agent report and enable feedback buttons.
+
+The agent should call `preview_report(root=".", report="latest")`. That single tool call starts the local HTML preview server and the local feedback-button receiver, then returns clickable report links. You do not need to start a separate terminal service for everyday use.
 
 Record structured feedback:
 
 ```bash
-PYTHONPATH="./src" python3 -m daily_agent.cli feedback add --root "." --date latest --rank 3 --signal like
-PYTHONPATH="./src" python3 -m daily_agent.cli feedback add --root "." --date latest --rank 6 --signal dislike
+python -m daily_agent.cli feedback add --root "." --date latest --rank 3 --signal like
+python -m daily_agent.cli feedback add --root "." --date latest --rank 6 --signal dislike
 ```
 
 Record natural-language feedback:
 
 ```bash
-PYTHONPATH="./src" python3 -m daily_agent.cli feedback add --root "." --text "今天第 3 条不行，第 8 条不错"
+python -m daily_agent.cli feedback add --root "." --text "今天第 3 条不行，第 8 条不错"
 ```
 
-Run the local feedback button receiver for generated HTML reports:
+For local debugging without MCP, the equivalent command is:
 
 ```bash
-PYTHONPATH="./src" python3 -m daily_agent.cli feedback serve --root "." --host 127.0.0.1 --port 8765
+python -m daily_agent.cli preview start --root "." --report latest
 ```
 
-HTML buttons and Feishu/Markdown feedback links submit `date + rank + signal` to this localhost service and write idempotent feedback events.
+HTML buttons submit `date + rank + signal` to the localhost receiver started by `preview_report` / `preview start` and write idempotent feedback events. Feishu comments can also be synced through `feedback sync`.
 
 ## Testing
 
 ```bash
-PYTHONPATH="./src" python3 -m pytest tests
+python -m pytest tests
 ```
 
 ## Safety Notes

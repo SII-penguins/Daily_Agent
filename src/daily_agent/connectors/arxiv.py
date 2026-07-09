@@ -27,13 +27,17 @@ def fetch_arxiv(config: AppConfig, target_date: datetime | None = None, window_d
     query_window_days = int(window_days or recent_days)
     max_results = int(source_config.get("max_results_per_query", 25))
     delay = float(source_config.get("request_delay_seconds", 3))
+    max_queries_per_domain = int(source_config.get("max_queries_per_domain", 0) or 0)
 
     items: list[DigestItem] = []
     seen_queries: set[str] = set()
     last_error: Exception | None = None
     rate_limited = False
     for domain in config.domains:
-        for query in _domain_queries(domain):
+        queries = _domain_queries(domain)
+        if max_queries_per_domain > 0:
+            queries = queries[:max_queries_per_domain]
+        for query in queries:
             if query in seen_queries:
                 continue
             seen_queries.add(query)

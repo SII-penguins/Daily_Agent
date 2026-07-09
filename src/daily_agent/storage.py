@@ -1,9 +1,14 @@
 from __future__ import annotations
 
 import json
+import re
+import csv
+import xml.etree.ElementTree as ET
+from io import StringIO
 from datetime import date, datetime, timedelta, timezone
 from html import escape
 from pathlib import Path
+import shutil
 from typing import Any, Iterable
 
 from daily_agent.config import AppConfig
@@ -75,6 +80,8 @@ def upsert_materials(config: AppConfig, items: list[DigestItem], run_date: date)
             incoming.published_dates = existing.published_dates
             incoming.quality_status = existing.quality_status if existing.quality_status in {"published", "archived", "rejected"} else incoming.quality_status
             incoming.readme_excerpt = existing.readme_excerpt or incoming.readme_excerpt
+            incoming.paper_text_excerpt = existing.paper_text_excerpt or incoming.paper_text_excerpt
+            incoming.paper_text_status = incoming.paper_text_status or existing.paper_text_status
             incoming.detail = {**existing.detail, **incoming.detail}
             incoming.source_aliases = {**existing.source_aliases, **incoming.source_aliases}
             incoming.evidence = _merge_evidence(existing.evidence, incoming.evidence)
@@ -101,6 +108,11 @@ def mark_materials_published(config: AppConfig, records: list[MaterialRecord], r
     stamp = run_date.isoformat()
     for record in records:
         stored = library.get(record.key, record)
+        stored.readme_excerpt = record.readme_excerpt or stored.readme_excerpt
+        stored.paper_text_excerpt = record.paper_text_excerpt or stored.paper_text_excerpt
+        stored.paper_text_status = record.paper_text_status or stored.paper_text_status
+        stored.raw = {**stored.raw, **record.raw}
+        stored.evidence = _merge_evidence(stored.evidence, record.evidence)
         if stamp not in stored.published_dates:
             stored.published_dates.append(stamp)
         stored.quality_status = "published"
@@ -155,6 +167,58 @@ def write_selected(config: AppConfig, items: list[DigestItem | MaterialRecord | 
         for record in records:
             history[record.key] = record
         _write_history_index(config, history.values(), run_date)
+    return path
+
+
+def write_bibtex_export(config: AppConfig, items: list[DigestItem | MaterialRecord | ApprovedItem], run_date: date, dry_run: bool = False) -> Path:
+    ensure_storage_dirs(config)
+    suffix = ".dry-run" if dry_run else ""
+    path = config.selected_dir / f"selected-{run_date.isoformat()}{suffix}.bib"
+    materials = [_material_from_any(item) for item in items]
+    papers = [material for material in materials if material.item_type == "paper"]
+    used_keys: set[str] = set()
+    entries = [_bibtex_entry(material, used_keys) for material in papers]
+    path.write_text("\n\n".join(entries).rstrip() + ("\n" if entries else ""), encoding="utf-8")
+    return path
+
+
+def write_ris_export(config: AppConfig, items: list[DigestItem | MaterialRecord | ApprovedItem], run_date: date, dry_run: bool = False) -> Path:
+    ensure_storage_dirs(config)
+    suffix = ".dry-run" if dry_run else ""
+    path = config.selected_dir / f"selected-{run_date.isoformat()}{suffix}.ris"
+    papers = [material for material in [_material_from_any(item) for item in items] if material.item_type == "paper"]
+    entries = [_ris_entry(material) for material in papers]
+    path.write_text("\n\n".join(entries).rstrip() + ("\n" if entries else ""), encoding="utf-8")
+    return path
+
+
+def write_endnote_xml_export(config: AppConfig, items: list[DigestItem | MaterialRecord | ApprovedItem], run_date: date, dry_run: bool = False) -> Path:
+    ensure_storage_dirs(config)
+    suffix = ".dry-run" if dry_run else ""
+    path = config.selected_dir / f"selected-{run_date.isoformat()}{suffix}.xml"
+    papers = [material for material in [_material_from_any(item) for item in items] if material.item_type == "paper"]
+    root = ET.Element("xml")
+    records = ET.SubElement(root, "records")
+    for material in papers:
+        records.append(_endnote_record(material))
+    tree = ET.ElementTree(root)
+    ET.indent(tree, space="  ")
+    tree.write(path, encoding="utf-8", xml_declaration=True)
+    return path
+
+
+def write_csv_export(config: AppConfig, items: list[DigestItem | MaterialRecord | ApprovedItem], run_date: date, dry_run: bool = False) -> Path:
+    ensure_storage_dirs(config)
+    suffix = ".dry-run" if dry_run else ""
+    path = config.selected_dir / f"selected-{run_date.isoformat()}{suffix}.csv"
+    materials = [_material_from_any(item) for item in items]
+    output = StringIO()
+    fieldnames = ["rank", "item_type", "source", "title", "authors", "doi", "url", "pdf_url", "score", "tags"]
+    writer = csv.DictWriter(output, fieldnames=fieldnames)
+    writer.writeheader()
+    for rank, material in enumerate(materials, start=1):
+        writer.writerow(_csv_row(material, rank))
+    path.write_text(output.getvalue(), encoding="utf-8")
     return path
 
 
@@ -388,6 +452,30 @@ def weekly_html_report_path(config: AppConfig, run_date: date) -> Path:
     return config.reports_dir / f"daily-agent-{year}-W{week:02d}.html"
 
 
+def daily_report_path(config: AppConfig, run_date: date) -> Path:
+    return config.reports_dir / f"daily-agent-{run_date.isoformat()}.md"
+
+
+def daily_html_report_path(config: AppConfig, run_date: date) -> Path:
+    return config.reports_dir / f"daily-agent-{run_date.isoformat()}.html"
+
+
+def write_daily_report(config: AppConfig, run_date: date, daily_markdown: str) -> Path:
+    ensure_storage_dirs(config)
+    path = daily_report_path(config, run_date)
+    path.write_text(daily_markdown.rstrip() + "\n", encoding="utf-8")
+    return path
+
+
+def write_daily_html_report(config: AppConfig, run_date: date, daily_html: str) -> Path:
+    ensure_storage_dirs(config)
+    path = daily_html_report_path(config, run_date)
+    title = f"Daily Agent 日报｜{run_date.isoformat()}"
+    body = f'<article class="daily-report" data-run-date="{run_date.isoformat()}">\n{daily_html.rstrip()}\n</article>'
+    path.write_text(_html_document(title, title, body), encoding="utf-8")
+    return path
+
+
 def write_weekly_report(config: AppConfig, run_date: date, daily_markdown: str) -> Path:
     ensure_storage_dirs(config)
     path = weekly_report_path(config, run_date)
@@ -434,6 +522,12 @@ def cleanup_retention(config: AppConfig, today: date | None = None) -> None:
 
     selected_cutoff = today - timedelta(days=selected_keep_weeks * 7)
     _delete_old_files(config.selected_dir.glob("selected-*.json"), selected_cutoff)
+    _delete_old_files(config.selected_dir.glob("selected-*.bib"), selected_cutoff)
+    _delete_old_files(config.selected_dir.glob("selected-*.ris"), selected_cutoff)
+    _delete_old_files(config.selected_dir.glob("selected-*.csv"), selected_cutoff)
+    _delete_old_files(config.selected_dir.glob("selected-*.xml"), selected_cutoff)
+    pdf_cache_dir = config.root / str((config.sources.get("pdf_cache", {}) or {}).get("output_dir") or "data/pdfs")
+    _delete_old_date_dirs(pdf_cache_dir.glob("????-??-??"), selected_cutoff)
     markdown_cutoff = today - timedelta(days=markdown_keep_days + 7)
     _delete_old_files(config.reports_dir.glob("daily-agent-*.md"), markdown_cutoff)
     html_cutoff = today - timedelta(days=html_keep_days + 7)
@@ -453,6 +547,156 @@ def _selected_record_from_any(item: DigestItem | MaterialRecord | ApprovedItem, 
     if isinstance(item, MaterialRecord):
         return SelectedRecord.from_material(item, rank=rank)
     return SelectedRecord.from_item(item, rank=rank)
+
+
+def _material_from_any(item: DigestItem | MaterialRecord | ApprovedItem) -> MaterialRecord:
+    if isinstance(item, ApprovedItem):
+        return item.material
+    if isinstance(item, MaterialRecord):
+        return item
+    return MaterialRecord.from_item(item)
+
+
+def _bibtex_entry(material: MaterialRecord, used_keys: set[str]) -> str:
+    fields: list[tuple[str, str]] = [("title", material.title)]
+    if material.authors:
+        fields.append(("author", " and ".join(material.authors)))
+    venue = str((material.raw or {}).get("venue") or "").strip()
+    if venue:
+        fields.append(("journal", venue))
+    year = _bibtex_year(material)
+    if year:
+        fields.append(("year", year))
+    if material.doi:
+        fields.append(("doi", material.doi))
+    if material.url:
+        fields.append(("url", material.url))
+    arxiv_id = material.source_aliases.get("arxiv") or ((material.raw or {}).get("arxiv_id"))
+    if arxiv_id:
+        fields.append(("eprint", str(arxiv_id)))
+        fields.append(("archivePrefix", "arXiv"))
+    key = _bibtex_key(material, year, used_keys)
+    lines = [f"@article{{{key},"]
+    for index, (name, value) in enumerate(fields):
+        suffix = "," if index < len(fields) - 1 else ""
+        lines.append(f"  {name} = {{{_bibtex_escape(value)}}}{suffix}")
+    lines.append("}")
+    return "\n".join(lines)
+
+
+def _ris_entry(material: MaterialRecord) -> str:
+    lines = ["TY  - JOUR", f"TI  - {_ris_value(material.title)}"]
+    for author in material.authors:
+        lines.append(f"AU  - {_ris_value(author)}")
+    year = _bibtex_year(material)
+    if year:
+        lines.append(f"PY  - {year}")
+    venue = str((material.raw or {}).get("venue") or "").strip()
+    if venue:
+        lines.append(f"JO  - {_ris_value(venue)}")
+    if material.doi:
+        lines.append(f"DO  - {_ris_value(material.doi)}")
+    if material.url:
+        lines.append(f"UR  - {_ris_value(material.url)}")
+    lines.append("ER  -")
+    return "\n".join(lines)
+
+
+def _endnote_record(material: MaterialRecord) -> ET.Element:
+    record = ET.Element("record")
+    ref_type = ET.SubElement(record, "ref-type", {"name": "Journal Article"})
+    ref_type.text = "17"
+    contributors = ET.SubElement(record, "contributors")
+    authors = ET.SubElement(contributors, "authors")
+    for author in material.authors:
+        ET.SubElement(authors, "author").text = author
+    titles = ET.SubElement(record, "titles")
+    ET.SubElement(titles, "title").text = material.title
+    venue = str((material.raw or {}).get("venue") or "").strip()
+    if venue:
+        ET.SubElement(titles, "secondary-title").text = venue
+    year = _bibtex_year(material)
+    if year:
+        dates = ET.SubElement(record, "dates")
+        ET.SubElement(dates, "year").text = year
+    if material.doi:
+        ET.SubElement(record, "electronic-resource-num").text = material.doi
+    if material.url:
+        urls = ET.SubElement(record, "urls")
+        ET.SubElement(urls, "related-urls").text = material.url
+    return record
+
+
+def _csv_row(material: MaterialRecord, rank: int) -> dict[str, str]:
+    return {
+        "rank": str(rank),
+        "item_type": material.item_type,
+        "source": material.source,
+        "title": material.title,
+        "authors": "; ".join(material.authors),
+        "doi": material.doi or "",
+        "url": material.url,
+        "pdf_url": material.pdf_url or "",
+        "score": f"{material.score:g}",
+        "tags": "; ".join(material.tags),
+    }
+
+
+def _bibtex_year(material: MaterialRecord) -> str:
+    candidates = [
+        material.source_updated_at,
+        (material.raw or {}).get("published_at"),
+        (material.raw or {}).get("publication_date"),
+        (material.raw or {}).get("year"),
+    ]
+    for candidate in candidates:
+        match = re.search(r"(19|20)\d{2}", str(candidate or ""))
+        if match:
+            return match.group(0)
+    return ""
+
+
+def _bibtex_key(material: MaterialRecord, year: str, used_keys: set[str]) -> str:
+    author_token = _bibtex_author_token(material)
+    title_token = "".join(_slug_words(material.title)[:2]) or "paper"
+    base = f"{author_token}{year or 'nodate'}{title_token}"
+    key = base
+    counter = 2
+    while key in used_keys:
+        key = f"{base}{counter}"
+        counter += 1
+    used_keys.add(key)
+    return key
+
+
+def _bibtex_author_token(material: MaterialRecord) -> str:
+    if material.authors:
+        words = _slug_words(material.authors[0])
+        if words:
+            return words[-1]
+    return _slug_words(material.source)[0] if _slug_words(material.source) else "paper"
+
+
+def _slug_words(value: str) -> list[str]:
+    return re.findall(r"[a-z0-9]+", value.lower())
+
+
+def _bibtex_escape(value: str) -> str:
+    replacements = {
+        "\\": r"\\",
+        "{": r"\{",
+        "}": r"\}",
+        "&": r"\&",
+        "%": r"\%",
+        "$": r"\$",
+        "#": r"\#",
+        "_": r"\_",
+    }
+    return "".join(replacements.get(char, char) for char in str(value))
+
+
+def _ris_value(value: str) -> str:
+    return re.sub(r"\s+", " ", str(value)).strip()
 
 
 def _write_json(path: Path, payload) -> None:
@@ -570,6 +814,15 @@ def _delete_old_files(paths: Iterable[Path], cutoff: date) -> None:
             path.unlink(missing_ok=True)
 
 
+def _delete_old_date_dirs(paths: Iterable[Path], cutoff: date) -> None:
+    for path in paths:
+        if not path.is_dir():
+            continue
+        dir_date = _parse_date(path.name)
+        if dir_date and dir_date < cutoff:
+            shutil.rmtree(path, ignore_errors=True)
+
+
 def _weekly_title(run_date: date) -> str:
     year, week, _ = run_date.isocalendar()
     return f"# Daily Agent 日报｜{year} 第 {week:02d} 周"
@@ -582,6 +835,10 @@ def _weekly_html_title(run_date: date) -> str:
 
 def _weekly_html_document(run_date: date, body: str) -> str:
     title = _weekly_html_title(run_date)
+    return _html_document(title, title, body)
+
+
+def _html_document(title: str, header_title: str, body: str) -> str:
     return f"""<!doctype html>
 <html lang="zh-CN">
 <head>
@@ -589,10 +846,10 @@ def _weekly_html_document(run_date: date, body: str) -> str:
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>{escape(title)}</title>
   <style>
-    :root {{ color-scheme: light; --bg: #f6f7fb; --card: #ffffff; --text: #20242a; --muted: #657083; --border: #e3e7ef; --accent: #315efb; }}
+    :root {{ color-scheme: light; --bg: #f6f7fb; --card: #ffffff; --text: #20242a; --muted: #657083; --border: #e3e7ef; --accent: #315efb; --soft: #f9fafb; }}
     body {{ margin: 0; background: var(--bg); color: var(--text); font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; line-height: 1.65; }}
     main {{ max-width: 960px; margin: 0 auto; padding: 32px 18px 56px; }}
-    .weekly-title, .daily-report, section {{ background: var(--card); border: 1px solid var(--border); border-radius: 16px; }}
+    .weekly-title, .daily-report, section {{ background: var(--card); border: 1px solid var(--border); border-radius: 8px; }}
     .weekly-title {{ padding: 24px; margin: 0 0 18px; }}
     .daily-report {{ padding: 24px; margin: 18px 0; }}
     section {{ padding: 18px; margin: 16px 0; }}
@@ -602,18 +859,22 @@ def _weekly_html_document(run_date: date, body: str) -> str:
     a:hover {{ text-decoration: underline; }}
     dl {{ display: grid; grid-template-columns: minmax(120px, 180px) 1fr; gap: 8px 16px; }}
     dt {{ color: var(--muted); font-weight: 700; }}
-    dd {{ margin: 0; }}
+    dd {{ margin: 0; min-width: 0; overflow-wrap: anywhere; }}
     .report-item {{ border-top: 1px solid var(--border); padding-top: 14px; margin-top: 14px; }}
     .report-item:first-of-type {{ border-top: 0; padding-top: 0; }}
-    .feedback-actions {{ display: inline-flex; gap: 8px; align-items: center; margin: 8px 0; }}
-    .feedback-actions button {{ appearance: none; border: 1px solid var(--border); border-radius: 6px; background: #f9fafb; color: var(--text); padding: 4px 10px; font: inherit; cursor: pointer; }}
+    .feedback-panel {{ display: flex; flex-wrap: wrap; align-items: center; gap: 10px 14px; max-width: 100%; }}
+    .feedback-copy {{ flex: 1 1 320px; min-width: min(320px, 100%); display: flex; flex-direction: column; gap: 2px; overflow-wrap: anywhere; }}
+    .feedback-title {{ font-weight: 700; color: var(--text); }}
+    .feedback-note {{ color: var(--muted); font-size: 0.93rem; }}
+    .feedback-actions {{ display: flex; flex: 0 0 auto; flex-wrap: wrap; gap: 8px; align-items: center; margin: 0; }}
+    .feedback-actions button {{ appearance: none; border: 1px solid var(--border); border-radius: 6px; background: var(--soft); color: var(--text); padding: 4px 12px; font: inherit; cursor: pointer; min-height: 34px; }}
     .feedback-actions button:hover {{ border-color: var(--accent); color: var(--accent); }}
-    @media (max-width: 680px) {{ dl {{ display: block; }} dt {{ margin-top: 10px; }} }}
+    @media (max-width: 680px) {{ dl {{ display: block; }} dt {{ margin-top: 10px; }} .feedback-actions {{ width: 100%; }} .feedback-actions button {{ flex: 1 1 120px; }} }}
   </style>
 </head>
 <body>
 <main>
-<header class="weekly-title"><h1>{escape(title)}</h1></header>
+<header class="weekly-title"><h1>{escape(header_title)}</h1></header>
 {body.rstrip()}
 </main>
 </body>

@@ -33,21 +33,22 @@ def _approved_paper(title="Quantum paper"):
     )
 
 
-def test_markdown_includes_feishu_comment_feedback_hint_and_cli_commands():
+def test_markdown_includes_compact_feishu_comment_feedback_hint():
     markdown = render_daily_markdown([_approved_paper()], date(2026, 5, 27), RunStatus())
 
     assert "- 反馈：飞书评论可写「第 1 条不错」或「第 1 条不相关」" in markdown
-    assert "`daily-agent feedback add --date 2026-05-27 --rank 1 --signal like`" in markdown
-    assert "`daily-agent feedback add --date 2026-05-27 --rank 1 --signal dislike`" in markdown
+    assert "daily-agent feedback add" not in markdown
+    assert "127.0.0.1:8765" not in markdown
 
 
-def test_html_includes_copyable_feedback_commands_without_javascript():
+def test_html_includes_feedback_buttons_without_javascript():
     html = render_daily_html([_approved_paper()], date(2026, 5, 27), RunStatus())
 
     assert "反馈" in html
     assert "飞书评论：第 1 条不错 / 第 1 条不相关" in html
-    assert "daily-agent feedback add --date 2026-05-27 --rank 1 --signal like" in html
-    assert "daily-agent feedback add --date 2026-05-27 --rank 1 --signal dislike" in html
+    assert '<button type="submit" name="signal" value="like">有用</button>' in html
+    assert '<button type="submit" name="signal" value="dislike">不相关</button>' in html
+    assert "daily-agent feedback add" not in html
     assert "javascript:" not in html
     assert "onclick" not in html
 

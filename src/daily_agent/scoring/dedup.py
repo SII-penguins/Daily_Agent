@@ -73,6 +73,12 @@ def _identity_keys(item: DigestItem) -> list[str]:
             keys.append(f"openalex:{item.raw['openalex_id']}")
         if item.raw.get("semantic_scholar_id"):
             keys.append(f"semantic_scholar:{item.raw['semantic_scholar_id']}")
+        if item.raw.get("google_scholar_id"):
+            keys.append(f"google_scholar:{item.raw['google_scholar_id']}")
+        if item.raw.get("dblp_key"):
+            keys.append(f"dblp:{item.raw['dblp_key']}")
+        if item.raw.get("core_id"):
+            keys.append(f"core:{item.raw['core_id']}")
         if item.raw.get("ieee_article_number"):
             keys.append(f"ieee:{item.raw['ieee_article_number']}")
         if item.raw.get("openreview_id"):
@@ -106,7 +112,7 @@ def _prefer_incoming(existing: DigestItem, incoming: DigestItem) -> bool:
 
 
 def _source_priority(source: str) -> int:
-    priorities = {"arxiv": 0, "openreview": 1, "pmlr": 2, "neurips": 3, "ieee": 4, "openalex": 5, "semantic_scholar": 6, "crossref": 7}
+    priorities = {"arxiv": 0, "openreview": 1, "pmlr": 2, "neurips": 3, "ieee": 4, "dblp": 5, "core": 6, "openalex": 7, "semantic_scholar": 8, "google_scholar": 9, "crossref": 10}
     return priorities.get(source, 10)
 
 
@@ -120,8 +126,14 @@ def _ensure_multisource_raw(item: DigestItem) -> None:
         aliases.setdefault("openalex", str(item.raw["openalex_id"]))
     if item.source == "semantic_scholar" and item.raw.get("semantic_scholar_id"):
         aliases.setdefault("semantic_scholar", str(item.raw["semantic_scholar_id"]))
+    if item.source == "google_scholar" and item.raw.get("google_scholar_id"):
+        aliases.setdefault("google_scholar", str(item.raw["google_scholar_id"]))
     if item.source == "crossref" and item.doi:
         aliases.setdefault("crossref", item.doi.lower())
+    if item.source == "dblp" and item.raw.get("dblp_key"):
+        aliases.setdefault("dblp", str(item.raw["dblp_key"]))
+    if item.source == "core" and item.raw.get("core_id"):
+        aliases.setdefault("core", str(item.raw["core_id"]))
     if item.source == "ieee" and item.raw.get("ieee_article_number"):
         aliases.setdefault("ieee", str(item.raw["ieee_article_number"]))
     if item.source == "openreview" and item.raw.get("openreview_id"):
@@ -136,6 +148,7 @@ def _ensure_multisource_raw(item: DigestItem) -> None:
             "title": item.title,
             "url": item.url,
             "pdf_url": item.pdf_url,
+            "pdf_urls": item.raw.get("pdf_urls") or [],
             "abstract": item.abstract,
             "doi": item.doi,
             "venue": item.raw.get("venue"),

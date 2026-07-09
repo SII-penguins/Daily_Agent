@@ -75,6 +75,36 @@ def test_openalex_fetch_normalizes_work(monkeypatch):
     assert items[0].raw["cited_by_count"] == 12
 
 
+def test_openalex_fetch_filters_publication_types(monkeypatch):
+    config = load_config("/Users/wuzixie/Daily_Agent")
+    config.sources["openalex"] = {
+        "enabled": True,
+        "max_results_per_query": 3,
+        "allowed_publication_types": ["article", "preprint", "proceedings-article"],
+    }
+    config.domains[0].include_keywords[:] = ["quantum compilation"]
+    object.__setattr__(config, "domains", [config.domains[0]])
+
+    def handler(url, **kwargs):
+        return httpx.Response(
+            200,
+            request=httpx.Request("GET", url),
+            json={
+                "results": [
+                    {"id": "https://openalex.org/W1", "title": "Keep article", "type": "article", "publication_date": "2026-05-18"},
+                    {"id": "https://openalex.org/W2", "title": "Skip book chapter", "type": "book-chapter", "publication_date": "2026-05-18"},
+                ]
+            },
+        )
+
+    monkeypatch.setattr("daily_agent.connectors.openalex.httpx.Client", lambda **kwargs: _Client(handler, **kwargs))
+
+    items = fetch_openalex(config, datetime(2026, 5, 19, tzinfo=timezone.utc), window_days=7)
+
+    assert [item.title for item in items] == ["Keep article"]
+    assert items[0].raw["publication_type"] == "article"
+
+
 def test_semantic_scholar_fetch_normalizes_paper(monkeypatch):
     config = load_config("/Users/wuzixie/Daily_Agent")
     config.sources["semantic_scholar"] = {"enabled": True, "max_results_per_query": 2}
@@ -117,6 +147,47 @@ def test_semantic_scholar_fetch_normalizes_paper(monkeypatch):
     assert items[0].raw["influential_citation_count"] == 3
 
 
+def test_semantic_scholar_fetch_filters_publication_types(monkeypatch):
+    config = load_config("/Users/wuzixie/Daily_Agent")
+    config.sources["semantic_scholar"] = {
+        "enabled": True,
+        "max_results_per_query": 3,
+        "allowed_publication_types": ["JournalArticle", "Conference", "Review", "Preprint"],
+    }
+    config.domains[0].include_keywords[:] = ["quantum compilation"]
+    object.__setattr__(config, "domains", [config.domains[0]])
+
+    def handler(url, **kwargs):
+        assert "publicationTypes" in kwargs["params"]["fields"]
+        return httpx.Response(
+            200,
+            request=httpx.Request("GET", url),
+            json={
+                "data": [
+                    {
+                        "paperId": "S2-keep",
+                        "title": "Keep conference paper",
+                        "publicationDate": "2026-05-18",
+                        "publicationTypes": ["Conference"],
+                    },
+                    {
+                        "paperId": "S2-skip",
+                        "title": "Skip book",
+                        "publicationDate": "2026-05-18",
+                        "publicationTypes": ["Book"],
+                    },
+                ]
+            },
+        )
+
+    monkeypatch.setattr("daily_agent.connectors.semantic_scholar.httpx.Client", lambda **kwargs: _Client(handler, **kwargs))
+
+    items = fetch_semantic_scholar(config, datetime(2026, 5, 19, tzinfo=timezone.utc), window_days=7)
+
+    assert [item.title for item in items] == ["Keep conference paper"]
+    assert items[0].raw["publication_types"] == ["Conference"]
+
+
 def test_crossref_fetch_normalizes_work(monkeypatch):
     config = load_config("/Users/wuzixie/Daily_Agent")
     config.sources["crossref"] = {"enabled": True, "max_results_per_query": 2}
@@ -155,10 +226,43 @@ def test_crossref_fetch_normalizes_work(monkeypatch):
     assert items[0].raw["cited_by_count"] == 7
 
 
+def test_crossref_fetch_filters_publication_types(monkeypatch):
+    config = load_config("/Users/wuzixie/Daily_Agent")
+    config.sources["crossref"] = {
+        "enabled": True,
+        "max_results_per_query": 3,
+        "allowed_publication_types": ["journal-article", "proceedings-article", "posted-content"],
+    }
+    config.domains[0].include_keywords[:] = ["quantum compilation"]
+    object.__setattr__(config, "domains", [config.domains[0]])
+
+    def handler(url, **kwargs):
+        return httpx.Response(
+            200,
+            request=httpx.Request("GET", url),
+            json={
+                "message": {
+                    "items": [
+                        {"DOI": "10.1234/keep", "title": ["Keep journal article"], "type": "journal-article", "published-online": {"date-parts": [[2026, 5, 18]]}},
+                        {"DOI": "10.1234/skip", "title": ["Skip book chapter"], "type": "book-chapter", "published-online": {"date-parts": [[2026, 5, 18]]}},
+                    ]
+                }
+            },
+        )
+
+    monkeypatch.setattr("daily_agent.connectors.crossref.httpx.Client", lambda **kwargs: _Client(handler, **kwargs))
+
+    items = fetch_crossref(config, datetime(2026, 5, 19, tzinfo=timezone.utc), window_days=7)
+
+    assert [item.title for item in items] == ["Keep journal article"]
+    assert items[0].raw["publication_type"] == "journal-article"
+
+
 def test_ieee_fetch_skips_without_key(monkeypatch):
     config = load_config("/Users/wuzixie/Daily_Agent")
     config.sources["ieee"] = {"enabled": True, "api_key_env": "IEEE_XPLORE_API_KEY"}
     monkeypatch.delenv("IEEE_XPLORE_API_KEY", raising=False)
+    monkeypatch.setenv("DAILY_AGENT_DISABLE_EXTERNAL_SECRETS", "1")
 
     assert fetch_ieee(config, datetime(2026, 5, 19, tzinfo=timezone.utc), window_days=7) == []
 
@@ -326,6 +430,7 @@ def test_pipeline_fetches_multisource_and_records_health(tmp_path, monkeypatch):
     config = load_config("/Users/wuzixie/Daily_Agent")
     object.__setattr__(config, "root", tmp_path)
     monkeypatch.delenv("IEEE_XPLORE_API_KEY", raising=False)
+    monkeypatch.setenv("DAILY_AGENT_DISABLE_EXTERNAL_SECRETS", "1")
     config.quota["max_items"] = 1
     config.quota["paper_target"] = 1
     config.quota["github_target"] = 0
@@ -353,8 +458,14 @@ def test_pipeline_fetches_multisource_and_records_health(tmp_path, monkeypatch):
     monkeypatch.setattr("daily_agent.pipeline.fetch_github", lambda config, target_dt, window_days=None: [])
     monkeypatch.setattr("daily_agent.pipeline.fetch_openalex", lambda config, target_dt, window_days=None: [paper])
     monkeypatch.setattr("daily_agent.pipeline.fetch_semantic_scholar", lambda config, target_dt, window_days=None: [])
+    monkeypatch.setattr("daily_agent.pipeline.fetch_google_scholar", lambda config, target_dt, window_days=None: [])
     monkeypatch.setattr("daily_agent.pipeline.fetch_crossref", lambda config, target_dt, window_days=None: [])
+    monkeypatch.setattr("daily_agent.pipeline.fetch_dblp", lambda config, target_dt, window_days=None: [])
     monkeypatch.setattr("daily_agent.pipeline.fetch_ieee", lambda config, target_dt, window_days=None: [])
+    monkeypatch.setattr("daily_agent.pipeline.fetch_openreview", lambda config, target_dt, window_days=None: [])
+    monkeypatch.setattr("daily_agent.pipeline.fetch_pmlr", lambda config, target_dt, window_days=None: [])
+    monkeypatch.setattr("daily_agent.pipeline.fetch_neurips", lambda config, target_dt, window_days=None: [])
+    monkeypatch.setattr("daily_agent.pipeline.enrich_paper_texts", lambda records, config: records)
 
     result = run_pipeline(root=tmp_path, run_date=date(2026, 5, 19), dry_run=True, use_llm=False)
     health = load_health_report(config)

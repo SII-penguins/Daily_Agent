@@ -1,16 +1,18 @@
 from __future__ import annotations
 
-import os
 from datetime import datetime, timedelta, timezone
 from typing import Any
 
 import httpx
 
 from daily_agent.config import AppConfig, DomainConfig
+from daily_agent.connectors.publication_types import allowed_publication_types, publication_type_allowed
+from daily_agent.connectors.queries import scholarly_queries
 from daily_agent.models import DigestItem
+from daily_agent.secrets import credential_value
 
 SEMANTIC_SCHOLAR_SEARCH_URL = "https://api.semanticscholar.org/graph/v1/paper/search"
-FIELDS = "paperId,title,abstract,url,year,publicationDate,venue,citationCount,influentialCitationCount,authors,externalIds,openAccessPdf,fieldsOfStudy"
+FIELDS = "paperId,title,abstract,url,year,publicationDate,venue,citationCount,influentialCitationCount,authors,externalIds,openAccessPdf,fieldsOfStudy,publicationTypes"
 
 
 def fetch_semantic_scholar(config: AppConfig, target_date: datetime | None = None, window_days: int | None = None) -> list[DigestItem]:
@@ -21,12 +23,17 @@ def fetch_semantic_scholar(config: AppConfig, target_date: datetime | None = Non
     days = int(window_days or source_config.get("recent_days", config.sources.get("arxiv", {}).get("recent_days", 7)))
     max_results = int(source_config.get("max_results_per_query", 10))
     timeout = float(source_config.get("timeout_seconds", 30))
+    max_queries_per_domain = int(source_config.get("max_queries_per_domain", 0) or 0)
+    allowed_types = allowed_publication_types(source_config)
     cutoff = (target - timedelta(days=days)).date().isoformat()
     items: list[DigestItem] = []
     seen_queries: set[str] = set()
     with httpx.Client(timeout=timeout, follow_redirects=True, headers=_headers(source_config)) as client:
         for domain in config.domains:
-            for query in _queries(domain):
+            queries = _queries(domain)
+            if max_queries_per_domain > 0:
+                queries = queries[:max_queries_per_domain]
+            for query in queries:
                 if query in seen_queries:
                     continue
                 seen_queries.add(query)
@@ -36,6 +43,8 @@ def fetch_semantic_scholar(config: AppConfig, target_date: datetime | None = Non
                 except httpx.HTTPError:
                     continue
                 for paper in response.json().get("data", []) or []:
+                    if not publication_type_allowed(paper.get("publicationTypes"), allowed_types):
+                        continue
                     item = _paper_to_item(paper, domain)
                     if not item.published_at or item.published_at >= cutoff:
                         items.append(item)
@@ -45,14 +54,14 @@ def fetch_semantic_scholar(config: AppConfig, target_date: datetime | None = Non
 def _headers(source_config: dict[str, Any]) -> dict[str, str]:
     headers = {"User-Agent": "Daily-Agent/0.1"}
     env_name = str(source_config.get("api_key_env") or "SEMANTIC_SCHOLAR_API_KEY")
-    token = os.environ.get(env_name)
+    token = credential_value(env_name)
     if token:
         headers["x-api-key"] = token
     return headers
 
 
 def _queries(domain: DomainConfig) -> list[str]:
-    return domain.include_keywords or domain.github_queries or [domain.name]
+    return scholarly_queries(domain)
 
 
 def _paper_to_item(paper: dict[str, Any], domain: DomainConfig) -> DigestItem:
@@ -83,6 +92,7 @@ def _paper_to_item(paper: dict[str, Any], domain: DomainConfig) -> DigestItem:
             "venue": paper.get("venue"),
             "citation_count": paper.get("citationCount"),
             "influential_citation_count": paper.get("influentialCitationCount"),
+            "publication_types": paper.get("publicationTypes") or [],
         },
     )
 

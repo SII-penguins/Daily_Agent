@@ -20,7 +20,7 @@ events:
   min_feedback_score: -15
 
 feishu_comments:
-  enabled: false
+  enabled: true
   file_type: "docx"
   page_size: 50
   include_replies: true

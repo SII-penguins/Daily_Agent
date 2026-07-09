@@ -1,27 +1,131 @@
 domains:
+  - name: hardware_aware_quantum_circuit_synthesis
+    quota_group: quantum
+    priority: 1.35
+    description: Hardware-aware quantum circuit synthesis, compilation, routing, transpilation, unitary synthesis, pulse/coupler-aware optimization, and real-device circuit deployment.
+    keywords:
+      include:
+        - hardware-aware quantum circuit synthesis
+        - hardware-aware quantum circuit
+        - hardware-aware circuit synthesis
+        - hardware-aware quantum compilation
+        - hardware-aware compilation
+        - quantum circuit synthesis
+        - quantum circuit compilation
+        - quantum compiling
+        - quantum compiler
+        - quantum transpilation
+        - quantum routing
+        - qubit routing
+        - gate synthesis
+        - unitary synthesis
+        - unitary compilation
+        - circuit synthesis
+        - circuit optimization
+        - topology-aware compilation
+        - device-aware compilation
+        - pulse-level compilation
+        - native gate synthesis
+        - Lie group diffusion
+        - SU(2)
+        - Hamiltonian simulation
+      expand:
+        - topology aware quantum compilation
+        - topology-aware transpilation
+        - noise-aware quantum compilation
+        - fidelity-aware routing
+        - connectivity-aware circuit mapping
+        - qubit allocation and routing
+        - SWAP insertion optimization
+        - native gate decomposition
+        - pulse-aware transpilation
+        - quantum architecture-aware compilation
+        - NISQ circuit optimization
+        - Clifford+T synthesis
+      exclude: []
+    arxiv_categories:
+      - quant-ph
+      - cs.LG
+      - cs.AI
+      - cs.ET
+      - cs.PL
+      - cs.SE
+    github_queries:
+      - hardware-aware quantum circuit synthesis
+      - hardware-aware quantum compilation
+      - quantum circuit synthesis
+      - quantum transpiler
+      - quantum compiler routing
+      - qubit routing
+      - unitary synthesis quantum
+      - pulse-level quantum compilation
   - name: quantum_ai
     quota_group: quantum
     priority: 1.0
-    description: Quantum AI, quantum circuit design, optimization, compilation, world models, surrogate models, RL, error mitigation/correction, and QNN.
+    description: Quantum AI, quantum circuit design, optimization, compilation, QEC, quantum hardware experiments, error mitigation/correction, and QNN.
     keywords:
       include:
         - quantum ai
         - quantum machine learning
         - quantum circuit
         - quantum circuit design
+        - quantum circuit synthesis
         - quantum circuit optimization
         - quantum compilation
         - quantum compiler
+        - quantum compiling
+        - unitary compilation
+        - unitary circuit synthesis
+        - circuit synthesis
+        - hardware-aware quantum circuit
+        - hardware-aware quantum compilation
+        - hardware-aware circuit synthesis
+        - lie group diffusion
+        - SU(2)
+        - Hamiltonian simulation
         - quantum world model
         - quantum surrogate
         - quantum reinforcement learning
         - variational quantum
         - quantum neural network
         - qnn
+        - QEC
+        - 量子纠错
+        - 纠错
         - quantum error mitigation
         - quantum error correction
+        - quantum fault tolerance
+        - 容错量子
+        - fault-tolerant quantum
+        - logical qubit
+        - 逻辑量子比特
+        - surface code
+        - 表面码
+        - 量子真机
+        - quantum hardware
+        - 真实量子设备
+        - quantum processor
+        - 量子处理器
+        - real quantum device
+        - superconducting qubit
+        - 超导量子比特
+        - trapped ion
+        - 离子阱
         - vqe
         - qaoa
+      expand:
+        - variational quantum circuit
+        - quantum circuit learning
+        - quantum architecture search
+        - noise-aware quantum machine learning
+        - error mitigation benchmark
+        - surface code decoder
+        - logical error rate
+        - magic state distillation
+        - fault-tolerant compilation
+        - superconducting quantum processor
+        - trapped-ion quantum processor
+        - quantum control optimization
       exclude: []
     arxiv_categories:
       - quant-ph
@@ -32,10 +136,23 @@ domains:
       - cs.SE
     github_queries:
       - quantum circuit optimization
+      - quantum circuit synthesis
       - quantum compiler
+      - hardware-aware quantum circuit synthesis
+      - hardware-aware quantum compilation
+      - unitary compilation
+      - lie group diffusion quantum
       - quantum machine learning
       - variational quantum algorithm
       - quantum error mitigation
+      - quantum error correction
+      - QEC
+      - 量子纠错
+      - 量子真机
+      - quantum fault tolerance
+      - quantum hardware experiment
+      - quantum processor
+      - qec surface code
       - qiskit optimization
   - name: embodied_and_agents
     quota_group: exploratory
@@ -58,6 +175,19 @@ domains:
         - SWE agent
         - computer use agent
         - multimodal agent
+      expand:
+        - tool-using agent
+        - agentic workflow
+        - long-horizon agent
+        - code agent benchmark
+        - embodied world model
+        - robotics foundation model
+        - web agent
+        - browser agent
+        - multi-agent system
+        - autonomous research agent
+        - retrieval augmented agent
+        - agent memory
       exclude: []
     arxiv_categories:
       - cs.AI
@@ -80,9 +210,18 @@ domains:
 fixed_tags:
   - quantum_ai
   - quantum_circuit
+  - quantum_circuit_synthesis
   - quantum_compilation
+  - hardware_aware_quantum_compilation
+  - unitary_compilation
   - quantum_error_mitigation
   - quantum_error_correction
+  - qec
+  - quantum_hardware
+  - quantum_processor
+  - quantum_fault_tolerance
+  - logical_qubit
+  - surface_code
   - quantum_rl
   - quantum_world_model
   - qnn
@@ -103,4 +242,5 @@ quota:
   quantum_target: 6
   exploratory_target: 4
   paper_target: 7
+  paper_review_multiplier: 4
   github_target: 3

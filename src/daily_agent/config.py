@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
@@ -40,6 +40,8 @@ class DomainConfig:
     exclude_keywords: list[str]
     arxiv_categories: list[str]
     github_queries: list[str]
+    base_include_keywords: list[str] = field(default_factory=list)
+    expanded_keywords: list[str] = field(default_factory=list)
 
 
 @dataclass(frozen=True)
@@ -89,17 +91,25 @@ def load_config(root: str | Path | None = None) -> AppConfig:
     sources = _load_yaml(sources_path)
     delivery = _load_yaml(delivery_path)
     feedback = _load_yaml(feedback_path)
+    query_expansion = sources.get("query_expansion", {}) or {}
+    expansion_enabled = bool(query_expansion.get("enabled", False))
+    max_expand_terms = int(query_expansion.get("max_expand_terms_per_domain", 0))
 
     domains = []
     for domain in interests.get("domains", []):
         keywords = domain.get("keywords", {}) or {}
+        base_include_keywords = [str(item) for item in _as_list(keywords.get("include"))]
+        expanded_keywords = _limited_unique([str(item) for item in _as_list(keywords.get("expand"))], max_expand_terms)
+        include_keywords = _unique([*base_include_keywords, *expanded_keywords]) if expansion_enabled else base_include_keywords
         domains.append(
             DomainConfig(
                 name=str(domain.get("name", "unnamed")),
                 quota_group=str(domain.get("quota_group", "exploratory")),
                 priority=float(domain.get("priority", 0.5)),
                 description=str(domain.get("description", "")),
-                include_keywords=[str(item) for item in _as_list(keywords.get("include"))],
+                base_include_keywords=base_include_keywords,
+                expanded_keywords=expanded_keywords,
+                include_keywords=include_keywords,
                 exclude_keywords=[str(item) for item in _as_list(keywords.get("exclude"))],
                 arxiv_categories=[str(item) for item in _as_list(domain.get("arxiv_categories"))],
                 github_queries=[str(item) for item in _as_list(domain.get("github_queries"))],
@@ -112,6 +122,7 @@ def load_config(root: str | Path | None = None) -> AppConfig:
         "quantum_target": 6,
         "exploratory_target": 4,
         "paper_target": 7,
+        "paper_review_multiplier": 2,
         "github_target": 3,
     }
     default_quota.update({key: int(value) for key, value in quota.items()})
@@ -129,3 +140,20 @@ def load_config(root: str | Path | None = None) -> AppConfig:
         delivery=delivery,
         feedback=feedback,
     )
+
+
+def _unique(values: list[str]) -> list[str]:
+    seen: set[str] = set()
+    result: list[str] = []
+    for value in values:
+        text = value.strip()
+        key = text.lower()
+        if text and key not in seen:
+            seen.add(key)
+            result.append(text)
+    return result
+
+
+def _limited_unique(values: list[str], limit: int) -> list[str]:
+    unique = _unique(values)
+    return unique[:limit] if limit > 0 else unique

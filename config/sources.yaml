@@ -2,7 +2,8 @@ arxiv:
   enabled: true
   recent_days: 7
   fallback_windows_days: [30, 90, 180, 365]
-  max_results_per_query: 25
+  max_results_per_query: 100
+  max_queries_per_domain: 8
   request_delay_seconds: 3
 
 github:
@@ -11,46 +12,107 @@ github:
   trending_enabled: true
   normal_active_days: 30
   high_relevance_active_days: 90
-  max_results_per_query: 10
-  update_signal_max_repos: 10
-  min_stars: 5
+  max_results_per_query: 50
+  max_queries_per_domain: 20
+  update_signal_max_repos: 50
+  min_stars: 0
+  timeout_seconds: 30
   trending_languages:
     - python
     - typescript
     - jupyter-notebook
     - rust
 
+llm_writer:
+  batch_size: 2
+  timeout_seconds: 90
+  run_budget_seconds: 180
+
 openalex:
   enabled: true
   recent_days: 7
-  max_results_per_query: 10
-  timeout_seconds: 30
+  max_results_per_query: 100
+  max_queries_per_domain: 8
+  timeout_seconds: 60
+  allowed_publication_types:
+    - article
+    - review
+    - preprint
+    - proceedings-article
 
 semantic_scholar:
   enabled: true
   recent_days: 7
-  max_results_per_query: 10
-  timeout_seconds: 30
+  max_results_per_query: 100
+  max_queries_per_domain: 8
+  timeout_seconds: 60
   api_key_env: SEMANTIC_SCHOLAR_API_KEY
+  allowed_publication_types:
+    - JournalArticle
+    - Conference
+    - Review
+    - Preprint
+
+google_scholar:
+  enabled: true
+  recent_days: 30
+  provider: serpapi
+  api_key_env: SERPAPI_API_KEY
+  scholarly_fallback_enabled: true
+  scholarly_runtime_enabled: false
+  max_results_per_query: 40
+  max_queries_per_domain: 8
+  scholarly_max_results_per_query: 20
+  sort_by_date: true
+  scisbd: 2
+  source_check_timeout_seconds: 15
+  scholarly_runtime_timeout_seconds: 60
+  timeout_seconds: 60
+  cite_enrichment_enabled: true
+  cite_enrichment_max_results_per_run: 50
+  cite_cache_enabled: true
+  cite_cache_path: data/cache/google_scholar_cites.json
+  cite_cache_max_entries: 50000
 
 crossref:
   enabled: true
   recent_days: 7
-  max_results_per_query: 10
-  timeout_seconds: 30
+  max_results_per_query: 100
+  max_queries_per_domain: 8
+  timeout_seconds: 60
+  allowed_publication_types:
+    - journal-article
+    - proceedings-article
+    - posted-content
+
+core:
+  enabled: true
+  recent_days: 30
+  max_results_per_query: 100
+  max_queries_per_domain: 8
+  timeout_seconds: 60
+  api_key_env: CORE_API_KEY
+
+dblp:
+  enabled: true
+  recent_years: 2
+  max_results_per_query: 100
+  max_queries_per_domain: 8
+  timeout_seconds: 60
 
 ieee:
   enabled: true
   recent_days: 7
-  max_results_per_query: 10
-  timeout_seconds: 30
+  max_results_per_query: 100
+  max_queries_per_domain: 8
+  timeout_seconds: 60
   api_key_env: IEEE_XPLORE_API_KEY
 
 openreview:
   enabled: true
   recent_days: 30
-  max_results_per_venue: 25
-  timeout_seconds: 30
+  max_results_per_venue: 100
+  timeout_seconds: 60
   venues:
     - name: ICLR 2026
       invitation: ICLR.cc/2026/Conference/-/Submission
@@ -60,8 +122,8 @@ openreview:
 pmlr:
   enabled: true
   recent_days: 365
-  max_results_per_volume: 25
-  timeout_seconds: 30
+  max_results_per_volume: 100
+  timeout_seconds: 60
   volumes:
     - venue: ICML 2025
       url: https://proceedings.mlr.press/v267/
@@ -71,14 +133,89 @@ pmlr:
 neurips:
   enabled: true
   recent_days: 365
-  max_results_per_year: 25
-  timeout_seconds: 30
+  max_results_per_year: 100
+  max_detail_pages_per_year: 100
+  timeout_seconds: 60
   years:
+    - 2026
     - 2025
     - 2024
 
+paper_text:
+  enabled: true
+  max_papers_per_run: 50
+  max_pdf_bytes: 30000000
+  html_fallback_enabled: true
+  max_html_bytes: 20000000
+  max_excerpt_chars: 100000
+  max_raw_text_chars: 300000
+  section_notes_enabled: true
+  max_section_note_chars: 2400
+  timeout_seconds: 15
+  max_urls_per_paper: 4
+  run_budget_seconds: 180
+
+oa_resolver:
+  enabled: true
+  max_papers_per_run: 50
+  timeout_seconds: 30
+  run_budget_seconds: 120
+
+unpaywall:
+  enabled: true
+  email_env: UNPAYWALL_EMAIL
+  max_papers_per_run: 50
+  timeout_seconds: 15
+  run_budget_seconds: 120
+  cache_enabled: true
+  cache_path: data/cache/unpaywall.json
+  cache_max_entries: 50000
+
+pdf_cache:
+  enabled: true
+  max_papers_per_run: 10
+  max_pdf_bytes: 30000000
+  max_urls_per_paper: 4
+  timeout_seconds: 15
+  run_budget_seconds: 180
+  output_dir: data/pdfs
+
+citation_context:
+  enabled: true
+  max_papers_per_run: 30
+  max_citing_papers: 8
+  max_referenced_papers: 8
+  timeout_seconds: 60
+
+citation_discovery:
+  enabled: true
+  recent_days: 30
+  max_seed_papers: 20
+  max_results_per_seed: 5
+  timeout_seconds: 60
+
+query_expansion:
+  enabled: true
+  max_expand_terms_per_domain: 16
+
+insights:
+  enabled: true
+  include_in_reports: true
+  max_insights: 5
+  min_items: 2
+  research_gap_enabled: true
+
+exports:
+  bibtex_enabled: true
+  ris_enabled: true
+  csv_enabled: true
+  endnote_xml_enabled: true
+
 selection:
   repeat_suppression_days: 30
-  historical_min_score: 25
-  top_candidates_for_llm: 10
+  historical_min_score: 15
+  top_candidates_for_llm: 50
+  topic_relevance_gate_enabled: true
+  min_topic_relevance_score: 6
+  off_topic_score_penalty: -120
   debug_include_rejected: false

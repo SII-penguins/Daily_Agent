@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import hashlib
-import os
 import re
 import tomllib
 import uuid
@@ -14,6 +13,7 @@ import httpx
 from daily_agent.config import AppConfig
 from daily_agent.delivery.cc_connect import send_via_cc_connect
 from daily_agent.models import DeliveryStatus
+from daily_agent.secrets import credential_value
 from daily_agent.storage import load_feishu_delivery_state, write_feishu_delivery_state
 
 BASE_URL = "https://open.feishu.cn/open-apis"
@@ -274,7 +274,7 @@ def _env_value(config: dict[str, Any], key: str) -> str | None:
     env_name = str(config.get(key) or "")
     if not env_name:
         return None
-    return os.environ.get(env_name)
+    return credential_value(env_name)
 
 
 def _load_cc_connect_feishu_config() -> dict[str, str]:

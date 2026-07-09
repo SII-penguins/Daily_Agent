@@ -5,7 +5,9 @@ from pathlib import Path
 from typing import Any
 
 from daily_agent.editorial import GENERIC_PHRASES
+from daily_agent.insights import build_daily_insights
 from daily_agent.models import ApprovedItem, EditorialDraft, EditorialReview, MaterialRecord, RunStatus, utc_now_iso
+from daily_agent.quality import run_quality_check
 
 DEFAULT_THRESHOLDS = {
     "min_approved_items": 3,
@@ -30,9 +32,12 @@ def evaluate_run_health(
     selected_path: Path,
     editorial_path: Path,
     previous_health: dict[str, Any] | None = None,
+    *,
+    use_llm: bool = False,
 ) -> dict[str, Any]:
     thresholds = _thresholds(config)
     artifacts = summarize_artifacts(weekly_report_path, weekly_html_path, selected_path, editorial_path)
+    writer = summarize_writer(drafts, use_llm)
     duplicate_approved_keys = len(approved) - len({item.key for item in approved})
     review_failures = sum(1 for review in reviews if review.verdict == "FAIL")
     not_stated_count = count_not_stated([draft.draft_fields for draft in drafts]) + count_not_stated([item.final_fields for item in approved])
@@ -43,7 +48,15 @@ def evaluate_run_health(
     delivery = summarize_delivery(status.delivery)
     missing_artifact_count = sum(1 for ok in artifacts.values() if not ok)
     update_signal_count = sum(1 for item in approved if item.material.update_label in {"version_update", "major_update"})
+    paper_text_available_count = sum(1 for item in approved if item.item_type == "paper" and (item.material.paper_text_status or {}).get("available"))
+    paper_text_insufficient_count = sum(1 for item in approved if item.item_type == "paper" and not (item.material.paper_text_status or {}).get("sufficient_for_deep_summary"))
+    paper_text_section_note_count = sum(1 for item in approved if item.item_type == "paper" and (item.material.paper_text_status or {}).get("section_notes"))
+    approved_paper_count = sum(1 for item in approved if item.item_type == "paper")
+    citation_context_available_count = sum(1 for item in approved if item.item_type == "paper" and (item.material.raw or {}).get("citation_context"))
+    citation_context_missing_count = max(0, approved_paper_count - citation_context_available_count)
+    insight_count = _insight_count(approved, config)
     consecutive_problem_runs = _consecutive_problem_runs(previous_health, thresholds["repeated_problem_threshold"])
+    quality = summarize_quality_profile(run_quality_check(config))
 
     summary = {
         "approved_count": len(approved),
@@ -59,7 +72,21 @@ def evaluate_run_health(
         "missing_artifact_count": missing_artifact_count,
         "duplicate_approved_keys": duplicate_approved_keys,
         "update_signal_count": update_signal_count,
+        "paper_text_available_count": paper_text_available_count,
+        "paper_text_insufficient_count": paper_text_insufficient_count,
+        "paper_text_section_note_count": paper_text_section_note_count,
+        "citation_context_available_count": citation_context_available_count,
+        "citation_context_missing_count": citation_context_missing_count,
+        "insight_count": insight_count,
         "consecutive_problem_runs": consecutive_problem_runs,
+        "quality_overall": quality["overall"],
+        "quality_missing_count": quality["missing_count"],
+        "quality_fallback_count": quality["fallback_count"],
+        "quality_blocker_count": len(quality.get("blockers", [])),
+        "llm_requested": writer["llm_requested"],
+        "llm_draft_count": writer["llm_draft_count"],
+        "rule_draft_count": writer["rule_draft_count"],
+        "llm_fallback_count": writer["llm_fallback_count"],
     }
     checks = _checks(summary, delivery, artifacts, thresholds)
     overall = _overall(checks)
@@ -74,6 +101,8 @@ def evaluate_run_health(
             "sources": summarize_sources(status),
             "delivery": delivery,
             "artifacts": artifacts,
+            "quality": quality,
+            "writer": writer,
         },
     }
     history = _health_history(previous_health, current, thresholds["recent_history_limit"])
@@ -157,6 +186,49 @@ def summarize_artifacts(weekly_report_path: Path, weekly_html_path: Path, select
     }
 
 
+def summarize_writer(drafts: list[EditorialDraft], use_llm: bool) -> dict[str, Any]:
+    llm_draft_count = sum(1 for draft in drafts if _is_llm_draft(draft))
+    rule_draft_count = sum(1 for draft in drafts if _is_rule_draft(draft))
+    return {
+        "llm_requested": bool(use_llm),
+        "llm_draft_count": llm_draft_count,
+        "rule_draft_count": rule_draft_count,
+        "llm_fallback_count": rule_draft_count if use_llm else 0,
+    }
+
+
+def _is_llm_draft(draft: EditorialDraft) -> bool:
+    return (draft.writer_notes or "").strip().startswith("LLM写手草稿")
+
+
+def _is_rule_draft(draft: EditorialDraft) -> bool:
+    return (draft.writer_notes or "").strip().startswith("规则写手草稿")
+
+
+def summarize_quality_profile(profile) -> dict[str, Any]:
+    checks = [{"key": check.key, "name": check.name, "status": check.status, "ok": check.ok} for check in profile.checks]
+    blockers = [
+        {"key": check.key, "name": check.name, "status": check.status, "ok": check.ok, "action": check.action}
+        for check in profile.checks
+        if check.status != "full"
+    ]
+    return {
+        "overall": profile.overall,
+        "missing_count": sum(1 for check in profile.checks if check.status in {"missing", "disabled"}),
+        "fallback_count": sum(1 for check in profile.checks if check.status in {"fallback", "partial"}),
+        "blockers": blockers,
+        "checks": checks,
+    }
+
+
+def _insight_count(approved: list[ApprovedItem], config) -> int:
+    insight_config = (config.sources.get("insights", {}) if getattr(config, "sources", None) else {}) or {}
+    insights = build_daily_insights(approved, settings=insight_config)
+    if insights == ["今日样本不足，暂不生成跨条目洞察。"]:
+        return 0
+    return len(insights)
+
+
 def _thresholds(config) -> dict[str, int]:
     values = DEFAULT_THRESHOLDS.copy()
     health = (config.delivery.get("health", {}) if getattr(config, "delivery", None) else {}) or {}
@@ -179,7 +251,24 @@ def _checks(summary: dict[str, Any], delivery: dict[str, Any], artifacts: dict[s
     checks.append(build_issue("not_stated_total", "warning", "fail" if summary["not_stated_count"] > thresholds["max_not_stated_total"] else "pass", "Too many not_stated fields", {"actual": summary["not_stated_count"], "max": thresholds["max_not_stated_total"]}))
     checks.append(build_issue("generic_phrase_total", "warning", "fail" if summary["generic_phrase_count"] > thresholds["max_generic_phrase_total"] else "pass", "Generic phrases detected", {"actual": summary["generic_phrase_count"], "max": thresholds["max_generic_phrase_total"]}))
     checks.append(build_issue("duplicate_approved_keys", "warning", "fail" if summary["duplicate_approved_keys"] else "pass", "Duplicate approved keys detected", {"actual": summary["duplicate_approved_keys"]}))
+    checks.append(build_issue("llm_writer_fallback", "warning", "fail" if summary["llm_fallback_count"] else "pass", "LLM drafting fell back to rule writer", {"fallback": summary["llm_fallback_count"], "llm": summary["llm_draft_count"], "rule": summary["rule_draft_count"]}))
+    checks.append(build_issue("paper_text_evidence_gaps", "warning", "fail" if summary["paper_text_insufficient_count"] else "pass", "Approved paper items have insufficient full-text section coverage", {"actual": summary["paper_text_insufficient_count"]}))
+    checks.append(build_issue("citation_context_coverage", "warning", "fail" if summary["citation_context_missing_count"] else "pass", "Approved paper items are missing citation context", {"missing": summary["citation_context_missing_count"], "available": summary["citation_context_available_count"]}))
     checks.append(build_issue("consecutive_problem_runs", "warning", "fail" if summary["consecutive_problem_runs"] >= thresholds["repeated_problem_threshold"] else "pass", "Repeated warning or failed runs detected", {"actual": summary["consecutive_problem_runs"], "threshold": thresholds["repeated_problem_threshold"]}))
+    checks.append(
+        build_issue(
+            "quality_profile_degraded",
+            "warning",
+            "fail" if summary["quality_overall"] != "full" else "pass",
+            "Runtime quality profile is not full",
+            {
+                "overall": summary["quality_overall"],
+                "missing": summary["quality_missing_count"],
+                "fallback": summary["quality_fallback_count"],
+                "blockers": summary["quality_blocker_count"],
+            },
+        )
+    )
     return checks
 
 

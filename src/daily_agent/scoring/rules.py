@@ -5,6 +5,7 @@ from datetime import datetime, timezone
 
 from daily_agent.config import AppConfig, DomainConfig
 from daily_agent.models import DigestItem, SelectedRecord
+from daily_agent.scoring.relevance import min_topic_relevance_score, off_topic_score_penalty, topic_gate_enabled, topic_relevance_score
 
 
 def score_items(
@@ -27,6 +28,13 @@ def score_items(
         keyword_score = _keyword_score(item, config.domains)
         score += keyword_score
         breakdown["keywords"] = keyword_score
+        relevance_score = topic_relevance_score(item, config)
+        score += relevance_score
+        breakdown["topic_relevance"] = relevance_score
+        if topic_gate_enabled(config) and relevance_score < min_topic_relevance_score(config):
+            penalty = off_topic_score_penalty(config)
+            score += penalty
+            breakdown["off_topic_penalty"] = penalty
         freshness_score = _freshness_score(item, target)
         score += freshness_score
         breakdown["freshness"] = freshness_score
@@ -44,6 +52,10 @@ def score_items(
             venue_score = _venue_score(item)
             score += venue_score
             breakdown["venue"] = venue_score
+            citation_discovery_score = _citation_discovery_score(item)
+            score += citation_discovery_score
+            if citation_discovery_score:
+                breakdown["citation_discovery"] = citation_discovery_score
         if item.source == "arxiv" and item.pdf_url:
             score += 3
             breakdown["pdf"] = 3
@@ -70,6 +82,9 @@ def select_items(items: list[DigestItem], config: AppConfig) -> list[DigestItem]
     exploratory_target = int(config.quota.get("exploratory_target", 4))
     paper_target = int(config.quota.get("paper_target", 7))
     github_target = int(config.quota.get("github_target", 3))
+    multiplier = max(1, int(config.quota.get("paper_review_multiplier", 2)))
+    paper_review_target = max(paper_target, int(config.quota.get("paper_review_target", paper_target * multiplier)))
+    candidate_limit = max(max_items, paper_review_target + github_target)
 
     selected: list[DigestItem] = []
     selected_keys: set[str] = set()
@@ -97,17 +112,17 @@ def select_items(items: list[DigestItem], config: AppConfig) -> list[DigestItem]
 
     for strict in [True, False]:
         for item in items:
-            if len(selected) >= max_items:
+            if len(selected) >= candidate_limit:
                 break
             key = item.canonical_key()
             if key in selected_keys or not can_add(item, strict):
                 continue
             selected.append(item)
             selected_keys.add(key)
-        if len(selected) >= max_items:
+        if len(selected) >= candidate_limit:
             break
 
-    return sorted(selected[:max_items], key=lambda item: item.score, reverse=True)
+    return sorted(selected[:candidate_limit], key=lambda item: item.score, reverse=True)
 
 
 def _best_matching_domain(item: DigestItem, domains: list[DomainConfig]) -> DomainConfig | None:
@@ -176,6 +191,10 @@ def _venue_score(item: DigestItem) -> float:
     if item.source in {"openreview", "pmlr", "neurips"}:
         return 5.0
     return 0.0
+
+
+def _citation_discovery_score(item: DigestItem) -> float:
+    return 6.0 if item.raw.get("citation_discovery") else 0.0
 
 
 def _number(value) -> float:
@@ -250,7 +269,6 @@ def _item_text(item: DigestItem) -> str:
             item.abstract or "",
             item.repo_description or "",
             " ".join(item.categories),
-            " ".join(item.source_tags),
             item.language or "",
         ]
     ).lower()
