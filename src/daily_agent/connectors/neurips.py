@@ -31,7 +31,14 @@ def fetch_neurips(config: AppConfig, target_date: datetime | None = None, window
                 response.raise_for_status()
             except httpx.HTTPError:
                 continue
-            for index, (title, paper_url) in enumerate(_paper_links(response.text, url)[:max_results]):
+            links = _paper_links(response.text, url)
+            allowed_tracks = source_config.get("allowed_tracks")
+            if allowed_tracks:
+                links = [(title, link) for title, link in links if _track(link) in allowed_tracks or _track(link) == "legacy"]
+            if source_config.get("prioritize_relevant", False):
+                from daily_agent.scoring.relevance import topic_relevance_score
+                links.sort(key=lambda row: topic_relevance_score(_paper_stub(row[0], row[1], int(year)), config), reverse=True)
+            for index, (title, paper_url) in enumerate(links[:max_results]):
                 if max_detail_pages <= 0 or index < max_detail_pages:
                     item = _fetch_detail(client, title, paper_url, int(year))
                 else:
@@ -78,7 +85,7 @@ def _fetch_detail(client: httpx.Client, title: str, url: str, year: int) -> Dige
         updated_at=str(year),
         source_tags=["neurips", f"NeurIPS {year}"],
         categories=[f"NeurIPS {year}"],
-        raw={"neurips_id": neurips_id, "neurips_url": url, "venue": f"NeurIPS {year}"},
+        raw={"neurips_id": neurips_id, "neurips_url": url, "venue": f"NeurIPS {year}", "proceedings_track": _track(url)},
     )
 
 
@@ -94,7 +101,7 @@ def _paper_stub(title: str, url: str, year: int) -> DigestItem:
         updated_at=str(year),
         source_tags=["neurips", f"NeurIPS {year}"],
         categories=[f"NeurIPS {year}"],
-        raw={"neurips_id": neurips_id, "neurips_url": url, "venue": f"NeurIPS {year}", "detail_skipped": True},
+        raw={"neurips_id": neurips_id, "neurips_url": url, "venue": f"NeurIPS {year}", "proceedings_track": _track(url), "detail_skipped": True},
     )
 
 
@@ -130,3 +137,8 @@ def _matches_interest(item: DigestItem, config: AppConfig) -> bool:
             item.source_tags.append(domain.name)
             return True
     return True
+
+
+def _track(url):
+    match = re.search(r'-Abstract-(.+)\.html$', url)
+    return match.group(1) if match else 'legacy'

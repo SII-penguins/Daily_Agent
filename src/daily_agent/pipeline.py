@@ -53,6 +53,7 @@ from daily_agent.storage import (
     write_ris_export,
     write_health_report,
     write_run_log,
+    write_material_library,
     write_selected,
     write_weekly_html_report,
     write_weekly_report,
@@ -113,22 +114,65 @@ def run_pipeline(
     if selected_items:
         upsert_materials(config, selected_items, today)
     library = load_material_library(config)
-    shortlist = _build_shortlist_from_library(config, library, today)
-    shortlist = enrich_open_access_links(shortlist, config)
-    shortlist = enrich_unpaywall_links(shortlist, config)
-    shortlist = enrich_paper_texts(shortlist, config)
-    shortlist = enrich_citation_contexts(shortlist, config)
-    drafts = draft_report_items(config, shortlist, use_llm=use_llm)
-    reviews = review_draft(config, drafts, use_llm=use_llm)
-    approved = approve_publication(config, shortlist, drafts, reviews)
+    shortlist, drafts, reviews, approved = [], [], [], []
+    attempted: set[str] = set()
+    from daily_agent.scoring.dedup import _identity_keys
+    attempted_identities: set[str] = set()
+
+    def remaining_library():
+        return {key: value for key, value in library.items()
+                if key not in attempted and not
+                (set(_identity_keys(value.to_digest_item())) & attempted_identities)}
+    windows = _fallback_window_steps(config)
+    next_window = index + 1
+    max_batches = max(1, int(config.sources.get("selection", {}).get("max_review_batches", 3)))
+    for batch_index in range(max_batches):
+        batch = _build_shortlist_from_library(
+            config, remaining_library(), today)
+        while not batch and next_window < len(windows):
+            arxiv_window, github_window = windows[next_window]
+            next_window += 1
+            raw_items.extend(_fetch_windowed_sources(config, target_dt, arxiv_window, github_window, status))
+            upsert_materials(config, _prepare_selected_items(raw_items, config, history, target_dt), today)
+            library = load_material_library(config)
+            batch = _build_shortlist_from_library(
+                config, remaining_library(), today)
+            status.fallback = "审核后内容不足，已扩展检索窗口"
+        if not batch:
+            break
+        attempted.update(record.key for record in batch)
+        for record in batch:
+            attempted_identities.update(_identity_keys(record.to_digest_item()))
+        batch = enrich_open_access_links(batch, config)
+        batch = enrich_unpaywall_links(batch, config)
+        batch = enrich_paper_texts(batch, config)
+        batch = enrich_citation_contexts(batch, config)
+        write_editorial_artifacts(config, today, shortlist + batch, drafts, reviews, approved)
+        batch_drafts = draft_report_items(config, batch, use_llm=use_llm)
+        batch_reviews = review_draft(config, batch_drafts, use_llm=use_llm)
+        shortlist.extend(batch)
+        drafts.extend(batch_drafts)
+        reviews.extend(batch_reviews)
+        approved = approve_publication(config, shortlist, drafts, reviews)
+        write_editorial_artifacts(config, today, shortlist, drafts, reviews, approved)
+        # Retain reading work even when an otherwise good paper misses today's quota.
+        library.update({record.key: record for record in batch})
+        write_material_library(config, library)
+        if sum(item.item_type == "paper" for item in approved) >= int(config.quota.get("paper_target", 8)):
+            break
+    if sum(item.item_type == "paper" for item in approved) < int(config.quota.get("paper_target", 8)):
+        status.fallback = status.fallback or "论文池补选后仍不足目标；保留证据审核门槛"
     approved = cache_selected_pdfs(approved, config, today)
 
     if not approved:
         status.fallback = "编辑部未批准任何候选内容"
 
+    from daily_agent.rendering.notes import write_reading_notes
+    write_reading_notes(config, approved, today, dry_run=dry_run)
     insight_config = config.sources.get("insights", {}) or {}
-    daily_markdown = render_daily_markdown(approved, today, status, insight_config=insight_config)
-    daily_html = render_daily_html(approved, today, status, insight_config=insight_config)
+    writing_config = config.sources.get("report_writing", {}) or {}
+    daily_markdown = render_daily_markdown(approved, today, status, insight_config=insight_config, writing_config=writing_config)
+    daily_html = render_daily_html(approved, today, status, insight_config=insight_config, writing_config=writing_config)
     daily_report_path = write_daily_report(config, today, daily_markdown)
     daily_html_path = write_daily_html_report(config, today, daily_html)
     weekly_report_path = write_weekly_report(config, today, daily_markdown)
@@ -148,8 +192,9 @@ def run_pipeline(
         status.delivery = DeliveryStatus(requested_mode="dry-run", final_mode="local", ok=True)
     else:
         try:
+            delivery_path = daily_report_path if delivery_mode in {"cc-connect", "cc_connect"} else weekly_report_path
             status.delivery = deliver_weekly_report(
-                weekly_report_path,
+                delivery_path,
                 delivery_mode,
                 config=config,
                 run_date=today,
@@ -177,6 +222,9 @@ def run_pipeline(
     previous_health = load_health_report(config)
     health = evaluate_run_health(config, today, dry_run, status, approved, shortlist, drafts, reviews, weekly_report_path, weekly_html_path, selected_path, editorial_path, previous_health, use_llm=use_llm)
     health_path = write_health_report(config, health)
+
+    from daily_agent.scheduling import seal_ready_report
+    seal_ready_report(config, today)
 
     return PipelineResult(
         run_date=today,
@@ -241,8 +289,8 @@ def _prepare_selected_items(raw_items: list[DigestItem], config: AppConfig, hist
     items = score_items(items, config, history, target_dt)
     items = apply_feedback_scores(items, config)
     items = score_items(items, config, history, target_dt)
-    selected_items = select_items(items, config)
-    return _ensure_historical_supplement(selected_items, items, config)
+    # The library is a durable pool, not today's bounded review queue.
+    return [item for item in items if item.score > -50]
 
 
 def upsert_materials_preview(library: dict[str, MaterialRecord], items: list[DigestItem], run_date: date) -> dict[str, MaterialRecord]:
@@ -256,8 +304,14 @@ def upsert_materials_preview(library: dict[str, MaterialRecord], items: list[Dig
             incoming.published_dates = existing.published_dates
             incoming.quality_status = existing.quality_status if existing.quality_status in {"published", "archived", "rejected"} else incoming.quality_status
             incoming.readme_excerpt = existing.readme_excerpt or incoming.readme_excerpt
-            incoming.paper_text_excerpt = existing.paper_text_excerpt or incoming.paper_text_excerpt
-            incoming.paper_text_status = incoming.paper_text_status or existing.paper_text_status
+            from daily_agent.paper_document import version_identity
+            if version_identity(incoming) == version_identity(existing):
+                incoming.paper_text_excerpt = existing.paper_text_excerpt or incoming.paper_text_excerpt
+                incoming.paper_text_status = incoming.paper_text_status or existing.paper_text_status
+                incoming.paper_document = existing.paper_document
+                incoming.reading = existing.reading
+            if existing.raw.get("published_paper_identity"):
+                incoming.raw["published_paper_identity"] = existing.raw["published_paper_identity"]
             incoming.detail = {**existing.detail, **incoming.detail}
             incoming.source_aliases = {**existing.source_aliases, **incoming.source_aliases}
             incoming.evidence = {"sources": {**((existing.evidence or {}).get("sources", {}) or {}), **((incoming.evidence or {}).get("sources", {}) or {})}}
@@ -272,8 +326,8 @@ def _build_shortlist_from_library(config: AppConfig, library: dict[str, Material
 
 def _shortlist_target(config: AppConfig) -> int:
     max_items = int(config.quota.get("max_items", 10))
-    paper_target = int(config.quota.get("paper_target", 7))
-    github_target = int(config.quota.get("github_target", 3))
+    paper_target = int(config.quota.get("paper_target", 8))
+    github_target = int(config.quota.get("github_target", 2))
     multiplier = max(1, int(config.quota.get("paper_review_multiplier", 2)))
     paper_review_target = max(paper_target, int(config.quota.get("paper_review_target", paper_target * multiplier)))
     return max(max_items, paper_review_target + github_target)
@@ -294,7 +348,7 @@ def _run_post_delivery_checks(
     if not approved:
         _add_error_once(status, "No approved items")
     if config is not None:
-        min_papers = int(config.quota.get("paper_target", 7))
+        min_papers = int(config.quota.get("paper_target", 8))
         approved_papers = sum(1 for item in approved if getattr(item, "item_type", None) == "paper")
         if approved_papers < min_papers:
             _add_error_once(status, f"Approved papers below target: {approved_papers}/{min_papers}")

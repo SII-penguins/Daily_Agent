@@ -17,7 +17,7 @@ from daily_agent.full_profile import enforce_full_profile, render_full_profile_r
 from daily_agent.pipeline import run_pipeline
 from daily_agent.preview import DEFAULT_REPORT_PORT, serve_preview, start_preview_server
 from daily_agent.quality import render_quality_check, run_quality_check
-from daily_agent.scheduling import build_schedule_preview
+from daily_agent.scheduling import build_schedule_preview, run_scheduled_stage
 from daily_agent.secrets import render_external_secrets_template, render_missing_external_secrets_template, render_secrets_status, write_external_secrets_template, write_missing_external_secrets_template
 from daily_agent.source_check import render_source_check, run_source_check
 from daily_agent.storage import append_feedback_event, load_feedback_events, load_feedback_suggestions, load_material_library, resolve_published_item, set_feedback_event_status
@@ -33,17 +33,25 @@ def main(argv: list[str] | None = None) -> int:
     run_parser.add_argument("--dry-run", action="store_true", default=False)
     run_parser.add_argument("--send", choices=["local", "cc-connect", "cc_connect", "feishu"], default="local")
     run_parser.set_defaults(llm=True)
-    run_parser.add_argument("--llm", dest="llm", action="store_true", help="Use local Claude Code for structured summaries (default)")
-    run_parser.add_argument("--no-llm", dest="llm", action="store_false", help="Disable local Claude Code drafting and use rule-based summaries only")
+    run_parser.add_argument("--llm", dest="llm", action="store_true", help="Use local Codex for structured summaries (default)")
+    run_parser.add_argument("--no-llm", dest="llm", action="store_false", help="Disable local Codex drafting and use rule-based summaries only")
     run_parser.add_argument("--allow-degraded", action="store_true", help="Allow formal external delivery even when the full-quality preflight is not full")
     run_parser.add_argument("--require-full", action="store_true", help="Require a full-quality preflight even for dry-run or local runs")
     run_parser.add_argument("--supervised-scholar-fallback", action="store_true", help="Temporarily enable the scholarly Google Scholar fallback for this supervised run")
+
+    ready_parser = subparsers.add_parser("deliver-ready", help="Deliver today's completed report without regeneration")
+    ready_parser.add_argument("--root", default=str(Path(__file__).resolve().parents[2]))
+    ready_parser.add_argument("--date", default="today")
 
     schedule_parser = subparsers.add_parser("schedule", help="Preview scheduled run setup")
     schedule_subparsers = schedule_parser.add_subparsers(dest="schedule_command")
     schedule_preview = schedule_subparsers.add_parser("preview", help="Print scheduler setup without installing it")
     schedule_preview.add_argument("--root", default=str(Path(__file__).resolve().parents[2]))
     schedule_preview.add_argument("--backend", choices=["cc-connect", "launchd"], default="cc-connect")
+    schedule_run_stage = schedule_subparsers.add_parser("run-stage", help="Run a scheduled stage with missing prerequisites")
+    schedule_run_stage.add_argument("--root", default=str(Path(__file__).resolve().parents[2]))
+    schedule_run_stage.add_argument("--stage", choices=["overnight", "review", "delivery"], required=True)
+    schedule_run_stage.add_argument("--date", default="today", help="YYYY-MM-DD or today")
 
     source_parser = subparsers.add_parser("source", help="Inspect source connectivity")
     source_subparsers = source_parser.add_subparsers(dest="source_command")
@@ -164,11 +172,18 @@ def main(argv: list[str] | None = None) -> int:
     feedback_serve.add_argument("--port", type=int, default=DEFAULT_FEEDBACK_PORT)
 
     args = parser.parse_args(argv)
+    if args.command == "deliver-ready":
+        from daily_agent.scheduling import deliver_ready_report
+        day = date.today() if args.date == "today" else date.fromisoformat(args.date)
+        deliver_ready_report(load_config(args.root), day)
+        return 0
     if args.command == "run":
         return _run(args)
     if args.command == "schedule":
         if args.schedule_command == "preview":
             return _schedule_preview(args)
+        if args.schedule_command == "run-stage":
+            return _schedule_run_stage(args)
     if args.command == "source":
         if args.source_command == "check":
             return _source_check(args)
@@ -231,6 +246,22 @@ def _schedule_preview(args) -> int:
     for job in preview.jobs:
         print(f"- {job.name}: {job.time.cron} ({job.description})")
     print(preview.body)
+    return 0
+
+
+def _schedule_run_stage(args) -> int:
+    run_date = date.today() if args.date == "today" else date.fromisoformat(args.date)
+    try:
+        result = run_scheduled_stage(args.root, args.stage, run_date)
+    except (RuntimeError, ValueError) as exc:
+        print(f"Schedule stage failed: {exc}")
+        return 1
+    if result.completed_stages:
+        print(f"Schedule stage completed: {', '.join(result.completed_stages)}")
+    else:
+        print(f"Schedule stage already complete: {', '.join(result.skipped_stages)}")
+    for warning in result.warnings:
+        print(f"Schedule stage warning: {warning}")
     return 0
 
 
@@ -398,6 +429,8 @@ def _run_with_runtime(args) -> int:
         print("Errors:")
         for error in result.status.errors:
             print(f"- {error}")
+    if not args.dry_run and args.send != "local" and result.status.delivery and not result.status.delivery.ok:
+        return 3
     return 0
 
 

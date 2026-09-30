@@ -4,6 +4,7 @@ from datetime import datetime, timedelta, timezone
 from typing import Any
 
 import httpx
+import time
 
 from daily_agent.config import AppConfig, DomainConfig
 from daily_agent.connectors.publication_types import allowed_publication_types, publication_type_allowed
@@ -25,7 +26,11 @@ def fetch_openalex(config: AppConfig, target_date: datetime | None = None, windo
     allowed_types = allowed_publication_types(source_config)
     items: list[DigestItem] = []
     seen_queries: set[str] = set()
-    with httpx.Client(timeout=timeout, follow_redirects=True) as client:
+    headers = {"User-Agent": "Daily-Agent/0.1"}
+    mailto = str(source_config.get("mailto") or "").strip()
+    if mailto:
+        headers["User-Agent"] = f"Daily-Agent/0.1 (mailto:{mailto})"
+    with httpx.Client(timeout=timeout, follow_redirects=True, headers=headers) as client:
         for domain in config.domains:
             queries = _queries(domain)
             if max_queries_per_domain > 0:
@@ -125,3 +130,20 @@ def _dedupe(items: list[DigestItem]) -> list[DigestItem]:
         seen.add(key)
         result.append(item)
     return result
+
+
+def _get_with_retry(client: httpx.Client, params: dict[str, str | int], source_config: dict) -> httpx.Response:
+    retries = max(0, int(source_config.get("rate_limit_retries", 2)))
+    backoff = float(source_config.get("rate_limit_backoff_seconds", 2))
+    last = None
+    for attempt in range(retries + 1):
+        response = client.get(OPENALEX_WORKS_URL, params=params)
+        if response.status_code != 429:
+            response.raise_for_status()
+            return response
+        last = response
+        if attempt < retries:
+            time.sleep(min(backoff * (2 ** attempt), 20))
+    if last is not None:
+        last.raise_for_status()
+    raise httpx.HTTPError("OpenAlex request failed")

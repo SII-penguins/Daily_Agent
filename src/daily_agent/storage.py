@@ -12,6 +12,7 @@ import shutil
 from typing import Any, Iterable
 
 from daily_agent.config import AppConfig
+from daily_agent.paper_document import version_identity
 from daily_agent.models import ApprovedItem, DigestItem, EditorialDraft, EditorialReview, FeedbackEvent, MaterialRecord, RunStatus, SelectedRecord
 
 DATE_MARKER_PREFIX = "<!-- daily-agent-date:"
@@ -80,8 +81,13 @@ def upsert_materials(config: AppConfig, items: list[DigestItem], run_date: date)
             incoming.published_dates = existing.published_dates
             incoming.quality_status = existing.quality_status if existing.quality_status in {"published", "archived", "rejected"} else incoming.quality_status
             incoming.readme_excerpt = existing.readme_excerpt or incoming.readme_excerpt
-            incoming.paper_text_excerpt = existing.paper_text_excerpt or incoming.paper_text_excerpt
-            incoming.paper_text_status = incoming.paper_text_status or existing.paper_text_status
+            if version_identity(incoming) == version_identity(existing):
+                incoming.paper_text_excerpt = existing.paper_text_excerpt or incoming.paper_text_excerpt
+                incoming.paper_text_status = incoming.paper_text_status or existing.paper_text_status
+                incoming.paper_document = existing.paper_document
+                incoming.reading = existing.reading
+            if existing.raw.get("published_paper_identity"):
+                incoming.raw["published_paper_identity"] = existing.raw["published_paper_identity"]
             incoming.detail = {**existing.detail, **incoming.detail}
             incoming.source_aliases = {**existing.source_aliases, **incoming.source_aliases}
             incoming.evidence = _merge_evidence(existing.evidence, incoming.evidence)
@@ -96,11 +102,45 @@ def select_library_candidates(config: AppConfig, library: dict[str, MaterialReco
     for record in library.values():
         if record.quality_status in {"rejected", "archived"}:
             continue
+        if (record.item_type == "paper" and record.published_dates
+                and config.sources.get("selection", {}).get("suppress_unchanged_papers", True)):
+            published = record.raw.get("published_paper_identity")
+            changed = published is not None and published != version_identity(record)
+            if not changed and not (published is None and record.update_label == "version_update"):
+                continue
+            if changed:
+                record.update_label = "version_update"
         if _is_recent_repeat_without_update(record, run_date, repeat_days):
             continue
+        published_date = _parse_date(str(record.raw.get("published_at") or ""))
+        if record.item_type == "paper" and published_date and (run_date-published_date).days > int(config.sources.get("selection", {}).get("historical_label_days", 30)):
+            record.raw["is_historical_supplement"] = True
         candidates.append(record)
+    # Recompute freshness and publication evidence for the current issue, including
+    # candidates retained from previous days. Do not freeze their discovery score.
+    from daily_agent.scoring.rules import score_items
+    from daily_agent.scoring.dedup import _identity_keys
+    target = datetime.combine(run_date, datetime.min.time(), tzinfo=timezone.utc)
+    for record in candidates:
+        item = record.to_digest_item()
+        item.published_at = record.raw.get("published_at")
+        item.is_historical_supplement = bool(record.raw.get("is_historical_supplement"))
+        score_items([item], config, target_date=target)
+        record.score, record.score_breakdown = item.score, item.score_breakdown
     candidates.sort(key=lambda item: item.score, reverse=True)
-    return candidates
+    # Old libraries can contain both DOI and arXiv records for the same paper.
+    published_keys = set()
+    for record in library.values():
+        if record.published_dates and not record.update_label:
+            published_keys.update(_identity_keys(record.to_digest_item()))
+    unique, seen = [], set()
+    for record in candidates:
+        identities = set(_identity_keys(record.to_digest_item()))
+        if identities & seen or (identities & published_keys and not record.update_label):
+            continue
+        seen.update(identities)
+        unique.append(record)
+    return unique
 
 
 def mark_materials_published(config: AppConfig, records: list[MaterialRecord], run_date: date) -> None:
@@ -111,7 +151,11 @@ def mark_materials_published(config: AppConfig, records: list[MaterialRecord], r
         stored.readme_excerpt = record.readme_excerpt or stored.readme_excerpt
         stored.paper_text_excerpt = record.paper_text_excerpt or stored.paper_text_excerpt
         stored.paper_text_status = record.paper_text_status or stored.paper_text_status
+        stored.paper_document = record.paper_document
+        stored.reading = record.reading
         stored.raw = {**stored.raw, **record.raw}
+        if record.item_type == "paper":
+            stored.raw["published_paper_identity"] = version_identity(record)
         stored.evidence = _merge_evidence(stored.evidence, record.evidence)
         if stamp not in stored.published_dates:
             stored.published_dates.append(stamp)
@@ -472,7 +516,7 @@ def write_daily_html_report(config: AppConfig, run_date: date, daily_html: str) 
     path = daily_html_report_path(config, run_date)
     title = f"Daily Agent 日报｜{run_date.isoformat()}"
     body = f'<article class="daily-report" data-run-date="{run_date.isoformat()}">\n{daily_html.rstrip()}\n</article>'
-    path.write_text(_html_document(title, title, body), encoding="utf-8")
+    path.write_text(_html_document(title, "", body), encoding="utf-8")
     return path
 
 
@@ -839,6 +883,7 @@ def _weekly_html_document(run_date: date, body: str) -> str:
 
 
 def _html_document(title: str, header_title: str, body: str) -> str:
+    header = f'<header class="weekly-title"><h1>{escape(header_title)}</h1></header>' if header_title else ""
     return f"""<!doctype html>
 <html lang="zh-CN">
 <head>
@@ -861,6 +906,12 @@ def _html_document(title: str, header_title: str, body: str) -> str:
     dt {{ color: var(--muted); font-weight: 700; }}
     dd {{ margin: 0; min-width: 0; overflow-wrap: anywhere; }}
     .report-item {{ border-top: 1px solid var(--border); padding-top: 14px; margin-top: 14px; }}
+    .issue-intro {{ border-left: 3px solid var(--border); padding: 12px 18px; }}
+    .paper-paragraph {{ line-height: 1.9; margin: 1em 0; }}
+    .paper-meta, .reading-status {{ color: var(--muted); font-size: 0.93rem; }}
+    .evidence-gaps {{ border-left: 3px solid var(--border); padding-left: 12px; font-size: 0.93rem; }}
+    .paper-details {{ margin: 16px 0; }}
+    .paper-details summary {{ cursor: pointer; color: var(--muted); }}
     .report-item:first-of-type {{ border-top: 0; padding-top: 0; }}
     .feedback-panel {{ display: flex; flex-wrap: wrap; align-items: center; gap: 10px 14px; max-width: 100%; }}
     .feedback-copy {{ flex: 1 1 320px; min-width: min(320px, 100%); display: flex; flex-direction: column; gap: 2px; overflow-wrap: anywhere; }}
@@ -874,7 +925,7 @@ def _html_document(title: str, header_title: str, body: str) -> str:
 </head>
 <body>
 <main>
-<header class="weekly-title"><h1>{escape(header_title)}</h1></header>
+{header}
 {body.rstrip()}
 </main>
 </body>

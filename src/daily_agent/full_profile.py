@@ -32,9 +32,23 @@ FULL_SOURCES_PROFILE: dict[str, Any] = {
         "timeout_seconds": 30,
         "trending_languages": ["python", "typescript", "jupyter-notebook", "rust"],
     },
-    "llm_writer": {"batch_size": 2, "timeout_seconds": 90, "run_budget_seconds": 180},
+    "llm_writer": {
+        "provider": "codex",
+        "command": "codex",
+        "batch_size": 2,
+        "timeout_seconds": 600,
+        "run_budget_seconds": 14_400,
+        "max_input_chars_per_item": 24_000,
+        "reasoning_effort": "low",
+    },
     "openalex": {
         "enabled": True,
+        "mailto": "",
+        "rate_limit_retries": 2,
+        "rate_limit_backoff_seconds": 2,
+        "mailto": "",
+        "rate_limit_retries": 2,
+        "rate_limit_backoff_seconds": 2,
         "recent_days": 7,
         "max_results_per_query": 100,
         "max_queries_per_domain": 8,
@@ -67,6 +81,7 @@ FULL_SOURCES_PROFILE: dict[str, Any] = {
         "timeout_seconds": 60,
         "cite_enrichment_enabled": True,
         "cite_enrichment_max_results_per_run": 50,
+        "cite_enrichment_run_budget_seconds": 45,
         "cite_cache_enabled": True,
         "cite_cache_path": "data/cache/google_scholar_cites.json",
         "cite_cache_max_entries": 50_000,
@@ -88,8 +103,8 @@ FULL_SOURCES_PROFILE: dict[str, Any] = {
         "max_results_per_venue": 100,
         "timeout_seconds": 60,
         "venues": [
-            {"name": "ICLR 2026", "invitation": "ICLR.cc/2026/Conference/-/Submission"},
-            {"name": "ICLR 2025", "invitation": "ICLR.cc/2025/Conference/-/Submission"},
+            {"name": "ICLR 2026", "venueid": "ICLR.cc/2026/Conference"},
+            {"name": "ICLR 2025", "venueid": "ICLR.cc/2025/Conference"},
         ],
     },
     "pmlr": {
@@ -173,9 +188,9 @@ FULL_SOURCES_PROFILE: dict[str, Any] = {
 FULL_INTERESTS_PROFILE: dict[str, Any] = {
     "quota": {
         "max_items": 10,
-        "paper_target": 7,
+        "paper_target": 8,
         "paper_review_multiplier": 4,
-        "github_target": 3,
+        "github_target": 2,
     }
 }
 
@@ -267,6 +282,10 @@ def _apply_profile(payload: dict[str, Any], profile: dict[str, Any], label: str,
             continue
         current_missing = key not in payload
         current = payload.get(key)
+        # Runtime wrappers select the user's authenticated API provider. Never replace
+        # a configured Codex wrapper with a generic binary during quota enforcement.
+        if path == ["llm_writer"] and key == "command" and current and payload.get("provider") == "codex" and Path(str(current)).name != "claude":
+            continue
         if current != desired:
             changes.append(f"{label}: {'.'.join(current_path)} {_format_value(current, missing=current_missing)} -> {_format_value(desired)}")
             payload[key] = desired

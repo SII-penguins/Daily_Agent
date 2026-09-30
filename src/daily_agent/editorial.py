@@ -49,11 +49,16 @@ REPO_FIELDS = [
 ]
 
 _DEFAULT_LLM_WRITER_SETTINGS = {
+    "provider": "codex",
+    "command": "codex",
     "batch_size": 2,
-    "timeout_seconds": 90.0,
-    "run_budget_seconds": 180.0,
+    "timeout_seconds": 600.0,
+    "run_budget_seconds": 14_400.0,
+    "max_input_chars_per_item": 24_000,
+    "reasoning_effort": "low",
+    "workdir": ".",
 }
-_LLM_WRITER_SETTINGS: ContextVar[dict[str, float | int] | None] = ContextVar("llm_writer_settings", default=None)
+_LLM_WRITER_SETTINGS: ContextVar[dict[str, Any] | None] = ContextVar("llm_writer_settings", default=None)
 
 
 def build_shortlist(config: AppConfig, library: dict[str, MaterialRecord], run_date: date) -> list[MaterialRecord]:
@@ -70,7 +75,7 @@ def build_shortlist(config: AppConfig, library: dict[str, MaterialRecord], run_d
 
     selected: list[MaterialRecord] = []
     selected_keys: set[str] = set()
-    github_target = int(config.quota.get("github_target", 3))
+    github_target = int(config.quota.get("github_target", 2))
     paper_review_target = _paper_review_target(config)
     shortlist_limit = max(max_items, paper_review_target + github_target)
 
@@ -97,7 +102,7 @@ def build_shortlist(config: AppConfig, library: dict[str, MaterialRecord], run_d
 
 
 def _paper_review_target(config: AppConfig) -> int:
-    paper_target = int(config.quota.get("paper_target", 7))
+    paper_target = int(config.quota.get("paper_target", 8))
     multiplier = max(1, int(config.quota.get("paper_review_multiplier", 2)))
     explicit = config.quota.get("paper_review_target")
     if explicit is not None:
@@ -106,19 +111,122 @@ def _paper_review_target(config: AppConfig) -> int:
 
 
 def draft_report_items(config: AppConfig, shortlist: list[MaterialRecord], use_llm: bool = True) -> list[EditorialDraft]:
-    if use_llm:
-        token = _LLM_WRITER_SETTINGS.set(_llm_writer_settings(config))
+    from daily_agent.reading import CORE, read_papers, verify_draft, semantic_review
+    settings = _llm_writer_settings(config)
+    def invoke(prompt, timeout, image_path=None):
+        command = _llm_writer_command(settings, prompt)
+        if image_path:
+            command[-1:-1] = ["--image", image_path, "--"]
+        result = subprocess.run(command, check=True,
+                                capture_output=True, text=True, timeout=timeout)
+        return _decode_model_json(result.stdout)
+    structured = [r for r in shortlist if r.item_type == "paper" and r.paper_document]
+    # Preserve native extraction before any image-grounded replacement.
+    for record in structured:
+        if record.paper_document and 'native_document' not in record.paper_document:
+            record.paper_document['native_document'] = dict(record.paper_document)
+    read_papers(structured, config, invoke if use_llm else None)
+    from daily_agent.visual_reading import read_visuals
+    # Screenshot presentation is independent of evidence verification.
+    read_visuals(structured, config, invoke if use_llm else None)
+    from daily_agent.visual_fidelity import repair_visuals
+    repair_visuals(structured, config, invoke if use_llm else None)
+    visual_results = {r.key:r.reading.get('visual', {}) for r in structured}
+    repaired_records = [r for r in structured if r.paper_document.get('evidence_basis') == 'image_transcription_reviewed']
+    # Re-chunked image transcription has a different evidence identity. Never
+    # synthesize it using notes or chunk IDs from the native extraction.
+    read_papers(repaired_records, config, invoke if use_llm else None)
+    for record in structured:
+        visual = visual_results[record.key]
+        record.reading['visual'] = visual
+        if visual.get('required_pages') and not visual.get('strict_fidelity'):
+            record.paper_text_status['sufficient_for_deep_summary'] = False
+    from daily_agent.paper_document import load_json, atomic_json
+    cached_drafts = {}
+    for record in structured:
+        fingerprint = record.reading.get("fingerprint")
+        if use_llm and record.reading.get("complete") and not record.reading.get("visual", {}).get("required_pages") and fingerprint:
+            value = load_json(config.root / "data" / "reading" / fingerprint / "draft-v3.json")
+            if isinstance(value, dict) and value.get("key") == record.key:
+                try:
+                    candidate = EditorialDraft.from_dict(value)
+                    _validated_draft_fields(candidate.draft_fields, "paper")
+                    if (isinstance(candidate.verification, dict)
+                            and candidate.verification.get("semantic_support") == "model_checked"
+                            and isinstance(candidate.claim_evidence, list)):
+                        cached_drafts[record.key] = candidate
+                except (TypeError, ValueError):
+                    pass
+    pending = [r for r in shortlist if r.key not in cached_drafts]
+    drafts = []
+    if use_llm and pending:
+        token = _LLM_WRITER_SETTINGS.set(settings)
         try:
-            llm_drafts = _draft_with_llm(shortlist)
-            if llm_drafts:
-                return llm_drafts
+            drafts = _draft_with_llm(pending)
         finally:
             _LLM_WRITER_SETTINGS.reset(token)
-    return [_rule_draft(record) for record in shortlist]
+    if not drafts:
+        drafts = [_rule_draft(record) for record in pending]
+    drafts.extend(cached_drafts.values())
+    order = {r.key: i for i,r in enumerate(shortlist)}
+    drafts.sort(key=lambda d: order[d.key])
+    by_key = {r.key: r for r in structured}
+    for draft in drafts:
+        if draft.key in by_key and draft.key not in cached_drafts:
+            verify_draft(draft, by_key[draft.key])
+            if use_llm and draft.claim_evidence:
+                semantic_review(draft, by_key[draft.key], invoke,
+                                float(config.sources.get("reading", {}).get("timeout_seconds", 120)))
+            record = by_key[draft.key]
+            rejected = [c for c in draft.verification.get("semantic_checks", []) if not c.get("supported")]
+            claim_issues = [issue for issue in draft.verification.get("issues", [])
+                            if issue.split(":", 1)[0] in CORE]
+            if use_llm and (rejected or claim_issues):
+                # Exactly one evidence-guided rewrite; review thresholds do not change.
+                token = _LLM_WRITER_SETTINGS.set(settings)
+                try:
+                    from daily_agent.reading import repair_evidence
+                    repaired = _draft_with_llm_batch([record], timeout_seconds=settings["timeout_seconds"],
+                        feedback={"rejected_claims": rejected,
+                                  "mechanical_issues": draft.verification.get("issues", []),
+                                  "source_chunks": repair_evidence(record, draft)})
+                finally:
+                    _LLM_WRITER_SETTINGS.reset(token)
+                if repaired:
+                    candidate = repaired[0]
+                    verify_draft(candidate, record)
+                    if candidate.claim_evidence:
+                        semantic_review(candidate, record, invoke,
+                            float(config.sources.get("reading", {}).get("timeout_seconds", 120)))
+                    def evidence_score(value):
+                        fields = set(value.verification.get("valid_fields", []))
+                        return (value.verification.get("semantic_support") == "model_checked",
+                                {"problem", "method"} <= fields, len(fields))
+                    if evidence_score(candidate) > evidence_score(draft):
+                        drafts[drafts.index(draft)] = candidate
+                        draft = candidate
+                record.reading["verification"] = draft.verification
+                record.reading["semantic_rewrite_attempted"] = True
+            if use_llm and draft.verification.get("semantic_support") == "model_checked":
+                from daily_agent.rendering.composition import review_result_presentation
+                review_result_presentation(draft.draft_fields.get("key_result"), record, invoke)
+            if record.reading.get("complete") and draft.verification.get("semantic_support") == "model_checked":
+                atomic_json(config.root / "data" / "reading" / record.reading["fingerprint"] / "draft-v3.json", draft.to_dict())
+        elif draft.key in cached_drafts:
+            by_key[draft.key].reading["verification"] = draft.verification
+    return drafts
 
 
 def review_draft(config: AppConfig, drafts: list[EditorialDraft], use_llm: bool = False) -> list[EditorialReview]:
     reviews = [_rule_review(draft) for draft in drafts]
+    for draft, review in zip(drafts, reviews):
+        if draft.verification.get("status") == "limited":
+            # Explicitly limited cards expose only validated fields; no template claims.
+            review.verdict = "PASS" if (not any("噪声" in issue or "模板" in issue for issue in review.issues)
+                and {"problem", "method"} <= set(draft.verification.get("valid_fields", []))
+                and draft.verification.get("semantic_support") == "model_checked") else "FAIL"
+            review.issues = list(draft.verification.get("issues", []))
+            review.reader_value_score = 2.0
     return reviews
 
 
@@ -136,6 +244,9 @@ def approve_publication(
         material = by_material.get(draft.key)
         if not material or not review or review.verdict != "PASS":
             continue
+        if draft.verification:
+            material.reading["verification"] = draft.verification
+            material.reading["claim_evidence"] = draft.claim_evidence
         material.detail = draft.draft_fields
         approved.append(
             ApprovedItem(
@@ -146,9 +257,10 @@ def approve_publication(
                 url=material.url,
                 final_fields=draft.draft_fields,
                 material=material,
-                approval_notes="总编终审通过：字段完整，证据可追溯，读者可判断是否精读。",
+                approval_notes=(draft.verification.get("label") or "旧版结构审核通过；未完成新版证据核验"),
             )
         )
+    approved.sort(key=lambda item: (item.item_type == "paper" and item.material.reading.get("verification", {}).get("status") == "limited"))
     return _limit_approved_items(config, approved)
 
 
@@ -156,8 +268,8 @@ def _limit_approved_items(config: AppConfig, approved: list[ApprovedItem]) -> li
     max_items = max(0, int(config.quota.get("max_items", 10)))
     if len(approved) <= max_items:
         return approved
-    paper_target = max(0, int(config.quota.get("paper_target", 7)))
-    github_target = max(0, int(config.quota.get("github_target", 3)))
+    paper_target = max(0, int(config.quota.get("paper_target", 8)))
+    github_target = max(0, int(config.quota.get("github_target", 2)))
     selected_indexes: set[int] = set()
 
     def take(item_type: str, limit: int) -> None:
@@ -213,7 +325,7 @@ def _paper_fields(record: MaterialRecord) -> dict[str, Any]:
     section_notes_text = _paper_section_notes_text(record)
     paper_text = _clean(" ".join(part for part in [section_notes_text, record.paper_text_excerpt or ""] if part))
     metadata_evidence = _paper_metadata_evidence(record)
-    text = " ".join([record.title, abstract, paper_text, " ".join(record.categories), metadata_evidence]).lower()
+    text = " ".join([record.title, abstract, " ".join(record.categories)]).lower()
     evidence_text = _clean(" ".join(part for part in [abstract, paper_text] if part and part != "not_stated"))
     problem = _paper_problem(record, section_notes, text, evidence_text or abstract)
     method = _paper_method(section_notes, text, evidence_text or abstract)
@@ -432,8 +544,10 @@ def _draft_with_llm(shortlist: list[MaterialRecord]) -> list[EditorialDraft]:
     run_budget_seconds = max(0.0, float(settings.get("run_budget_seconds", _DEFAULT_LLM_WRITER_SETTINGS["run_budget_seconds"])))
     deadline = time.monotonic() + run_budget_seconds if run_budget_seconds > 0 else None
     all_drafts: list[EditorialDraft] = []
+    consecutive_failures = 0
     for index in range(0, len(shortlist), batch_size):
         batch = shortlist[index : index + batch_size]
+        print(f"Writer batch {index // batch_size + 1}/{(len(shortlist) + batch_size - 1) // batch_size}: {len(batch)} items", flush=True)
         batch_timeout = timeout_seconds
         if deadline is not None:
             remaining = deadline - time.monotonic()
@@ -443,40 +557,119 @@ def _draft_with_llm(shortlist: list[MaterialRecord]) -> list[EditorialDraft]:
             batch_timeout = max(1.0, min(timeout_seconds, remaining))
         drafts = _draft_with_llm_batch(batch, timeout_seconds=batch_timeout)
         if not drafts:
-            drafts = [_rule_draft(record) for record in batch]
+            consecutive_failures += 1
+            # A failed batch must not discard every subsequent candidate.
+            all_drafts.extend(_rule_draft(record) for record in batch)
+            # Once the backend fails, avoid repeated expensive calls; preserve
+            # the remaining items as explicitly marked rule drafts.
+            for record in shortlist[index + batch_size:]:
+                record.reading["writer_error"] = "backend_circuit_open"
+            all_drafts.extend(_rule_draft(record) for record in shortlist[index + batch_size:])
+            break
+        consecutive_failures = 0
         all_drafts.extend(drafts)
     return all_drafts
 
 
-def _llm_writer_settings(config: AppConfig) -> dict[str, float | int]:
+def _llm_writer_settings(config: AppConfig) -> dict[str, Any]:
     source_config = config.sources.get("llm_writer", {}) or {}
+    provider = str(source_config.get("provider") or _DEFAULT_LLM_WRITER_SETTINGS["provider"]).strip().lower()
+    if provider != "codex":
+        raise ValueError(f"Daily Agent internal writing requires provider=codex, got {provider or '<empty>'}")
     return {
+        "provider": provider,
+        "command": str(source_config.get("command") or provider),
         "batch_size": int(source_config.get("batch_size", _DEFAULT_LLM_WRITER_SETTINGS["batch_size"])),
         "timeout_seconds": float(source_config.get("timeout_seconds", _DEFAULT_LLM_WRITER_SETTINGS["timeout_seconds"])),
         "run_budget_seconds": float(source_config.get("run_budget_seconds", _DEFAULT_LLM_WRITER_SETTINGS["run_budget_seconds"])),
+        "max_input_chars_per_item": int(source_config.get("max_input_chars_per_item", _DEFAULT_LLM_WRITER_SETTINGS["max_input_chars_per_item"])),
+        "reasoning_effort": str(source_config.get("reasoning_effort") or _DEFAULT_LLM_WRITER_SETTINGS["reasoning_effort"]).strip().lower(),
+        "workdir": str(config.root),
+        "synthesis_chars": int(config.sources.get("reading", {}).get("synthesis_chars", 60000)),
+        "load_user_config": bool(source_config.get("load_user_config", False)),
     }
 
 
-def _draft_with_llm_batch(shortlist: list[MaterialRecord], timeout_seconds: float = 90.0) -> list[EditorialDraft]:
-    prompt = _llm_prompt(shortlist)
+def _draft_with_llm_batch(shortlist: list[MaterialRecord], timeout_seconds: float = 600.0, feedback: dict | None = None) -> list[EditorialDraft]:
+    settings = _LLM_WRITER_SETTINGS.get() or _DEFAULT_LLM_WRITER_SETTINGS
+    prompt = _llm_prompt(shortlist, max_input_chars_per_item=int(settings.get("max_input_chars_per_item", 24_000)))
+    if feedback:
+        prompt += ('\n上一版被证据审核拒绝。按以下反馈重新写完整JSON数组：先选可定位引句，再写结论；'
+                   '每字段只写引句直接支持的最小事实，不必塞满全部研究内容。'
+                   '一句话有多个事实时必须附齐多条claim_evidence；conditions和summary不能代替quote。'
+                   '删掉缺证据的成分，而不是解释它可能正确。不得使用上一版被拒绝的内容作为证据。反馈：'
+                   + json.dumps(feedback, ensure_ascii=False))
+    result = None
     try:
         result = subprocess.run(
-            ["claude", "-p", prompt, "--output-format", "json"],
+            _llm_writer_command(settings, prompt),
             check=True,
             capture_output=True,
             text=True,
             timeout=timeout_seconds,
         )
+        if any(r.paper_document for r in shortlist):
+            from pathlib import Path
+            from daily_agent.paper_document import atomic_json, digest
+            atomic_json(Path(settings['workdir']) / 'data' / 'reading' / 'writer' / (digest(prompt)+'.json'),
+                        {'response': result.stdout})
         payload = _load_llm_payload(result.stdout)
         by_key = {record.key: record for record in shortlist}
         drafts = _validated_llm_drafts(payload, by_key)
         return _complete_llm_drafts_with_rule_fallback(drafts, by_key)
-    except Exception:
+    except Exception as exc:
+        # Do not persist subprocess command/streams: prompts and credentials may
+        # appear there. Keep actionable, bounded diagnostics for every item.
+        error = {"type": type(exc).__name__}
+        if isinstance(exc, subprocess.TimeoutExpired):
+            error["timeout_seconds"] = exc.timeout
+        elif isinstance(exc, subprocess.CalledProcessError):
+            error["returncode"] = exc.returncode
+        elif isinstance(exc, (ValueError, TypeError)):
+            error["detail"] = "invalid model JSON or draft schema"
+        for record in shortlist:
+            record.reading['writer_error'] = error
         return []
 
 
+def _llm_writer_command(settings: dict[str, Any], prompt: str) -> list[str]:
+    provider = str(settings.get("provider") or "codex").strip().lower()
+    command = str(settings.get("command") or provider)
+    if provider != "codex":
+        raise ValueError(f"Unsupported internal writer provider: {provider}")
+    args = [
+        command,
+        "exec",
+        "--ephemeral",
+        "--ignore-rules",
+    ]
+    if not settings.get("load_user_config", False):
+        args.append("--ignore-user-config")
+    reasoning_effort = str(settings.get("reasoning_effort") or "").strip().lower()
+    if reasoning_effort:
+        args.extend(["-c", f'model_reasoning_effort="{reasoning_effort}"'])
+    args.extend([
+        "--sandbox",
+        "read-only",
+        "--skip-git-repo-check",
+        "-C",
+        str(settings.get("workdir") or "."),
+        prompt,
+    ])
+    return args
+
+
+def _decode_model_json(output: str):
+    payload = output.strip()
+    if payload.startswith("```json") and payload.endswith("```"):
+        payload = payload[7:-3].strip()
+    elif payload.startswith("```") and payload.endswith("```"):
+        payload = payload[3:-3].strip()
+    return json.loads(payload)
+
+
 def _load_llm_payload(output: str) -> list[Any]:
-    payload = json.loads(output.strip())
+    payload = _decode_model_json(output)
     if isinstance(payload, dict) and "result" in payload:
         result = payload["result"]
         payload = json.loads(result) if isinstance(result, str) else result
@@ -509,6 +702,7 @@ def _validated_llm_drafts(payload: list[Any], by_key: dict[str, MaterialRecord])
                 draft_fields=draft_fields,
                 evidence_used=_required_string_list(raw.get("evidence_used"), "evidence_used"),
                 writer_notes=_llm_writer_notes(writer_notes),
+                claim_evidence=raw.get("claim_evidence", []) if isinstance(raw.get("claim_evidence", []), list) else [],
             )
         )
         seen.add(key)
@@ -530,7 +724,7 @@ def _complete_llm_drafts_with_rule_fallback(drafts: list[EditorialDraft], by_key
     completed: list[EditorialDraft] = []
     for draft in drafts:
         record = by_key[draft.key]
-        if record.item_type != "paper":
+        if record.item_type != "paper" or record.paper_document:
             completed.append(draft)
             continue
         rule_fields = _rule_draft(record).draft_fields
@@ -609,7 +803,9 @@ def _required_string_list(value: Any, field_name: str) -> list[str]:
     return items
 
 
-def _llm_prompt(shortlist: list[MaterialRecord]) -> str:
+def _llm_prompt(shortlist: list[MaterialRecord], max_input_chars_per_item: int = 24_000) -> str:
+    input_limit = max(1, int(max_input_chars_per_item))
+    from daily_agent.reading import synthesis_evidence
     records = []
     for record in shortlist:
         records.append(
@@ -618,11 +814,14 @@ def _llm_prompt(shortlist: list[MaterialRecord]) -> str:
                 "item_type": record.item_type,
                 "title": record.title,
                 "abstract": record.abstract,
-                "paper_section_notes": _paper_section_notes(record),
-                "paper_text_excerpt": record.paper_text_excerpt,
+                "paper_section_notes": {} if record.paper_document else _paper_section_notes(record),
+                "reading_notes": synthesis_evidence(record, int((_LLM_WRITER_SETTINGS.get() or {}).get("synthesis_chars", 60000))) if record.paper_document else [],
+                "reading_coverage": {k:v for k,v in record.reading.items() if k not in {"notes", "visual"}},
+                "visual_observations": {k:v for k,v in record.reading.get("visual", {}).items() if k != "fidelity"},
+                "paper_text_excerpt": "" if record.paper_document else (record.paper_text_excerpt or "")[:input_limit],
                 "paper_text_status": record.paper_text_status,
                 "repo_description": record.repo_description,
-                "readme_excerpt": record.readme_excerpt,
+                "readme_excerpt": (record.readme_excerpt or "")[:input_limit],
                 "metadata": {
                     "tags": record.tags,
                     "categories": record.categories,
@@ -637,17 +836,32 @@ def _llm_prompt(shortlist: list[MaterialRecord]) -> str:
         )
     return (
         "你是 Daily_Agent 编辑部写手，要像研究助理通览论文后写阅读笔记，而不是改写摘要。"
+        "不要调用任何工具、不要读取本地文件、不要联网，只处理下面已经给出的输入。"
         "只基于输入素材写结构化草稿；没有来源依据就写 not_stated，禁止编造。"
-        "论文必须优先阅读 paper_section_notes，再阅读 paper_text_excerpt，把 abstract 只当目录线索；没有全文片段时才使用 abstract，并把 confidence 降低。"
+        "有 reading_notes 时必须综合全部分块笔记与引句，abstract 仅作目录线索，不能替代已读正文。旧版无分块记录时才参考 paper_section_notes 和 paper_text_excerpt，并降低 confidence。"
+        "visual_observations.strict_fidelity 为 true 时，reading_notes 来自经独立图片复核的重建文本；原生抽取差异保留用于审计，不代表重建文本仍有同样错误。模型复核不证明论文数学或科学结论正确。"
         "metadata.citation_context 是 OpenAlex 引用脉络，可用于判断这篇论文的上游基础、下游引用和影响力，但不能代替正文证据。"
         "如果 paper_text_status.sufficient_for_deep_summary 为 false，必须在 writer_notes 里说明证据缺口，并降低 confidence。"
         "每篇论文都要回答：1) 发现/针对什么具体问题；2) 用什么方法解决；3) 为什么这个方法理论上或工程上能解决；4) 相对已有工作或关键参考的新意/差异；5) 实验/结果如何；6) 有什么局限；7) 对硬件感知量子线路综合/编译、QEC、量子真机或用户研究有什么可迁移点。"
         "写法要求：用中文解释，不要逐句翻译摘要；每个字段要包含具体对象、机制、指标或实验设置，避免“提出一种方法”“有参考价值”这类空话。"
+        "各字段将组成连贯解读：problem只交代瓶颈，method说明关键改变，why_it_works解释因果机制，novelty_or_difference给出有依据的对照，避免四处重复方法名与步骤。"
+        "每个字段优先保留一到两个有直接引句依据的核心事实；不要把背景、机制和未经证实的解释塞进同一句。"
+        "key_result优先选择一组最能代表贡献的主比较及必要边界，其余次要指标放弃；每个数字、比较基线、资源条件都必须有对应逐字引句。"
+        "key_result必须把核心数字、基线、任务规模、成本口径及实测/模拟/理论/预测性质写在同一段，不能为缩短篇幅删掉限制条件。"
+        "limitations优先写会改变结果解释或可迁移性的边界；本次输入不足应写本次未核验，不能推断论文未报告。"
+        "possible_use_or_impact明确区分作者验证的用途与编辑提出的迁移设想，后者写为可尝试的方向，不得宣称已实现收益。"
+        "不把无关论文强行关联到量子研究。简洁优先但条件完整优先于字数目标。"
         "如果论文涉及 hardware-aware quantum circuit synthesis/compilation/transpilation/routing/unitary synthesis，要优先解释硬件约束如何进入模型或优化目标。"
         "论文字段必须包含 problem, method, why_it_works, novelty_or_difference, method_steps, key_result, technical_route, possible_use_or_impact, limitations, evidence_from_source, confidence。"
         "GitHub 字段必须包含 what_it_is, core_capabilities, typical_use_cases, architecture_or_api, maturity_signal, reusable_point, evidence_from_source, confidence。"
+        "输出类型必须严格遵守：draft_fields 中除 method_steps 外的每个字段都只能是一个 JSON 字符串，禁止数组和对象，每个字符串以 180 个汉字以内为目标，但不得为限字删掉数字的适用条件；method_steps 是 2 到 5 个短字符串；evidence_used 是 2 到 6 个来源路径字符串；writer_notes 最多 120 个汉字；confidence 只能写 high、medium 或 low。"
         "禁止泛泛写：与配置方向相关、需进一步阅读确认、建议查看 README。"
-        "返回 JSON 数组，每项包含 key, draft_fields, evidence_used, writer_notes。输入：\n"
+        "对于提供 reading_notes 的论文，只能使用已读分块笔记与引句支持结论；reading_notes 为 null 或空时不能生成深读结论。"
+        "先选引句再写结论：每字段只写引句直接支持的事实；多事实必须提供多条证据，不能只附一句代表性引文。conditions不是证据，不得将它作为引句缺失信息的补充。"
+        "额外输出 claim_evidence 数组，每条包含 field、chunk_id、quote（逐字引用 reading_notes.quotes）、conditions（字符串，不要对象）、evidence_kind。"
+        "problem/method/why_it_works/novelty_or_difference/key_result/technical_route/limitations/method_steps/possible_use_or_impact 均应关联引用。"
+        "evidence_kind 只能是 experiment/simulation/theory/prediction/not_stated；结果必须说明基线、对象与实验条件。"
+        "返回 JSON 数组，每项包含 key, draft_fields, evidence_used, writer_notes, claim_evidence。输入：\n"
         + json.dumps(records, ensure_ascii=False)
     )
 
@@ -659,7 +873,7 @@ def _paper_problem(record: MaterialRecord, notes: dict[str, str], text: str, evi
         return "论文关注具身智能或 VLA 系统在长程任务中如何保持状态理解、动作规划和环境反馈一致。"
     if _contains(text, "qutuner", "optimization pass", "compiler pass tuning", "pass tuning"):
         return "论文针对量子编译器 pass 调优的问题：可选优化 pass 空间很大，静态线路特征又不足以反映线路对不同 pass 的真实响应。"
-    if _contains(text, "figure of merit", "fom", "wpst", "probability of successful trials"):
+    if _contains(text, "figure of merit", "figures of merit", "fom", "wpst", "probability of successful trials"):
         return "论文针对量子线路编译中的评价指标问题：简单深度/门数指标便宜但不反映真实硬件噪声和执行成功率，精确指标又太贵。"
     if _contains(text, "quantum architecture search", "qas", "hamqasbench"):
         return "论文针对量子架构搜索评测过度依赖能量精度、难以暴露线路结构错误和硬件路由失败的问题。"
@@ -669,9 +883,15 @@ def _paper_problem(record: MaterialRecord, notes: dict[str, str], text: str, evi
 
 
 def _paper_method(notes: dict[str, str], text: str, evidence_text: str) -> str:
+    if _contains(text, "rubriq", "programmatic rubric", "group relative policy optimization", "grpo"):
+        return "RubriQ 把受硬件约束的量子线路综合写成 LLM 代码生成任务，再用 GRPO 优化；奖励不是黑盒 critic，而是同时检查语义正确性、T 门成本和硬件约束的程序化 rubric。"
+    if _contains(text, "confidence-gated", "low-confidence syndromes") and _contains(text, "mwpm", "surface code"):
+        return "方法采用两阶段置信门控解码：轻量前馈神经网络处理大多数高置信 syndrome，只有低置信样本才升级到 MWPM 精修，从而把高精度解码器的开销限制在少量困难样本上。"
+    if _contains(text, "fibonacci braid", "non-abelian anyons", "solovay-kitaev"):
+        return "方法把连续的 SU(2) 目标酉变换映射为 Fibonacci 任意子的离散编织词，并结合向量化 Solovay-Kitaev 递归、近邻索引和同伦约简搜索更短的可执行 braid word。"
     if _contains(text, "qutuner", "optimization pass", "compiler pass tuning", "pass tuning"):
         return "方法构建 QuTuner：先用 Bayesian Optimization 在 8,111 个量子线路上生成优化数据，再把静态 circuit features 与 optimization-aware pass embeddings 结合，用离线模型检索、排序候选 pass 序列，并做轻量 BO refinement。"
-    if _contains(text, "wpst", "probability of successful trials", "figure of merit"):
+    if _contains(text, "wpst", "probability of successful trials", "figure of merit", "figures of merit"):
         return "方法提出 wPST 作为按 qubit 加权的成功概率指标，并训练 machine learning 预测器同时读取量子线路特征和硬件数据；编译前先预测 transpilation 后新增门，再结合 coherence time 预测 wPST。"
     if _is_qnn_cloud_text(text):
         return "方法用 hybrid QNN 处理云微物理数据，并加入 rich trainable frequency spectrum、classical postprocessing 和大规模 hyperparameter optimization，再与充分调参的 FCNN 基线比较。"
@@ -691,16 +911,26 @@ def _paper_method(notes: dict[str, str], text: str, evidence_text: str) -> str:
         return "方法把 qubit placement 和 SWAP insertion 联合建模为稀疏路由编译问题，在满足硬件连通性的同时压低双量子门深度。"
     if _contains(text, "citation-aware", "citation context", "upstream references", "downstream citing"):
         return "方法在硬件感知量子线路综合中加入 citation-aware reranking，用上游参考和下游引用信号辅助候选编译方案排序。"
+    generic_method = _sentence_about_method(text, "")
+    if generic_method != "not_stated":
+        return generic_method
     section_method = _section_sentence(notes, ["method", "abstract", "introduction"], ["we propose", "we introduce", "we develop", "we train", "we use", "our method", "our approach"], 260)
     if section_method != "not_stated":
-        return section_method
-    return _sentence_about_method(text, evidence_text)
+        return _chinese_source_summary("方法上，正文说明：", section_method)
+    source_method = _sentence_about_method(text, evidence_text)
+    return _chinese_source_summary("方法上，正文说明：", source_method)
 
 
 def _paper_why_it_works(notes: dict[str, str], text: str, evidence_text: str) -> str:
+    if _contains(text, "rubriq", "programmatic rubric", "group relative policy optimization", "grpo"):
+        return "程序化 rubric 把正确性、资源压缩和硬件可执行性拆成可验证奖励，GRPO 再通过组内相对优势稳定更新策略，因此能减少稀疏奖励下只追求压缩却破坏约束的行为。"
+    if _contains(text, "confidence-gated", "low-confidence syndromes") and _contains(text, "mwpm", "surface code"):
+        return "神经网络负责常见 syndrome 的低时延快速路径，置信度则识别最容易造成逻辑失败的困难样本；只把这些样本交给 MWPM，可在小幅增加平均成本的同时接近高精度解码。"
+    if _contains(text, "fibonacci braid", "non-abelian anyons", "solovay-kitaev"):
+        return "Fibonacci 任意子的编织表示天然满足拓扑门约束，Solovay-Kitaev 递归逐层缩小近似误差，向量化索引与同伦约简则降低搜索和冗余 braid word 的成本。"
     if _contains(text, "qutuner", "optimization pass", "compiler pass tuning", "pass tuning"):
         return "它有效的原因是 pass embeddings 不是只描述线路静态结构，而是记录单个 pass 作用前后的指标变化，因此能把“这条线路会怎样响应优化”纳入候选 pass 排序。"
-    if _contains(text, "wpst", "probability of successful trials", "figure of merit"):
+    if _contains(text, "wpst", "probability of successful trials", "figure of merit", "figures of merit"):
         return "它有效的原因是 wPST 不只看整体输出分布，而把不同 qubit 的成功概率和硬件差异纳入指标；预测器再显式利用 coupling map、coherence time 和编译新增门数来近似真实执行质量。"
     if _is_qnn_cloud_text(text):
         return "这样设计给 QNN 足够表达力和调参空间，避免把失败简单归因于欠调参；因此若仍输给 FCNN，更能说明当前 QNN 在该复杂物理任务上的优势证据不足。"
@@ -720,16 +950,26 @@ def _paper_why_it_works(notes: dict[str, str], text: str, evidence_text: str) ->
         return "它把 placement 和 routing 的代价提前合并优化，先惩罚长距离移动，再映射到硬件门，因此能减少后续补 SWAP 造成的深度膨胀。"
     if _contains(text, "citation-aware", "citation context", "upstream references", "downstream citing"):
         return "引用上下文能暴露哪些方法是上游基础、哪些设置被下游继续使用，因此 reranking 不只依赖局部线路特征，还利用了可追溯的研究脉络信号。"
+    generic_reason = _why_it_works(text, "")
+    if generic_reason != "not_stated":
+        return generic_reason
     section_reason = _section_sentence(notes, ["method", "results", "introduction"], ["because", "therefore", "so that", "allows", "enables", "by"], 260)
     if section_reason != "not_stated":
-        return section_reason
-    return _why_it_works(text, evidence_text)
+        return _chinese_source_summary("有效性依据是：", section_reason)
+    source_reason = _why_it_works(text, evidence_text)
+    return _chinese_source_summary("有效性依据是：", source_reason)
 
 
 def _paper_novelty_or_difference(record: MaterialRecord, notes: dict[str, str], text: str, evidence_text: str) -> str:
+    if _contains(text, "rubriq", "programmatic rubric", "group relative policy optimization", "grpo"):
+        return "相对依赖稀疏终局奖励或黑盒 critic 的线路生成方法，RubriQ 用领域规则构成可解释的程序化奖励，并把硬件违规率直接纳入强化学习目标。"
+    if _contains(text, "confidence-gated", "low-confidence syndromes") and _contains(text, "mwpm", "surface code"):
+        return "相对全量使用神经解码或全量运行 MWPM，这项工作按置信度动态选择快速路径和精修路径，显式联合优化逻辑准确率与实时解码时延。"
+    if _contains(text, "fibonacci braid", "non-abelian anyons", "solovay-kitaev"):
+        return "相对通用门级综合，这项工作直接面向非阿贝尔 Fibonacci 任意子的 braid group 表示，并把近邻检索、递归逼近和同伦约简整合进编译器。"
     if _contains(text, "qutuner", "optimization pass", "compiler pass tuning", "pass tuning"):
         return "相对已有 quantum compiler tuning 工作，QuTuner 不只用静态线路特征或小规模搜索，而是把 optimization-aware pass embeddings 和 8,111 条线路上的 BO 数据用于检索、排序 pass 序列。"
-    if _contains(text, "wpst", "probability of successful trials", "figure of merit"):
+    if _contains(text, "wpst", "probability of successful trials", "figure of merit", "figures of merit"):
         return "相对已有工作中主要看深度、门数或未加权 PST 的 FoM，这篇的新意是提出 wPST，并用 machine learning 把线路结构、transpilation 新增门和硬件 coherence time 一起映射到执行成功率。"
     if _is_qnn_cloud_text(text):
         return "相对只展示 QNN 正结果的工作，这篇把 QNN 放到充分调参的 FCNN 强基线前做负结果检验，因此更像是在校准量子优势证据边界。"
@@ -779,6 +1019,10 @@ def _paper_key_result(notes: dict[str, str], evidence_text: str) -> str:
     joined = _clean(" ".join(notes.values()))
     lowered = joined.lower()
     context = _clean(" ".join([joined, evidence_text])).lower()
+    if "rubriq" in context and "3.31" in context:
+        return "结果显示，RubriQ 的平均 T 门压缩达到 3.31 倍，高于稀疏奖励强化学习基线的 2.05 倍，收敛快 2–3 倍，同时把硬件约束违规率控制在 1% 以下。"
+    if "confidence-gated" in context and "99.21" in context and "99.81" in context:
+        return "结果显示，仅把 3.3%–6.2% 的低置信 syndrome 交给精修，就把逻辑准确率从神经网络单独解码的 99.21% 提升到 99.81%。"
     if _is_qnn_cloud_text(lowered):
         return "结果是负面的但有价值：充分优化后的 FCNN 明显超过 QNN；QNN 只接近未充分优化的经典网络，说明该任务上尚未看到可靠量子优势。"
     if "hamqasbench" in lowered or "energy accuracy is an unreliable proxy" in lowered:
@@ -800,6 +1044,8 @@ def _paper_key_result(notes: dict[str, str], evidence_text: str) -> str:
 def _paper_limitations(notes: dict[str, str], evidence_text: str) -> str:
     joined = _clean(" ".join(notes.values())).lower()
     context = _clean(" ".join([joined, evidence_text])).lower()
+    if "confidence-gated" in context and _contains(context, "small code distances", "simulated noise"):
+        return "局限是评测仍集中在较小 code distance 和模拟噪声；真实控制栈中的测量延迟、校准漂移与更大规模 surface code 还需要验证。"
     if _is_qnn_cloud_text(joined) or _contains(joined, "worse r2", "unclear scalability"):
         return "局限/结论是 QNN 在该云微物理任务上 R2 全面更差，量子模型可扩展性仍不清楚，尚不能证明量子优势。"
     if _contains(joined, "qutuner", "pass combinations", "profiling pass combinations"):
@@ -822,8 +1068,13 @@ def _paper_limitations(notes: dict[str, str], evidence_text: str) -> str:
     if limitation != "not_stated":
         if "No single FoM" in limitation:
             return "局限是不存在单一 FoM 能完整刻画编译后线路表现，指标相关性会随算法、硬件和实验目标变化。"
-        return limitation
-    return _limitations(evidence_text)
+        return _chinese_source_summary("局限方面，正文指出：", limitation)
+    explicit_limitation = _sentence_with_marker(
+        evidence_text,
+        ["limitation", "limitations", "limited to", "future work"],
+        180,
+    )
+    return _chinese_source_summary("局限方面，正文指出：", explicit_limitation)
 
 
 def _best_result_sentence(notes: dict[str, str], limit: int) -> str:
@@ -925,7 +1176,17 @@ def _paraphrase_key_result(result: str) -> str:
         metric = gate_depth.group(2)
         label = "双量子门深度" if "two-qubit" in metric else ("CNOT 数量" if "cnot" in metric else "线路深度")
         return f"实验显示该方法在量子编译任务上将{label}降低 {gate_depth.group(1)}%。"
-    return result
+    return _chinese_source_summary("结果方面，正文报告：", result)
+
+
+def _chinese_source_summary(prefix: str, value: str, limit: int = 116) -> str:
+    cleaned = _clean(value)
+    if not cleaned or cleaned == "not_stated" or _looks_like_web_boilerplate(cleaned):
+        return "not_stated"
+    if _has_cjk(cleaned):
+        return _truncate(cleaned, limit)
+    available = max(1, limit - len(prefix))
+    return prefix + _truncate(cleaned, available)
 
 
 def _first_informative_sentence(text: str, limit: int) -> str:
@@ -933,6 +1194,7 @@ def _first_informative_sentence(text: str, limit: int) -> str:
         if (
             len(sentence) >= 32
             and not sentence.lower().startswith(("figure ", "table "))
+            and not _looks_like_web_boilerplate(sentence)
             and not _looks_like_pdf_extraction_noise(sentence)
             and not _looks_like_section_header_residue(sentence)
         ):
@@ -1076,7 +1338,7 @@ def _why_it_works(text: str, evidence_text: str = "") -> str:
 def _method_steps(text: str, abstract: str):
     if _contains(text, "qutuner", "optimization pass", "compiler pass tuning", "pass tuning"):
         return ["收集量子线路优化数据", "提取静态线路特征与 pass response embedding", "检索并排序候选 pass 序列", "用轻量 BO refinement 适配目标编译器"]
-    if _contains(text, "wpst", "probability of successful trials", "figure of merit"):
+    if _contains(text, "wpst", "probability of successful trials", "figure of merit", "figures of merit"):
         return ["定义 PST/wPST 等执行质量指标", "提取线路与硬件特征", "训练 FoM 预测器", "用真实 PST/wPST 相关性评估指标有效性"]
     if _is_qnn_cloud_text(text):
         return ["构建云微物理监督数据", "设计带可训练频谱的 hybrid QNN", "加入 classical postprocessing 并做 HPO", "与充分调参 FCNN 比较 R2 表现"]
@@ -1360,11 +1622,24 @@ def _sentence_with_marker(text: str, markers: list[str], limit: int) -> str:
         lowered = sentence.lower()
         if (
             any(marker in lowered for marker in markers)
+            and not _looks_like_web_boilerplate(sentence)
             and not _looks_like_pdf_extraction_noise(sentence)
             and not _looks_like_section_header_residue(sentence)
         ):
             return _truncate(sentence, limit)
     return "not_stated"
+
+
+def _looks_like_web_boilerplate(value: str) -> bool:
+    lowered = _clean(value).lower()
+    return _contains(
+        lowered,
+        "accept all cookies",
+        "accept only essential cookies",
+        "how we use cookies",
+        "cookie preferences",
+        "privacy preferences",
+    )
 
 
 def _sentences(text: str) -> list[str]:

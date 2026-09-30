@@ -31,7 +31,7 @@ class QualityProfile:
 def run_quality_check(config: AppConfig) -> QualityProfile:
     checks = [
         _check_python_runtime(),
-        _check_llm_writer(),
+        _check_llm_writer(config),
         _check_pdf_extractors(),
         _check_paper_text(config),
         _check_oa_resolver(config),
@@ -75,17 +75,54 @@ def _overall(checks: list[QualityCheck]) -> str:
     return "fallback"
 
 
-def _check_llm_writer() -> QualityCheck:
-    path = _which("claude")
+def _check_llm_writer(config: AppConfig) -> QualityCheck:
+    source_config = config.sources.get("llm_writer", {}) or {}
+    provider = str(source_config.get("provider") or "codex").strip().lower()
+    command = str(source_config.get("command") or provider).strip()
+    timeout_seconds = float(source_config.get("timeout_seconds", 600) or 0)
+    run_budget_seconds = float(source_config.get("run_budget_seconds", 14_400) or 0)
+    batch_size = int(source_config.get("batch_size", 2) or 0)
+    name = "Codex writer"
+    if provider != "codex":
+        return QualityCheck(
+            "llm_writer",
+            name,
+            "missing",
+            False,
+            f"unsupported internal llm_writer.provider={provider or '<empty>'}; Daily Agent writing is Codex-only",
+            "Set llm_writer.provider to codex and configure the codex command on PATH.",
+        )
+
+    path = _which(command)
     if path:
-        return QualityCheck("llm_writer", "Claude Code writer", "full", True, f"claude found at {path}")
+        detail = (
+            f"configured command found at {path}; timeout_seconds={timeout_seconds:g}, "
+            f"run_budget_seconds={run_budget_seconds:g}, batch_size={batch_size}; "
+            "runtime connectivity is verified by each bounded drafting call"
+        )
+        if timeout_seconds < 300 or run_budget_seconds < 3_600:
+            return QualityCheck(
+                "llm_writer",
+                name,
+                "partial",
+                True,
+                detail,
+                "Use timeout_seconds>=300 and run_budget_seconds>=3600 for unattended full-text drafting.",
+            )
+        return QualityCheck(
+            "llm_writer",
+            name,
+            "full",
+            True,
+            detail,
+        )
     return QualityCheck(
         "llm_writer",
-        "Claude Code writer",
+        name,
         "missing",
         False,
-        "claude CLI not found; run defaults to --llm but will fall back if drafting cannot execute",
-        "Install/configure Claude Code CLI on PATH, or run with --no-llm when you intentionally want rule summaries.",
+        f"configured command {command!r} not found; drafting will use the full-text rule fallback",
+        "Install/configure the codex CLI on PATH, or set llm_writer.command to its absolute path.",
     )
 
 
@@ -572,6 +609,7 @@ def _check_source_limits(config: AppConfig) -> QualityCheck:
     _require_exact_int(config.sources, "google_scholar", "scisbd", 2, issues)
     _require_bool(config.sources, "google_scholar", "cite_enrichment_enabled", True, issues)
     _require_min_int(config.sources, "google_scholar", "cite_enrichment_max_results_per_run", 50, issues)
+    _require_min_number(config.sources, "google_scholar", "cite_enrichment_run_budget_seconds", 15, issues)
     _require_bool(config.sources, "google_scholar", "cite_cache_enabled", True, issues)
     _require_exact_str(config.sources, "google_scholar", "cite_cache_path", "data/cache/google_scholar_cites.json", issues)
     _require_min_int(config.sources, "google_scholar", "cite_cache_max_entries", 50_000, issues)
@@ -752,7 +790,7 @@ def _check_schedule(config: AppConfig) -> QualityCheck:
     review = str(schedule.get("review_time") or schedule.get("preproduction_time") or "")
     target = str(schedule.get("target_time") or "")
     detail = f"production_time={production or 'missing'}, review_time={review or 'missing'}, target_time={target or 'missing'}"
-    if production == "02:00" and review == "07:20" and target == "08:00":
+    if production == "00:10" and review == "05:30" and target == "08:00":
         return QualityCheck("schedule", "Daily workflow schedule", "full", True, detail)
     if production and review and target:
         return QualityCheck("schedule", "Daily workflow schedule", "partial", True, detail)
@@ -762,7 +800,7 @@ def _check_schedule(config: AppConfig) -> QualityCheck:
         "missing",
         False,
         detail,
-        "Configure 02:00 collection, 07:20 review checkpoint, and 08:00 delivery in config/delivery.yaml.",
+        "Configure 00:10 collection, 05:30 review checkpoint, and delivery before 08:00 in config/delivery.yaml.",
     )
 
 

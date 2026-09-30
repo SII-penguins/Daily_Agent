@@ -38,13 +38,36 @@ def fetch_crossref(config: AppConfig, target_date: datetime | None = None, windo
                 try:
                     response = client.get(CROSSREF_WORKS_URL, params=_params(query, target, days, max_results))
                     response.raise_for_status()
-                except httpx.HTTPError:
+                except (httpx.HTTPError, ValueError):
                     continue
                 for work in response.json().get("message", {}).get("items", []) or []:
                     if not publication_type_allowed(work.get("type"), allowed_types):
                         continue
                     items.append(_work_to_item(work, domain))
-    return items
+        # Journal-scoped retrieval prevents the broad query budget from being
+        # consumed entirely by preprints or unrelated publishers.
+        preferred = source_config.get("preferred_journals", [])
+        cap = int(source_config.get("preferred_queries_per_domain", 1))
+        for journal in preferred:
+            issn = str(journal.get("issn") or "")
+            if not re.fullmatch(r"\d{4}-\d{3}[\dX]", issn):
+                continue
+            journal_queries = set()
+            for domain in config.domains:
+                for query in _queries(domain)[:max(0, cap)]:
+                    if query in journal_queries: continue
+                    journal_queries.add(query)
+                    params = _params(query, target, int(source_config.get("preferred_recent_days", days)), max_results)
+                    params["filter"] += ",type:journal-article"
+                    try:
+                        response = client.get(f"https://api.crossref.org/journals/{issn}/works", params=params)
+                        response.raise_for_status()
+                    except (httpx.HTTPError, ValueError):
+                        continue
+                    for work in response.json().get("message", {}).get("items", []) or []:
+                        if work.get("type") == "journal-article":
+                            items.append(_work_to_item(work, domain))
+    return list({item.canonical_key(): item for item in items}.values())
 
 
 def _queries(domain: DomainConfig) -> list[str]:

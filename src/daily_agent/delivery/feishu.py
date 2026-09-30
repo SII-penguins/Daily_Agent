@@ -4,6 +4,7 @@ import hashlib
 import re
 import tomllib
 import uuid
+from urllib.parse import unquote
 from datetime import date
 from pathlib import Path
 from typing import Any
@@ -17,6 +18,7 @@ from daily_agent.secrets import credential_value
 from daily_agent.storage import load_feishu_delivery_state, write_feishu_delivery_state
 
 BASE_URL = "https://open.feishu.cn/open-apis"
+FEISHU_DOC_RENDER_VERSION = "5"
 
 
 def deliver_weekly_report(
@@ -29,7 +31,50 @@ def deliver_weekly_report(
     if mode == "local":
         return DeliveryStatus(requested_mode=mode, final_mode="local", ok=True)
     if mode in {"cc-connect", "cc_connect"}:
-        send_via_cc_connect(path, message="Daily Agent 日报已生成，见附件。")
+        cc_config = (config.delivery.get("delivery", {}).get("cc_connect", {}) or {}) if config else {}
+        project_env = str(cc_config.get("project_env") or "DAILY_AGENT_CC_CONNECT_PROJECT")
+        session_env = str(cc_config.get("session_env") or "DAILY_AGENT_CC_CONNECT_SESSION")
+        project = credential_value(project_env) or str(cc_config.get("project") or "").strip() or None
+        session = credential_value(session_env) or str(cc_config.get("session") or "").strip() or None
+        report_day = run_date.isoformat() if run_date else "今日"
+        if cc_config.get("publish_feishu_doc", False) and config and run_date and daily_markdown is not None:
+            try:
+                document_status = _deliver_to_feishu(config, path, run_date, daily_markdown)
+            except Exception as exc:
+                send_via_cc_connect(
+                    path,
+                    message=f"Daily Agent {report_day} 日报已生成；飞书云文档发布失败，先发送 Markdown 附件。",
+                    project=project,
+                    session=session,
+                )
+                return DeliveryStatus(
+                    requested_mode=mode,
+                    final_mode="cc-connect",
+                    ok=True,
+                    fallback_used=True,
+                    error=str(exc),
+                )
+            document_url = document_status.document_url
+            if not document_url:
+                raise RuntimeError("Feishu document delivery succeeded without a document URL")
+            send_via_cc_connect(
+                None,
+                message=f"Daily Agent {report_day} 日报已发布到飞书云文档：\n{document_url}",
+                project=project,
+                session=session,
+            )
+            return DeliveryStatus(
+                requested_mode=mode,
+                final_mode="cc-connect",
+                ok=True,
+                document_url=document_url,
+            )
+        send_via_cc_connect(
+            path,
+            message=f"Daily Agent {report_day} 日报已生成，见附件。",
+            project=project,
+            session=session,
+        )
         return DeliveryStatus(requested_mode=mode, final_mode="cc-connect", ok=True)
     if mode == "feishu":
         if not config or not run_date or daily_markdown is None:
@@ -68,9 +113,11 @@ def _deliver_to_feishu(config: AppConfig, path: Path, run_date: date, daily_mark
         week["document_url"] = created.get("document_url")
     week["document_id"] = document_id
     week["title"] = title
+    _grant_edit_access(token, document_id, _env_value(feishu_config, "editor_open_id_env"), timeout)
     week.setdefault("document_url", _document_url(document_id))
 
-    content_hash = "sha256:" + hashlib.sha256(daily_markdown.encode("utf-8")).hexdigest()
+    blocks = _markdown_to_blocks(daily_markdown, config.reports_dir, token, timeout, document_id)
+    content_hash = _render_content_hash(daily_markdown, blocks)
     days = week.setdefault("days", {})
     day_key = run_date.isoformat()
     current_day = days.get(day_key) or {}
@@ -80,13 +127,13 @@ def _deliver_to_feishu(config: AppConfig, path: Path, run_date: date, daily_mark
 
     old_start_index = int(current_day.get("start_index", 0) or 0)
     old_block_count = _managed_block_count(current_day)
-    blocks = _markdown_to_blocks(daily_markdown)
     new_day_state: dict[str, Any] | None = None
     try:
         block_ids = _create_blocks_in_batches(token, document_id, document_id, blocks, timeout)
         new_day_state = {"block_ids": block_ids, "block_count": len(blocks), "start_index": 0}
         if old_block_count:
-            _delete_managed_blocks(token, document_id, document_id, current_day, timeout, ignore_stale=True)
+            _delete_managed_blocks(token, document_id, document_id,
+                {**current_day, "start_index":old_start_index + len(blocks)}, timeout)
     except Exception:
         if new_day_state:
             _delete_managed_blocks(token, document_id, document_id, new_day_state, timeout, ignore_stale=True)
@@ -152,8 +199,23 @@ def _create_document(token: str, title: str, folder_token: str | None, timeout: 
 
 def _create_blocks_in_batches(token: str, document_id: str, parent_block_id: str, blocks: list[dict[str, Any]], timeout: float) -> list[str]:
     block_ids: list[str] = []
-    for batch in reversed([blocks[index : index + 20] for index in range(0, len(blocks), 20)]):
-        block_ids[:0] = _create_blocks(token, document_id, parent_block_id, batch, 0, timeout)
+    try:
+        for batch in reversed([blocks[index : index + 20] for index in range(0, len(blocks), 20)]):
+            created = _create_blocks(token, document_id, parent_block_id, batch, 0, timeout)
+            block_ids[:0] = created
+            for block, block_id in zip(batch, created):
+                if block.get("_image_path"):
+                    image_token = _upload_image(token, Path(block["_image_path"]), timeout, block_id)
+                    response = httpx.patch(
+                        f"{BASE_URL}/docx/v1/documents/{document_id}/blocks/{block_id}",
+                        headers=_headers(token), params={"document_revision_id": -1},
+                        json={"replace_image": {"token": image_token}}, timeout=timeout)
+                    _raise_for_feishu_error(response)
+    except Exception:
+        if block_ids:
+            _delete_managed_blocks(token, document_id, parent_block_id,
+                {"block_count":len(block_ids), "start_index":0}, timeout)
+        raise
     return block_ids
 
 
@@ -164,7 +226,7 @@ def _create_blocks(token: str, document_id: str, parent_block_id: str, blocks: l
         f"{BASE_URL}/docx/v1/documents/{document_id}/blocks/{parent_block_id}/children",
         headers=_headers(token),
         params={"document_revision_id": -1, "client_token": str(uuid.uuid4())},
-        json={"children": blocks, "index": index},
+        json={"children": [{k: v for k, v in block.items() if not k.startswith("_")} for block in blocks], "index": index},
         timeout=timeout,
     )
     _raise_for_feishu_error(response)
@@ -208,6 +270,9 @@ def _raise_for_feishu_error(response: httpx.Response) -> None:
         detail = response.text[:1000]
         request = response.request
         raise RuntimeError(f"Feishu API {response.status_code} {request.method} {request.url}: {detail}") from exc
+    payload = response.json()
+    if payload.get("code", 0) != 0:
+        raise RuntimeError(f"Feishu API error {payload.get('code')}: {payload.get('msg')}")
 
 
 def _managed_block_count(day_state: dict[str, Any]) -> int:
@@ -229,12 +294,28 @@ def _shift_day_start_indices(days: dict[str, Any], current_key: str, old_start_i
         day["start_index"] = start_index
 
 
-def _markdown_to_blocks(markdown: str) -> list[dict[str, Any]]:
+def _render_content_hash(markdown: str, blocks: list[dict[str, Any]]) -> str:
+    digest = hashlib.sha256(f"{FEISHU_DOC_RENDER_VERSION}\0{markdown}".encode("utf-8"))
+    for index, block in enumerate(blocks):
+        if block.get("_image_path"):
+            digest.update(f"\0image:{index}:".encode("ascii"))
+            with Path(block["_image_path"]).open("rb") as handle:
+                digest.update(hashlib.file_digest(handle, "sha256").digest())
+    return "sha256:" + digest.hexdigest()
+
+
+def _markdown_to_blocks(markdown: str, base_dir: Path | None = None, token: str | None = None, timeout: float = 30, parent_node: str = "") -> list[dict[str, Any]]:
     blocks = []
     for raw_line in markdown.splitlines():
         line = raw_line.strip()
         if not line:
             continue
+        image = re.match(r"!\[[^]]*\]\(([^)]+)\)", line)
+        if image and base_dir and token:
+            candidate = (base_dir / unquote(image.group(1))).resolve()
+            if candidate.is_relative_to(base_dir.resolve()) and candidate.is_file() and candidate.suffix.lower() == ".png":
+                blocks.append({"block_type": 27, "image": {}, "_image_path": str(candidate)})
+                continue
         field = "text"
         block_type = 2
         text = line
@@ -259,11 +340,52 @@ def _markdown_to_blocks(markdown: str) -> list[dict[str, Any]]:
 
 
 def _text_payload(text: str) -> dict[str, Any]:
-    return {"elements": [{"text_run": {"content": _strip_markdown_links(text)}}]}
+    elements: list[dict[str, Any]] = []
+    normal_style = {"bold": False, "inline_code": False, "italic": False, "strikethrough": False, "underline": False}
+    pattern = re.compile(r"\[([^\]]+)\]\((https?://[^)\s]+)\)|\*\*([^*]+)\*\*|`([^`]+)`")
+    cursor = 0
+    for match in pattern.finditer(text):
+        if match.start() > cursor:
+            elements.append({"text_run": {"content": text[cursor:match.start()], "text_element_style": dict(normal_style)}})
+        if match.group(1):
+            content, style = match.group(1), {**normal_style, "link": {"url": match.group(2)}}
+        elif match.group(3):
+            content, style = match.group(3), {**normal_style, "bold": True}
+        else:
+            content, style = match.group(4), {**normal_style, "inline_code": True}
+        elements.append({"text_run": {"content": content, "text_element_style": style}})
+        cursor = match.end()
+    if cursor < len(text):
+        elements.append({"text_run": {"content": text[cursor:], "text_element_style": dict(normal_style)}})
+    if not elements:
+        elements.append({"text_run": {"content": text, "text_element_style": dict(normal_style)}})
+    return {"elements": elements}
 
 
-def _strip_markdown_links(text: str) -> str:
-    return re.sub(r"\[([^\]]+)\]\(([^\)]+)\)", r"\1（\2）", text)
+def _grant_edit_access(token: str, document_id: str, open_id: str | None, timeout: float) -> None:
+    if not open_id:
+        return
+    response = httpx.post(f"{BASE_URL}/drive/v1/permissions/{document_id}/members",
+        headers=_headers(token), params={"type": "docx"},
+        json={"member_type": "openid", "member_id": open_id, "perm": "edit"}, timeout=timeout)
+    # Permission failure should be visible to the caller; do not silently claim editable access.
+    _raise_for_feishu_error(response)
+
+def _upload_image(token: str, path: Path, timeout: float, parent_node: str = "") -> str:
+    with path.open("rb") as handle:
+        response = httpx.post(
+            f"{BASE_URL}/drive/v1/medias/upload_all",
+            headers={"Authorization": f"Bearer {token}"},
+            data={"file_name": path.name, "parent_type": "docx_image", "parent_node": parent_node, "size": str(path.stat().st_size)},
+            files={"file": (path.name, handle, "image/png")},
+            timeout=timeout,
+        )
+    _raise_for_feishu_error(response)
+    payload = response.json().get("data", {})
+    media_token = payload.get("file_token") or payload.get("token")
+    if not media_token:
+        raise RuntimeError(f"Feishu image upload response missing token: {payload}")
+    return str(media_token)
 
 
 def _headers(token: str) -> dict[str, str]:
@@ -289,7 +411,7 @@ def _load_cc_connect_feishu_config() -> dict[str, str]:
         for platform in project.get("platforms", []):
             if platform.get("type") == "feishu":
                 options = platform.get("options", {}) or {}
-                return {key: str(options[key]) for key in ("app_id", "app_secret", "folder_token") if options.get(key)}
+                return {key: str(options[key]) for key in ("app_id", "app_secret", "folder_token", "allow_from") if options.get(key)}
     return {}
 
 

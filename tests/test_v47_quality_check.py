@@ -12,6 +12,7 @@ def test_quality_check_reports_full_profile_when_keys_and_dependencies_are_ready
 
     config = load_config(ROOT)
     object.__setattr__(config, "root", tmp_path)
+    config.sources["llm_writer"]["command"] = "codex"
     config.quota["paper_review_multiplier"] = 4
     config.sources["paper_text"] = {
         "enabled": True,
@@ -39,7 +40,7 @@ def test_quality_check_reports_full_profile_when_keys_and_dependencies_are_ready
     monkeypatch.setenv("DAILY_AGENT_FEISHU_FOLDER_TOKEN", "feishu-folder")
     versions = {"fitz": "1.28.0", "pypdf": "6.14.2", "scholarly": "1.7.11"}
     monkeypatch.setattr("daily_agent.quality._package_version", lambda name: versions.get(name))
-    monkeypatch.setattr("daily_agent.quality._which", lambda name: f"/usr/bin/{name}" if name == "claude" else None)
+    monkeypatch.setattr("daily_agent.quality._which", lambda name: f"/usr/bin/{name}" if name == "codex" else None)
 
     profile = run_quality_check(config)
     by_key = {check.key: check for check in profile.checks}
@@ -62,10 +63,53 @@ def test_quality_check_reports_full_profile_when_keys_and_dependencies_are_ready
     text = render_quality_check(profile)
     assert "Quality profile: full" in text
     assert f"Python {sys.version_info.major}.{sys.version_info.minor}" in text
-    assert "Claude Code writer full" in text
+    assert "Codex writer full" in text
     assert "Google Scholar full" in text
     assert "CORE full" in text
     assert "PDF text extraction full" in text
+
+
+def test_quality_check_uses_configured_llm_writer_backend(monkeypatch):
+    from daily_agent.quality import run_quality_check
+
+    config = load_config(ROOT)
+    config.sources["llm_writer"] = {
+        "provider": "codex",
+        "command": "daily-agent-codex",
+    }
+    monkeypatch.setattr(
+        "daily_agent.quality._which",
+        lambda name: "/opt/daily-agent-codex" if name == "daily-agent-codex" else None,
+    )
+
+    profile = run_quality_check(config)
+    check = {item.key: item for item in profile.checks}["llm_writer"]
+
+    assert check.name == "Codex writer"
+    assert check.status == "full"
+    assert check.ok is True
+    assert "configured command found at /opt/daily-agent-codex" in check.detail
+    assert "runtime connectivity" in check.detail
+
+
+def test_quality_check_rejects_short_llm_writer_budget(monkeypatch):
+    from daily_agent.quality import run_quality_check
+
+    config = load_config(ROOT)
+    config.sources["llm_writer"] = {
+        "provider": "codex",
+        "command": "codex",
+        "timeout_seconds": 90,
+        "run_budget_seconds": 180,
+    }
+    monkeypatch.setattr("daily_agent.quality._which", lambda name: "/usr/bin/codex" if name == "codex" else None)
+
+    check = {item.key: item for item in run_quality_check(config).checks}["llm_writer"]
+
+    assert check.status == "partial"
+    assert check.ok is True
+    assert "timeout_seconds=90" in check.detail
+    assert "run_budget_seconds=180" in check.detail
 
 
 def test_quality_check_requires_html_fallback_for_full_text_profile(tmp_path):
@@ -348,7 +392,7 @@ def test_quality_check_cli_prints_report(tmp_path, monkeypatch, capsys):
 
     profile = QualityProfile(
         overall="full",
-        checks=[QualityCheck(key="llm_writer", name="Claude Code writer", status="full", ok=True, detail="claude found")],
+        checks=[QualityCheck(key="llm_writer", name="Codex writer", status="full", ok=True, detail="codex found")],
     )
     monkeypatch.setattr("daily_agent.cli.load_config", lambda root=None: load_config(ROOT))
     monkeypatch.setattr("daily_agent.cli.run_quality_check", lambda config: profile)
@@ -357,7 +401,7 @@ def test_quality_check_cli_prints_report(tmp_path, monkeypatch, capsys):
 
     out = capsys.readouterr().out
     assert "Quality profile: full" in out
-    assert "Claude Code writer full claude found" in out
+    assert "Codex writer full codex found" in out
 
 
 def test_quality_check_cli_require_full_fails_when_profile_is_degraded(tmp_path, monkeypatch, capsys):

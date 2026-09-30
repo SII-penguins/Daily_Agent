@@ -35,9 +35,12 @@ def fetch_dblp(config: AppConfig, target_date: datetime | None = None, window_da
                 try:
                     response = client.get(DBLP_PUBLICATION_SEARCH_URL, params={"q": query, "format": "json", "h": max_results, "f": 0})
                     response.raise_for_status()
-                except httpx.HTTPError:
+                    payload = response.json()
+                except (httpx.HTTPError, ValueError):
+                    # DBLP occasionally returns an HTML gateway page with 200;
+                    # skip that query and keep the remaining domains usable.
                     continue
-                for hit in _hits(response.json()):
+                for hit in _hits(payload):
                     item = _hit_to_item(hit, domain)
                     if item and _year(item) >= min_year:
                         items.append(item)
@@ -56,6 +59,8 @@ def _min_year(target: datetime, source_config: dict[str, Any], window_days: int 
 
 
 def _hits(payload: dict[str, Any]) -> list[dict[str, Any]]:
+    if not isinstance(payload, dict):
+        return []
     hits = ((payload.get("result") or {}).get("hits") or {}).get("hit") or []
     if isinstance(hits, dict):
         return [hits]

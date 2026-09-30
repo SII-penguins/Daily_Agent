@@ -15,10 +15,14 @@ retention:
   logs_keep_days: 7
 
 delivery:
-  default: "local"
+  default: "cc-connect"
   cc_connect:
     enabled: false
     send_file: true
+    publish_feishu_doc: true
+    send_file_fallback: true
+    project_env: "DAILY_AGENT_CC_CONNECT_PROJECT"
+    session_env: "DAILY_AGENT_CC_CONNECT_SESSION"
   feishu:
     enabled: false
     prefer_cloud_doc: true
@@ -27,11 +31,13 @@ delivery:
     app_secret_env: "DAILY_AGENT_FEISHU_APP_SECRET"
     folder_token_env: "DAILY_AGENT_FEISHU_FOLDER_TOKEN"
     doc_token_env: "DAILY_AGENT_FEISHU_DOC_TOKEN"
+    editor_open_id_env: "DAILY_AGENT_FEISHU_EDITOR_OPEN_ID"
     fallback_to_cc_connect: true
     request_timeout_seconds: 30
 
 schedule:
-  production_time: "02:00"
-  review_time: "07:20"
+  production_time: "01:00"
+  review_time: "06:00"
   target_time: "09:00"
-  preproduction_time: "07:20"
+  delivery_time: "08:50"
+  preproduction_time: "06:00"

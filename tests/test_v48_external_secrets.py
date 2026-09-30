@@ -355,7 +355,7 @@ folder_token = "feishu-folder"
     monkeypatch.setenv("DAILY_AGENT_SECRETS_FILE", str(secrets))
     for env_name in ["SERPAPI_API_KEY", "SEMANTIC_SCHOLAR_API_KEY", "IEEE_XPLORE_API_KEY", "CORE_API_KEY", "UNPAYWALL_EMAIL", "GITHUB_TOKEN", "DAILY_AGENT_FEISHU_APP_ID", "DAILY_AGENT_FEISHU_APP_SECRET", "DAILY_AGENT_FEISHU_FOLDER_TOKEN"]:
         monkeypatch.delenv(env_name, raising=False)
-    monkeypatch.setattr("daily_agent.quality._which", lambda name: f"/usr/bin/{name}" if name == "claude" else None)
+    monkeypatch.setattr("daily_agent.quality._which", lambda name: f"/usr/bin/{name}" if name == "codex" else None)
     versions = {"fitz": "1.28.0", "pypdf": "6.14.2", "scholarly": "1.7.11"}
     monkeypatch.setattr("daily_agent.quality._package_version", lambda name: versions.get(name))
 

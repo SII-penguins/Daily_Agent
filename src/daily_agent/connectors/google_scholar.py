@@ -6,6 +6,7 @@ import os
 import re
 import signal
 import threading
+import time
 from datetime import datetime, timedelta, timezone
 from itertools import islice
 from pathlib import Path
@@ -245,6 +246,8 @@ def _enrich_serpapi_citations(client: httpx.Client, items: list[DigestItem], sou
     cache = _load_cite_cache(cache_path) if cache_enabled else {}
     cache_changed = False
     network_enriched = 0
+    run_budget = float(source_config.get("cite_enrichment_run_budget_seconds", 45) or 0)
+    deadline = time.monotonic() + run_budget if run_budget > 0 else None
     for item in items:
         scholar_id = str(item.raw.get("google_scholar_id") or "").strip()
         if not scholar_id or item.raw.get("google_scholar_citation_formats"):
@@ -254,10 +257,17 @@ def _enrich_serpapi_citations(client: httpx.Client, items: list[DigestItem], sou
             continue
         if network_enriched >= max_items:
             break
+        request_timeout = float(source_config.get("timeout_seconds", 60))
+        if deadline is not None:
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                break
+            request_timeout = min(request_timeout, remaining)
         try:
             response = client.get(
                 SERPAPI_GOOGLE_SCHOLAR_URL,
                 params={"engine": "google_scholar_cite", "q": scholar_id, "api_key": api_key},
+                timeout=request_timeout,
             )
             response.raise_for_status()
             payload = response.json()

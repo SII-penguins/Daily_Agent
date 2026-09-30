@@ -121,9 +121,9 @@ def load_config(root: str | Path | None = None) -> AppConfig:
         "max_items": 10,
         "quantum_target": 6,
         "exploratory_target": 4,
-        "paper_target": 7,
+        "paper_target": 8,
         "paper_review_multiplier": 2,
-        "github_target": 3,
+        "github_target": 2,
     }
     default_quota.update({key: int(value) for key, value in quota.items()})
 

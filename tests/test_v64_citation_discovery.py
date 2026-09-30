@@ -161,7 +161,7 @@ def test_pipeline_fetches_citation_discovery_from_material_library(tmp_path, mon
     ]:
         monkeypatch.setattr(pipeline, name, lambda config_arg, target_dt, window_days=None: [])
     monkeypatch.setattr(pipeline, "load_config", lambda root=None: config)
-    monkeypatch.setattr(pipeline, "load_material_library", lambda config_arg: {seed.key: seed})
+    monkeypatch.setattr(pipeline, "load_material_library", lambda config_arg: {seed.key: seed, citing_material.key: citing_material})
     monkeypatch.setattr(pipeline, "fetch_citation_discovery", lambda config_arg, target_dt, window_days=None, library=None: [citing_material.to_digest_item()])
     monkeypatch.setattr(pipeline, "enrich_paper_texts", lambda records, config_arg: records)
     monkeypatch.setattr(pipeline, "enrich_citation_contexts", lambda records, config_arg: records)

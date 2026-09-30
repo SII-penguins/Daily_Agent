@@ -103,10 +103,10 @@ def test_render_daily_html_sections_fields_labels_and_ranks():
     assert "运行状态" in html
     assert "1. 【历史补充/版本更新】Quantum circuit method" in html
     assert "2. 【重大更新】owner/repo" in html
-    assert "解决问题" in html
-    assert "方法" in html
-    assert "为什么有效" in html
-    assert "技术路线" in html
+    assert "solve circuit design" in html
+    assert "quantum compilation" in html
+    assert "阅读状态" in html
+    assert "证据缺口" in html
     assert "核心能力" in html
     assert "stars/language/updated_at" in html
     assert "反馈编号" in html

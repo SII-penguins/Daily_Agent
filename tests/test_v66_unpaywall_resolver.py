@@ -242,7 +242,7 @@ def test_pipeline_resolves_unpaywall_after_openalex_before_fulltext(tmp_path, mo
         monkeypatch.setattr(pipeline, name, lambda *args, **kwargs: [])
     monkeypatch.setattr(pipeline, "load_config", lambda root=None: config)
     monkeypatch.setattr(pipeline, "load_material_library", lambda config_arg: {material.key: material})
-    monkeypatch.setattr(pipeline, "_build_shortlist_from_library", lambda config_arg, library, run_date: [material])
+    monkeypatch.setattr(pipeline, "_build_shortlist_from_library", lambda config_arg, library, run_date: [material] if material.key in library else [])
     monkeypatch.setattr(pipeline, "enrich_open_access_links", lambda records, config_arg: order.append("openalex") or records)
 
     def fake_unpaywall(records, config_arg):

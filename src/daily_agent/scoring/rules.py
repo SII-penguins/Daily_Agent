@@ -5,6 +5,7 @@ from datetime import datetime, timezone
 
 from daily_agent.config import AppConfig, DomainConfig
 from daily_agent.models import DigestItem, SelectedRecord
+from daily_agent.scoring.publication import publication_scores
 from daily_agent.scoring.relevance import min_topic_relevance_score, off_topic_score_penalty, topic_gate_enabled, topic_relevance_score
 
 
@@ -49,7 +50,9 @@ def score_items(
             evidence_score = _evidence_score(item)
             score += evidence_score
             breakdown["evidence"] = evidence_score
-            venue_score = _venue_score(item)
+            venue_score, publication_score = publication_scores(item, config.sources.get("publication_priority", {}))
+            score += publication_score
+            breakdown["publication"] = publication_score
             score += venue_score
             breakdown["venue"] = venue_score
             citation_discovery_score = _citation_discovery_score(item)
@@ -80,8 +83,8 @@ def select_items(items: list[DigestItem], config: AppConfig) -> list[DigestItem]
     max_items = int(config.quota.get("max_items", 10))
     quantum_target = int(config.quota.get("quantum_target", 6))
     exploratory_target = int(config.quota.get("exploratory_target", 4))
-    paper_target = int(config.quota.get("paper_target", 7))
-    github_target = int(config.quota.get("github_target", 3))
+    paper_target = int(config.quota.get("paper_target", 8))
+    github_target = int(config.quota.get("github_target", 2))
     multiplier = max(1, int(config.quota.get("paper_review_multiplier", 2)))
     paper_review_target = max(paper_target, int(config.quota.get("paper_review_target", paper_target * multiplier)))
     candidate_limit = max(max_items, paper_review_target + github_target)
@@ -185,12 +188,7 @@ def _evidence_score(item: DigestItem) -> float:
 
 
 def _venue_score(item: DigestItem) -> float:
-    text = " ".join([item.source, item.raw.get("venue") or "", " ".join(item.categories), " ".join(item.source_tags)]).lower()
-    if any(venue in text for venue in ["iclr", "icml", "neurips", "nips"]):
-        return 8.0
-    if item.source in {"openreview", "pmlr", "neurips"}:
-        return 5.0
-    return 0.0
+    return publication_scores(item)[0]
 
 
 def _citation_discovery_score(item: DigestItem) -> float:

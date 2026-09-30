@@ -113,18 +113,29 @@ def _get_with_retry(url: str, source_config: dict) -> httpx.Response:
     backoff_seconds = float(source_config.get("rate_limit_backoff_seconds", 20))
     max_backoff_seconds = float(source_config.get("rate_limit_max_backoff_seconds", 90))
     last_response: httpx.Response | None = None
+    endpoints = [url]
+    if "export.arxiv.org" in url:
+        endpoints.append(url.replace("export.arxiv.org", "arxiv.org"))
+    last_error: Exception | None = None
     with httpx.Client(timeout=30, follow_redirects=True) as client:
-        for attempt in range(max_retries + 1):
-            response = client.get(url)
-            if response.status_code != 429:
-                response.raise_for_status()
-                return response
-            last_response = response
-            if attempt >= max_retries:
-                break
-            time.sleep(_retry_after_seconds(response, attempt, backoff_seconds, max_backoff_seconds))
+        for endpoint in endpoints:
+            try:
+                for attempt in range(max_retries + 1):
+                    response = client.get(endpoint)
+                    if response.status_code != 429:
+                        response.raise_for_status()
+                        return response
+                    last_response = response
+                    if attempt >= max_retries:
+                        break
+                    time.sleep(_retry_after_seconds(response, attempt, backoff_seconds, max_backoff_seconds))
+            except httpx.HTTPError as exc:
+                last_error = exc
+                continue
     if last_response is not None:
         last_response.raise_for_status()
+    if last_error is not None:
+        raise last_error
     raise httpx.HTTPError("arXiv request failed")
 
 
@@ -185,7 +196,8 @@ def _entry_to_item(entry: ET.Element, domain: DomainConfig) -> DigestItem:
         arxiv_version=version,
         doi=_text(entry, "doi", namespace="http://arxiv.org/schemas/atom") or None,
         quota_group=domain.quota_group,
-        raw={"entry_id": entry_id, "domain": domain.name},
+        raw={"entry_id": entry_id, "domain": domain.name,
+             "journal_ref": _text(entry, "journal_ref", namespace="http://arxiv.org/schemas/atom") or None},
     )
 
 

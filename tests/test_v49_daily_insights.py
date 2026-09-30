@@ -29,6 +29,7 @@ def _paper(
         score_breakdown={"domain": 20, "evidence": 8, "venue": 3},
         paper_text_status={"available": True, "sufficient_for_deep_summary": True, "sections_found": ["method", "results", "limitations"]},
         raw={"citation_context": citation_context} if citation_context else {},
+        reading={"verification": {"status": "located", "valid_fields": ["method", "limitations"]}},
     )
     fields = {
         "problem": "真实量子硬件约束下线路深度和路由开销难以同时控制。",
@@ -51,14 +52,14 @@ def test_build_daily_insights_compares_approved_papers():
 
     insights = build_daily_insights(items)
 
-    assert len(insights) == 4
-    assert insights[0].startswith("共同趋势：")
+    assert len(insights) == 3
+    assert insights[0].startswith("今日共同主题：")
     assert "hardware_aware" in insights[0] or "硬件" in insights[0]
-    assert insights[1].startswith("方法差异：")
+    assert insights[1].startswith("方法对照：")
     assert "routing" in insights[1] or "synthesis" in insights[1]
-    assert insights[2].startswith("研究空白：")
+    assert insights[2].startswith("已报告局限：")
     assert "小规模硬件" in insights[2] or "真实硬件" in insights[2]
-    assert insights[3].startswith("值得追踪：")
+    assert not any(text.startswith("值得追踪：") for text in insights)
 
 
 def test_build_daily_insights_respects_configured_max_insights():
@@ -70,8 +71,8 @@ def test_build_daily_insights_respects_configured_max_insights():
     insights = build_daily_insights(items, settings={"enabled": True, "max_insights": 2, "min_items": 2, "research_gap_enabled": True})
 
     assert len(insights) == 2
-    assert insights[0].startswith("共同趋势：")
-    assert insights[1].startswith("方法差异：")
+    assert insights[0].startswith("今日共同主题：")
+    assert insights[1].startswith("方法对照：")
 
 
 def test_build_daily_insights_adds_citation_context_when_available():
@@ -92,7 +93,7 @@ def test_build_daily_insights_adds_citation_context_when_available():
 
     insights = build_daily_insights(items, settings={"enabled": True, "max_insights": 5, "min_items": 2, "research_gap_enabled": True})
 
-    assert len(insights) == 5
+    assert len(insights) == 4
     assert any(insight.startswith("引用脉络：") for insight in insights)
     assert "被引 42 次" in " ".join(insights)
 
@@ -107,9 +108,9 @@ def test_render_daily_reports_include_daily_insights():
     html = render_daily_html(items, date(2026, 5, 18), RunStatus())
 
     assert markdown.index("## 今日必看") < markdown.index("## 今日洞察") < markdown.index("## 最新论文")
-    assert "- 共同趋势：" in markdown
+    assert "- 今日共同主题：" in markdown
     assert "<h2>今日洞察</h2>" in html
-    assert "共同趋势：" in html
+    assert "今日共同主题：" in html
 
 
 def test_render_daily_reports_can_disable_daily_insights():
@@ -169,7 +170,7 @@ def test_health_summary_counts_daily_insights(tmp_path, monkeypatch):
         editorial_path,
     )
 
-    assert health["current"]["summary"]["insight_count"] == 4
+    assert health["current"]["summary"]["insight_count"] == 3
 
 
 def test_quality_check_requires_daily_insights_full_profile(tmp_path):
