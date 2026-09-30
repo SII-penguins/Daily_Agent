@@ -69,6 +69,9 @@ def _identity_keys(item: DigestItem) -> list[str]:
             keys.append(f"arxiv:{item.arxiv_id}")
         if item.doi:
             keys.append(f"doi:{item.doi.lower()}")
+            match = re.fullmatch(r"10\.48550/arxiv\.(.+?)(?:v\d+)?", item.doi, re.I)
+            if match:
+                keys.append(f"arxiv:{match.group(1).lower()}")
         if item.raw.get("openalex_id"):
             keys.append(f"openalex:{item.raw['openalex_id']}")
         if item.raw.get("semantic_scholar_id"):
@@ -152,6 +155,10 @@ def _ensure_multisource_raw(item: DigestItem) -> None:
             "abstract": item.abstract,
             "doi": item.doi,
             "venue": item.raw.get("venue"),
+            "publication_type": item.raw.get("publication_type"),
+            "publication_types": item.raw.get("publication_types"),
+            "publication_status": item.raw.get("publication_status"),
+            "journal_ref": item.raw.get("journal_ref"),
         },
     )
 

@@ -605,7 +605,7 @@ def test_feishu_rerun_deletes_previous_managed_range(tmp_path, monkeypatch):
         assert method == "DELETE"
         assert url.endswith("/docx/v1/documents/doc123/blocks/doc123/children/batch_delete")
         assert kwargs["params"]["document_revision_id"] == -1
-        assert kwargs["json"] == {"start_index": 0, "end_index": 2}
+        assert kwargs["json"] == {"start_index": 1, "end_index": 3}
         return httpx.Response(200, request=httpx.Request("DELETE", url), json={"data": {}})
 
     monkeypatch.setattr("daily_agent.delivery.feishu.httpx.post", fake_post)
@@ -735,7 +735,7 @@ def test_feishu_delete_failure_cleans_inserted_replacement_and_preserves_state(t
 
     def fake_request(method, url, **kwargs):
         delete_payloads.append(kwargs["json"])
-        if kwargs["json"] == {"start_index": 2, "end_index": 3}:
+        if kwargs["json"] == {"start_index": 3, "end_index": 4}:
             return httpx.Response(500, request=httpx.Request("DELETE", url), json={"code": 1, "msg": "delete failed"})
         if kwargs["json"] == {"start_index": 0, "end_index": 1}:
             return httpx.Response(200, request=httpx.Request("DELETE", url), json={"data": {}})
@@ -752,7 +752,7 @@ def test_feishu_delete_failure_cleans_inserted_replacement_and_preserves_state(t
     assert status.ok is True
     assert status.final_mode == "cc-connect"
     assert status.fallback_used is True
-    assert delete_payloads == [{"start_index": 2, "end_index": 3}, {"start_index": 0, "end_index": 1}]
+    assert delete_payloads == [{"start_index": 3, "end_index": 4}, {"start_index": 0, "end_index": 1}]
     assert sent
     assert load_feishu_delivery_state(config) == previous_state
 

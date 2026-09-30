@@ -58,6 +58,10 @@ def _evidence_from_item(item: "DigestItem") -> dict[str, Any]:
                 "published_at": item.published_at,
                 "updated_at": item.updated_at,
                 "venue": item.raw.get("venue"),
+                "publication_type": item.raw.get("publication_type"),
+                "publication_types": item.raw.get("publication_types"),
+                "publication_status": item.raw.get("publication_status"),
+                "journal_ref": item.raw.get("journal_ref"),
                 "citation_count": item.raw.get("citation_count") or item.raw.get("cited_by_count"),
             }
         }
@@ -150,6 +154,8 @@ class MaterialRecord:
     readme_excerpt: str | None = None
     paper_text_excerpt: str | None = None
     paper_text_status: dict[str, Any] = field(default_factory=dict)
+    paper_document: dict[str, Any] = field(default_factory=dict)
+    reading: dict[str, Any] = field(default_factory=dict)
     categories: list[str] = field(default_factory=list)
     language: str | None = None
     stars: int | None = None
@@ -196,7 +202,7 @@ class MaterialRecord:
             score_breakdown=self.score_breakdown,
             quota_group=self.quota_group,
             update_label=self.update_label,
-            raw=self.raw,
+            raw={**self.raw, "evidence": _merge_evidence(self.raw.get("evidence") or {}, self.evidence)},
         )
         if self.source == "arxiv":
             item.arxiv_id = self.key.split(":", 1)[1]
@@ -257,6 +263,8 @@ class EditorialDraft:
     draft_fields: dict[str, Any]
     evidence_used: list[str] = field(default_factory=list)
     writer_notes: str | None = None
+    claim_evidence: list[dict[str, Any]] = field(default_factory=list)
+    verification: dict[str, Any] = field(default_factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)

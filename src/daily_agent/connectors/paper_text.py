@@ -50,96 +50,73 @@ def enrich_paper_texts(records: list[MaterialRecord], config: AppConfig) -> list
     max_papers = int(source_config.get("max_papers_per_run", 7))
     max_bytes = int(source_config.get("max_pdf_bytes", 8_000_000))
     max_html_bytes = int(source_config.get("max_html_bytes", max_bytes))
-    max_chars = int(source_config.get("max_excerpt_chars", 12_000))
-    max_raw_chars = max(max_chars, int(source_config.get("max_raw_text_chars", max_chars * 3)))
-    section_notes_enabled = bool(source_config.get("section_notes_enabled", True))
-    max_section_note_chars = int(source_config.get("max_section_note_chars", 1200))
     timeout = float(source_config.get("timeout_seconds", 30))
     run_budget_seconds = float(source_config.get("run_budget_seconds", 0) or 0)
     max_urls_per_paper = int(source_config.get("max_urls_per_paper", 0) or 0)
     html_fallback = bool(source_config.get("html_fallback_enabled", True))
-    cache_dir = config.root / "data" / "paper_text" / "v2"
-    for record in records:
-        if record.item_type == "paper" and record.paper_text_excerpt and not record.paper_text_status:
-            record.paper_text_status = analyze_paper_text_coverage(
-                record.paper_text_excerpt,
-                source_type="existing_excerpt",
-                source_url=None,
-                section_notes_enabled=section_notes_enabled,
-                max_section_note_chars=max_section_note_chars,
-            )
-    paper_records = [
-        record
-        for record in records
-        if record.item_type == "paper" and (_candidate_pdf_urls(record) or (html_fallback and _candidate_html_urls(record))) and not record.paper_text_excerpt
-    ]
-    if not paper_records or max_papers <= 0:
-        return records
-    cache_dir.mkdir(parents=True, exist_ok=True)
-    started_at = time.monotonic()
-    deadline = started_at + run_budget_seconds if run_budget_seconds > 0 else None
+    from daily_agent.paper_document import (attach_document, build_document, extract_document,
+        version_identity, load_json, atomic_json, digest, valid_document)
+    cache_dir = config.root / "data" / "paper_text" / "v3"
+    deadline = time.monotonic() + run_budget_seconds if run_budget_seconds > 0 else None
+    ttl = float(source_config.get("cache_ttl_hours", 168)) * 3600
+    count = 0
     with httpx.Client(timeout=timeout, follow_redirects=True, headers={"User-Agent": "Daily-Agent/0.1"}) as client:
-        candidates = paper_records[:max_papers]
-        for index, record in enumerate(candidates):
-            if _deadline_exceeded(deadline):
-                for skipped in candidates[index:]:
-                    skipped.paper_text_status = _skipped_text_status("run_budget_exceeded")
-                break
-            excerpt = _load_cached_excerpt(cache_dir, record.key)
-            if excerpt:
-                record.paper_text_excerpt = excerpt[:max_chars]
-                record.paper_text_status = analyze_paper_text_coverage(
-                    excerpt,
-                    source_type="cache",
-                    source_url=None,
-                    section_notes_enabled=section_notes_enabled,
-                    max_section_note_chars=max_section_note_chars,
-                )
+        for record in records:
+            if record.item_type != "paper":
                 continue
-            text = ""
-            source_type = ""
-            source_url = ""
-            attempts = 0
-            for pdf_url in _candidate_pdf_urls(record):
-                if _url_budget_exceeded(attempts, max_urls_per_paper):
+            identity = version_identity(record)
+            path = cache_dir / (digest([identity, source_config, 4]) + ".json")
+            cached = load_json(path)
+            if (valid_document(cached, identity) and time.time()-path.stat().st_mtime < ttl):
+                attach_document(record, cached)
+                continue
+            # Existing unstructured snippets are never promoted to full text.
+            fallback = build_document(record, [{"page": None, "text": record.paper_text_excerpt or record.abstract or ""}],
+                                      record.url, "legacy" if record.paper_text_excerpt else "abstract", source_config)
+            if count >= max_papers or _deadline_exceeded(deadline):
+                fallback["limitations"].append("本轮正文获取预算不足")
+                attach_document(record, fallback)
+                record.paper_text_status.update(status="skipped", reason="run_budget_exceeded")
+                continue
+            count += 1
+            best = fallback
+            urls = _candidate_pdf_urls(record)
+            if html_fallback:
+                arxiv_id = _arxiv_id(record)
+                if arxiv_id:
+                    urls.append(f"https://arxiv.org/html/{arxiv_id}")
+                urls.extend(_candidate_html_urls(record))
+            for index, url in enumerate(dict.fromkeys(urls)):
+                if _url_budget_exceeded(index, max_urls_per_paper) or _deadline_exceeded(deadline):
                     break
-                attempts += 1
-                content = _download_limited(client, pdf_url, max_bytes=max_bytes, deadline=deadline)
+                content = _download_limited(client, url, max_bytes=max(max_bytes, max_html_bytes), deadline=deadline)
                 if not content:
                     continue
-                text = extract_pdf_text(content, max_chars=max_raw_chars)
-                if text:
-                    source_type = "pdf"
-                    source_url = pdf_url
+                try:
+                    doc = extract_document(content, record, url, {**source_config, "page_image_dir": str(cache_dir / "pages" / digest([identity, __import__("hashlib").sha256(content).hexdigest()]))})
+                except Exception:
+                    best["limitations"].append("一个候选正文解析失败")
+                    continue
+                if len(content) >= max(max_bytes, max_html_bytes) or _deadline_exceeded(deadline):
+                    doc["limitations"].append("下载可能因大小或时间预算截断")
+                    if doc["document_kind"] == "full_text":
+                        doc["document_kind"] = "partial_text"
+                order = {"unavailable": 0, "abstract_only": 1, "partial_text": 2, "full_text": 3}
+                if (order[doc["document_kind"]], doc["coverage"]["char_count"]) > (order[best["document_kind"]], best["coverage"]["char_count"]):
+                    if doc.get("source_pdf_sha256"):
+                        pdf_path = cache_dir / "pdfs" / (doc["source_pdf_sha256"] + ".pdf")
+                        pdf_path.parent.mkdir(parents=True, exist_ok=True)
+                        pdf_path.write_bytes(content)
+                        doc["source_pdf_path"] = str(pdf_path.resolve())
+                    best = doc
+                if best["document_kind"] == "full_text":
                     break
-            if not text and html_fallback:
-                for html_url in _candidate_html_urls(record):
-                    if _url_budget_exceeded(attempts, max_urls_per_paper):
-                        break
-                    attempts += 1
-                    content = _download_limited(client, html_url, max_bytes=max_html_bytes, deadline=deadline)
-                    if not content:
-                        continue
-                    text = extract_html_text(content, max_chars=max_raw_chars)
-                    if text:
-                        source_type = "html"
-                        source_url = html_url
-                        break
-            if not text:
-                record.paper_text_status = _unavailable_text_status()
-                continue
-            excerpt = select_paper_excerpt(text, max_chars=max_chars)
-            if excerpt:
-                record.paper_text_excerpt = excerpt
-                record.paper_text_status = analyze_paper_text_coverage(
-                    text,
-                    source_type=source_type,
-                    source_url=source_url,
-                    excerpt=excerpt,
-                    section_notes_enabled=section_notes_enabled,
-                    max_section_note_chars=max_section_note_chars,
-                )
-                _write_cached_excerpt(cache_dir, record.key, excerpt)
+            if best["source_type"] == "legacy" and best["coverage"]["char_count"]:
+                best["limitations"].append("本轮未获取到可确认的新版正文")
+            attach_document(record, best)
+            # Failed/legacy fetches must be retried, not immortalized as valid cache.
+            if best["source_type"] in {"pdf", "html"} and best["coverage"]["char_count"]:
+                atomic_json(path, best)
     return records
 
 
@@ -198,7 +175,11 @@ def _candidate_pdf_urls(record: MaterialRecord) -> list[str]:
                 add(value)
 
     arxiv_id = _arxiv_id(record)
-    if arxiv_id:
+    versioned = next((url for url in [record.pdf_url, _arxiv_pdf_from_url(record.url)]
+                      if url and re.search(r"arxiv\.org/pdf/[^/?#]+v\d+", url)), None)
+    if versioned:
+        add(versioned)
+    elif arxiv_id:
         add(f"https://arxiv.org/pdf/{arxiv_id}")
     if record.url:
         add(_arxiv_pdf_from_url(record.url))

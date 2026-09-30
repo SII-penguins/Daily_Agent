@@ -53,3 +53,15 @@ def test_neurips_limits_detail_page_fetches(monkeypatch):
     assert len(detail_urls) == 2
     assert items[0].abstract == "quantum circuit method"
     assert items[-1].abstract is None
+
+
+def test_neurips_track_filter_precedes_budget(monkeypatch):
+    config=load_config('/Users/wuzixie/Daily_Agent')
+    config.sources['neurips']={'enabled':True,'years':[2025],'max_results_per_year':1,'allowed_tracks':['Conference']}
+    def handler(url,**kwargs):
+        html=('<a href="/paper_files/paper/2025/hash/a-Abstract-Creative_AI_Track.html">Quantum art</a>'
+              '<a href="/paper_files/paper/2025/hash/b-Abstract-Conference.html">Quantum compilation</a>') if url.endswith('/2025') else '<h4>Abstract</h4><p>quantum circuits</p>'
+        return httpx.Response(200,request=httpx.Request('GET',url),text=html)
+    monkeypatch.setattr('daily_agent.connectors.neurips.httpx.Client',lambda **kwargs:_Client(handler,**kwargs))
+    items=fetch_neurips(config)
+    assert len(items)==1 and items[0].title=='Quantum compilation'

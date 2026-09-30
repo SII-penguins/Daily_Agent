@@ -98,7 +98,7 @@ def test_pipeline_caches_pdfs_before_rendering_and_selected_json(tmp_path, monke
 
     config = load_config("/Users/wuzixie/Daily_Agent")
     object.__setattr__(config, "root", tmp_path)
-    paper = _approved_paper(title="Pipeline PDF Paper")
+    paper = _approved_paper(title="Quantum circuit optimization PDF Paper")
 
     for name in [
         "fetch_arxiv",

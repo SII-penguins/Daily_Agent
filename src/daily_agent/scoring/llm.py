@@ -3,22 +3,31 @@ from __future__ import annotations
 import json
 import subprocess
 
+from daily_agent.config import AppConfig, load_config
+from daily_agent.editorial import _llm_writer_command, _llm_writer_settings
 from daily_agent.models import DigestItem
 
 
-def summarize_items(items: list[DigestItem], enabled: bool = True, timeout_seconds: int = 180) -> list[DigestItem]:
+def summarize_items(
+    items: list[DigestItem],
+    enabled: bool = True,
+    timeout_seconds: int | None = None,
+    config: AppConfig | None = None,
+) -> list[DigestItem]:
     if not enabled or not items:
         return apply_rule_summaries(items)
+    settings = _llm_writer_settings(config or load_config())
+    timeout = int(timeout_seconds or settings["timeout_seconds"])
     prompt = _build_prompt(items)
     try:
         result = subprocess.run(
-            ["claude", "-p", prompt, "--output-format", "json"],
+            _llm_writer_command(settings, prompt),
             check=True,
             capture_output=True,
             text=True,
-            timeout=timeout_seconds,
+            timeout=timeout,
         )
-        payload = _parse_claude_output(result.stdout)
+        payload = _parse_llm_output(result.stdout)
         if not payload:
             return apply_rule_summaries(items)
         _apply_llm_payload(items, payload)
@@ -64,6 +73,7 @@ def _build_prompt(items: list[DigestItem]) -> str:
         )
     return (
         "你是克制、准确的研究助理。请只基于输入中的摘要、README 描述和元数据生成中文日报字段；"
+        "不要调用任何工具、不要读取本地文件、不要联网。"
         "推荐理由可以结合用户研究方向：量子+AI、量子线路优化/编译、量子错误缓解/纠错、QNN、world model、VLA、具身智能、无人机导航、自动驾驶、LLM/Agent。"
         "不要输出英文摘要。返回严格 JSON 数组，每项包含 id、summary_zh、technical_route、possible_use_or_impact、reusable_point、recommendation_reason、llm_tags。"
         "如果字段不适用，用空字符串。输入：\n"
@@ -71,7 +81,7 @@ def _build_prompt(items: list[DigestItem]) -> str:
     )
 
 
-def _parse_claude_output(stdout: str) -> list[dict]:
+def _parse_llm_output(stdout: str) -> list[dict]:
     raw = stdout.strip()
     if not raw:
         return []

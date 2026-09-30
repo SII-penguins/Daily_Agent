@@ -1,28 +1,33 @@
 from __future__ import annotations
+from daily_agent.source_screenshots import screenshot_markdown
 
 from datetime import date
 
 from daily_agent.insights import build_daily_insights
+from daily_agent.rendering.composition import featured_keys, introduction, paper_paragraphs
+from daily_agent.rendering.notes import reading_label, card_gaps, must_read, result_conditions
 from daily_agent.models import ApprovedItem, RunStatus
 
 
-def render_daily_markdown(items: list[ApprovedItem], run_date: date, status: RunStatus, insight_config: dict | None = None) -> str:
+def render_daily_markdown(items: list[ApprovedItem], run_date: date, status: RunStatus, insight_config: dict | None = None, writing_config: dict | None = None) -> str:
     lines: list[str] = [f"# Daily Agent 日报｜{run_date.isoformat()}", ""]
+    lines.extend([introduction(items, writing_config), ""])
     ranks = {item.key: index for index, item in enumerate(items, start=1)}
     lines.extend(_render_must_read(items))
     if _insights_enabled_for_report(insight_config):
         lines.extend(_render_insights(items, insight_config))
     papers = [item for item in items if item.item_type == "paper"]
     repos = [item for item in items if item.item_type == "repo"]
-    lines.extend(_render_papers(papers, ranks, run_date))
+    lines.extend(_render_papers(papers, ranks, run_date, writing_config))
     lines.extend(_render_repos(repos, ranks, run_date))
+    lines.extend(_render_paper_details(papers, ranks, run_date))
     lines.extend(_render_status(status))
     return "\n".join(lines).rstrip() + "\n"
 
 
 def _render_must_read(items: list[ApprovedItem]) -> list[str]:
     lines = ["## 今日必看", ""]
-    for item in items[:3]:
+    for item in [i for i in items if must_read(i)][:3]:
         label = _prefix_label(item)
         lines.append(f"- {label}[{item.title}]({item.url})")
     if len(lines) == 2:
@@ -45,37 +50,46 @@ def _insights_enabled_for_report(insight_config: dict | None) -> bool:
     return bool(insight_config.get("enabled", True) and insight_config.get("include_in_reports", True))
 
 
-def _render_papers(items: list[ApprovedItem], ranks: dict[str, int], run_date: date) -> list[str]:
+def _render_papers(items: list[ApprovedItem], ranks: dict[str, int], run_date: date, writing_config: dict | None = None) -> list[str]:
     lines = ["## 最新论文", ""]
     if not items:
-        lines.extend(["今日未筛选出论文条目。", ""])
-        return lines
+        return lines + ["今日未筛选出论文条目。", ""]
+    featured = featured_keys(items, writing_config)
     for item in items:
-        fields = item.final_fields
         material = item.material
         rank = ranks.get(item.key)
-        prefix = f"{rank}. " if rank else ""
-        lines.append(f"### {prefix}{_prefix_label(item)}{item.title}")
-        lines.append(f"- 解决问题：{_value(fields.get('problem'))}")
-        lines.append(f"- 方法：{_value(fields.get('method'))}")
-        lines.append(f"- 为什么有效：{_value(fields.get('why_it_works'))}")
-        lines.append(f"- 新意/差异：{_value(fields.get('novelty_or_difference'))}")
-        lines.append(f"- 技术路线：{_value(fields.get('technical_route') or fields.get('method'))}")
-        lines.append(f"- 关键步骤：{_list_value(fields.get('method_steps'))}")
-        lines.append(f"- 结果/发现：{_value(fields.get('key_result'))}")
-        lines.append(f"- 可能用途/影响：{_value(fields.get('possible_use_or_impact'))}")
-        lines.append(f"- 局限：{_value(fields.get('limitations'))}")
-        lines.append(f"- 来源/时间：{_paper_time(material)}")
-        lines.append(f"- 入选理由：{_recommendation_reason(material)}")
-        citation_context = _citation_context_text(material)
-        if citation_context:
-            lines.append(f"- 引用脉络：{citation_context}")
-        lines.append(f"- 标签：{_tags(item)}")
-        lines.append(f"- 链接：{' / '.join(_paper_links(material))}")
-        if rank:
-            lines.append(f"- 反馈编号：第 {rank} 条")
-            lines.append(f"- 反馈：{_feedback_text(run_date, rank)}")
-        lines.append("")
+        mode = "重点解读" if item.key in featured else "简讯"
+        lines.extend([f"### {rank}. {_prefix_label(item)}{item.title}", "", f"{mode} · {_paper_time(material)}", ""])
+        for paragraph in paper_paragraphs(item, item.key in featured):
+            label = f"**{paragraph.label}：**" if paragraph.label else ""
+            lines.extend([label + paragraph.text, ""])
+        lines.extend([f"阅读状态：{reading_label(material)}；置信度 {item.final_fields.get('confidence', 'low')}", "",
+                      f"证据缺口：{card_gaps(material)}", ""])
+        lines.extend([screenshot_markdown(material, preview=True), ""])
+        links = [f"[原文]({material.url})"]
+        if material.pdf_url:
+            links.append(f"[PDF]({material.pdf_url})")
+        if material.raw.get('reading_note_url'):
+            links.append(f"[完整阅读笔记（本地）]({material.raw['reading_note_url']})")
+        lines.extend([" / ".join(links), ""])
+    return lines
+
+
+def _render_paper_details(items, ranks, run_date):
+    if not items:
+        return []
+    lines = ["## 资料索引", ""]
+    for item in items:
+        material = item.material
+        rank = ranks[item.key]
+        lines.extend([f"### 第 {rank} 条 · {item.title}", "",
+                      f"- 来源/时间：{_paper_time(material)}",
+                      f"- 入选理由：{_recommendation_reason(material)}",
+                      f"- 标签：{_tags(item)}"])
+        if _citation_context_text(material):
+            lines.append(f"- 引用脉络：{_citation_context_text(material)}")
+        lines.extend([f"- 链接：{' / '.join(_paper_links(material))}",
+                      f"- 反馈编号：第 {rank} 条", f"- 反馈：{_feedback_text(run_date, rank)}", ""])
     return lines
 
 
@@ -221,16 +235,16 @@ def _recommendation_reason(material) -> str:
         ("venue", "顶会/权威来源"),
         ("scholarly_impact", "引用影响"),
         ("citation_discovery", "引用邻域发现"),
-        ("evidence", "证据完整"),
+        ("evidence", "元数据证据"),
         ("github_quality", "GitHub质量"),
         ("history", "更新信号"),
         ("feedback", "反馈偏好"),
     ]
     reasons = []
     if len(material.source_aliases or {}) > 1:
-        reasons.append("多源交叉验证")
+        reasons.append("多源元数据收录")
     if material.item_type == "paper":
-        full_text_reason = _full_text_reason(material.paper_text_status or {})
+        full_text_reason = "正文已分块阅读" if material.reading.get("complete") and material.paper_document.get("document_kind") == "full_text" else ""
         if full_text_reason:
             reasons.append(full_text_reason)
         citation_reason = _citation_reason((material.raw or {}).get("citation_context") or {})

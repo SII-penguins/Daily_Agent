@@ -816,7 +816,8 @@ def test_enrich_paper_texts_scans_beyond_final_excerpt_budget_for_html_sections(
     enriched = enrich_paper_texts([material], config)
     excerpt = enriched[0].paper_text_excerpt
 
-    assert len(excerpt) <= 360
+    assert len(excerpt) <= 4000
+    assert enriched[0].paper_document["chunks"]
     assert "jointly optimize placement" in excerpt
     assert "22% reduction" in excerpt
     assert "simulated devices" in excerpt
@@ -877,8 +878,8 @@ def test_enrich_paper_texts_records_section_coverage_status(tmp_path, monkeypatc
 
     assert status["available"] is True
     assert status["source_type"] == "html"
-    assert status["sufficient_for_deep_summary"] is True
-    assert {"abstract", "method", "results", "limitations"}.issubset(set(status["sections_found"]))
+    assert status["sufficient_for_deep_summary"] is False  # parsing is not reading
+    assert {"method", "results", "limitations"}.issubset(set(status["sections_found"]))
 
 
 def test_paper_text_coverage_builds_section_notes_for_deep_summary():
@@ -931,6 +932,104 @@ def test_llm_prompt_includes_section_notes_before_raw_excerpt():
     assert prompt.index("paper_section_notes") < prompt.index("paper_text_excerpt")
 
 
+def test_rule_writer_ignores_reference_only_method_names():
+    from daily_agent import editorial
+
+    record = MaterialRecord(
+        key="arxiv:2607.07554",
+        source="arxiv",
+        item_type="paper",
+        title="RubriQ: Rubric-Guided GRPO for Constraint-Aware Quantum Circuit Synthesis",
+        url="https://arxiv.org/abs/2607.07554",
+        abstract=(
+            "RubriQ formulates hardware-constrained circuit synthesis as LLM code generation. "
+            "It uses group relative policy optimization with a programmatic rubric reward. "
+            "Experiments achieve 3.31x T-gate compression with less than 1% constraint violations."
+        ),
+        paper_text_excerpt=(
+            "Methods RubriQ evaluates semantic correctness, T-gate cost, and hardware constraints. "
+            "Related work includes QuTuner for compiler pass tuning."
+        ),
+        paper_text_status={
+            "available": True,
+            "sufficient_for_deep_summary": True,
+            "section_notes": {
+                "method": "RubriQ uses GRPO and a domain-grounded programmatic rubric as reward. Related work includes QuTuner.",
+                "results": "RubriQ achieves 3.31x T-gate compression and less than 1% constraint violations.",
+            },
+        },
+    )
+
+    draft = editorial._rule_draft(record)
+
+    assert "RubriQ" in draft.draft_fields["method"]
+    assert "QuTuner" not in draft.draft_fields["method"]
+    assert "pass 调优" not in draft.draft_fields["problem"]
+
+
+def test_rule_writer_rejects_cookie_boilerplate_as_method():
+    from daily_agent import editorial
+
+    record = MaterialRecord(
+        key="doi:10.0000/cookie",
+        source="crossref",
+        item_type="paper",
+        title="Quantum processor architecture",
+        url="https://publisher.test/cookie",
+        abstract="This paper studies a quantum processor architecture.",
+        paper_text_excerpt="Find out more on how we use cookies. Accept all cookies. Accept only essential cookies.",
+        paper_text_status={
+            "available": True,
+            "sufficient_for_deep_summary": False,
+            "section_notes": {
+                "method": "Find out more on how we use cookies. Accept all cookies. Accept only essential cookies.",
+            },
+        },
+    )
+
+    draft = editorial._rule_draft(record)
+
+    assert draft.draft_fields["method"] == "not_stated"
+
+
+def test_fulltext_rule_fallback_qec_paper_passes_review():
+    from daily_agent import editorial
+
+    record = MaterialRecord(
+        key="arxiv:2607.05814",
+        source="arxiv",
+        item_type="paper",
+        title="Latency-Constrained Hardware-Aware Quantum Error Correction Co-Design",
+        url="https://arxiv.org/abs/2607.05814",
+        abstract=(
+            "Real-time decoding is a bottleneck for surface-code QEC. "
+            "A confidence-gated framework uses a neural fast path and sends low-confidence syndromes to MWPM."
+        ),
+        paper_text_excerpt=(
+            "Methods A feed-forward neural network decodes most syndromes and escalates uncertain cases to MWPM. "
+            "Results Routing 3.3%-6.2% of syndromes improves logical accuracy from 99.21% to 99.81%. "
+            "Limitations Evaluation uses small code distances and simulated noise."
+        ),
+        paper_text_status={
+            "available": True,
+            "sufficient_for_deep_summary": True,
+            "section_notes": {
+                "introduction": "Real-time decoding latency limits practical surface-code deployment.",
+                "method": "A neural fast path handles confident syndromes and MWPM refines low-confidence cases.",
+                "results": "Routing 3.3%-6.2% of syndromes improves logical accuracy from 99.21% to 99.81%.",
+                "limitations": "The evaluation uses small code distances and simulated noise.",
+            },
+        },
+    )
+
+    draft = editorial._rule_draft(record)
+    review = editorial._rule_review(draft)
+
+    assert review.verdict == "PASS"
+    for field in ["method", "why_it_works", "key_result", "limitations"]:
+        assert editorial._has_cjk(str(draft.draft_fields[field]))
+
+
 def test_enrich_paper_texts_backfills_status_for_existing_excerpt(tmp_path):
     config = load_config("/Users/wuzixie/Daily_Agent")
     object.__setattr__(config, "root", tmp_path)
@@ -952,7 +1051,8 @@ def test_enrich_paper_texts_backfills_status_for_existing_excerpt(tmp_path):
     enriched = enrich_paper_texts([material], config)
 
     assert enriched[0].paper_text_status["available"] is True
-    assert enriched[0].paper_text_status["sufficient_for_deep_summary"] is True
+    assert enriched[0].paper_text_status["sufficient_for_deep_summary"] is False
+    assert enriched[0].paper_document["document_kind"] != "full_text"
 
 
 def test_health_reports_full_text_evidence_gaps(tmp_path, monkeypatch):
@@ -1106,7 +1206,7 @@ def test_rule_drafting_extracts_result_and_limitation_sentences():
     draft = draft_report_items(config, [material], use_llm=False)[0]
 
     assert draft.draft_fields["key_result"] == "Experiments show a 23% reduction in CNOT count on benchmark circuits."
-    assert draft.draft_fields["limitations"] == "The main limitation is that evaluation covers only 12-qubit simulations."
+    assert draft.draft_fields["limitations"] == "局限方面，正文指出：The main limitation is that evaluation covers only 12-qubit simulations."
 
 
 def test_llm_drafting_accepts_valid_structured_json(monkeypatch):

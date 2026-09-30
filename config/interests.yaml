@@ -241,6 +241,6 @@ quota:
   max_items: 10
   quantum_target: 6
   exploratory_target: 4
-  paper_target: 7
+  paper_target: 8
   paper_review_multiplier: 4
-  github_target: 3
+  github_target: 2

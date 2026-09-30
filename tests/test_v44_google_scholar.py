@@ -4,7 +4,7 @@ import time
 import httpx
 
 from daily_agent.config import load_config
-from daily_agent.connectors.google_scholar import fetch_google_scholar, google_scholar_skip_reason
+from daily_agent.connectors.google_scholar import _enrich_serpapi_citations, fetch_google_scholar, google_scholar_skip_reason
 from daily_agent.models import ApprovedItem, DigestItem, MaterialRecord, RunStatus
 from daily_agent.pipeline import run_pipeline
 from daily_agent.rendering.markdown import render_daily_markdown
@@ -172,6 +172,50 @@ def test_google_scholar_serpapi_enriches_cite_endpoint_links_and_formats(monkeyp
     assert items[0].raw["google_scholar_endnote_url"] == "https://scholar.test/scholar.enw?q=GS-CITE-1"
     assert items[0].raw["google_scholar_refman_url"] == "https://scholar.test/scholar.ris?q=GS-CITE-1"
     assert items[0].raw["google_scholar_refworks_url"] == "https://scholar.test/refworks?q=GS-CITE-1"
+
+
+def test_google_scholar_cite_enrichment_stops_at_run_budget(monkeypatch):
+    config = load_config("/Users/wuzixie/Daily_Agent")
+    source_config = {
+        "cite_enrichment_enabled": True,
+        "cite_enrichment_max_results_per_run": 10,
+        "cite_enrichment_run_budget_seconds": 5,
+        "cite_cache_enabled": False,
+        "timeout_seconds": 60,
+    }
+    items = [
+        DigestItem(
+            id="GS-BUDGET-1",
+            source="google_scholar",
+            item_type="paper",
+            title="Budgeted Scholar paper one",
+            url="https://publisher.test/budget-1",
+            raw={"google_scholar_id": "GS-BUDGET-1"},
+        ),
+        DigestItem(
+            id="GS-BUDGET-2",
+            source="google_scholar",
+            item_type="paper",
+            title="Budgeted Scholar paper two",
+            url="https://publisher.test/budget-2",
+            raw={"google_scholar_id": "GS-BUDGET-2"},
+        ),
+    ]
+    now = [100.0]
+    calls: list[dict] = []
+
+    class BudgetClient:
+        def get(self, url, **kwargs):
+            calls.append(kwargs)
+            now[0] = 106.0
+            return httpx.Response(500, request=httpx.Request("GET", url))
+
+    monkeypatch.setattr("daily_agent.connectors.google_scholar.time.monotonic", lambda: now[0])
+
+    _enrich_serpapi_citations(BudgetClient(), items, source_config, "serp-key", config)
+
+    assert len(calls) == 1
+    assert calls[0]["timeout"] == 5.0
 
 
 def test_google_scholar_cite_enrichment_reuses_persistent_cache(tmp_path, monkeypatch):

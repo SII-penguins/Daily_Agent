@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from collections import Counter
-from re import findall
+from re import findall, search, escape
 
 from daily_agent.models import ApprovedItem
 
@@ -19,7 +19,31 @@ METHOD_TERMS = [
     "benchmark",
     "placement",
 ]
-GENERIC_TAGS = {"paper", "repo", "quantum_ai"}
+GENERIC_TAGS = {"paper", "repo", "quantum_ai", "arxiv", "github", "openalex", "semantic_scholar", "crossref", "google_scholar", "core", "dblp", "ieee", "openreview", "pmlr", "neurips", "trending"}
+
+# Discovery tags can be noisy (e.g. 'rag' from unrelated words). A shared
+# topic needs support in the approved description, not just library metadata.
+TOPIC_ALIASES = {
+    'hardware_aware': ('hardware aware', 'noise aware', '硬件感知', '噪声感知'),
+    'rag': ('rag', '检索增强', 'retrieval augmented'),
+    'quantum_circuit': ('quantum circuit', '量子线路', '量子电路'),
+    'quantum_compilation': ('quantum compilation', '量子编译'),
+    'quantum_error_correction': ('quantum error correction', '量子纠错'),
+}
+
+
+def _supported_tags(item):
+    fields = ('problem', 'method', 'key_result') if item.item_type == 'paper' else ('what_it_is', 'core_capabilities')
+    text = ' '.join([item.title] + [_clean_field(item.final_fields.get(f)) for f in fields]).lower().replace('-', ' ')
+    supported = set()
+    for tag in item.material.tags:
+        normalized = tag.strip().lower()
+        if not normalized or normalized in GENERIC_TAGS:
+            continue
+        terms = TOPIC_ALIASES.get(normalized, (normalized.replace('_', ' '),))
+        if any(search(r'(?<![a-z0-9])'+escape(term)+r'(?![a-z0-9])', text) for term in terms):
+            supported.add(tag.strip())
+    return supported
 
 
 DEFAULT_INSIGHT_SETTINGS = {"enabled": True, "include_in_reports": True, "max_insights": 5, "min_items": 2, "research_gap_enabled": True}
@@ -39,46 +63,36 @@ def build_daily_insights(items: list[ApprovedItem], max_insights: int | None = N
         _trend_insight(items, papers, repos),
         _method_difference_insight(papers),
     ]
-    if effective.get("research_gap_enabled", True):
-        insights.append(_research_gap_insight(papers))
     insights.append(_citation_context_insight(papers))
-    insights.append(_tracking_insight(items, papers))
+    # A list of limitations without a shared, evidenced comparison is not an
+    # insight; keep it in each item and in the reading notes instead.
+    if effective.get("research_gap_enabled", True) and any(insights):
+        insights.append(_research_gap_insight(papers))
     return [insight for insight in insights if insight][:limit] or ["今日样本不足，暂不生成跨条目洞察。"]
 
 
 def _trend_insight(items: list[ApprovedItem], papers: list[ApprovedItem], repos: list[ApprovedItem]) -> str:
     tags = _top_tags(items)
-    if tags:
-        tag_text = "、".join(tags[:3])
-        return f"共同趋势：今日条目集中在 {tag_text}，说明这些方向正在形成连续信号，而不是单篇孤立更新。"
-    if len(papers) >= 2:
-        return "共同趋势：今日入选论文都围绕相近研究问题展开，适合放在一起比较方法假设和实验设置。"
-    if papers and repos:
-        return "共同趋势：今日同时出现论文和项目更新，适合观察研究想法到工具实现之间的距离。"
-    return ""
+    if not tags:
+        return ""
+    tag = tags[0]
+    related = [item for item in items if tag in _supported_tags(item)]
+    evidence = "、".join(f"《{item.title}》" for item in related[:3])
+    return f"今日共同主题：{tag}；依据：{evidence}。仅表示今日样本共现。"
 
 
 def _method_difference_insight(papers: list[ApprovedItem]) -> str:
-    if len(papers) < 2:
+    supported = [item for item in papers
+                 if item.material.reading.get("verification", {}).get("status") == "located"
+                 and "method" in item.material.reading.get("verification", {}).get("valid_fields", [])]
+    topics = _top_tags(supported)
+    if not topics:
         return ""
-    terms = _top_method_terms(papers)
-    if len(terms) >= 2:
-        return f"方法差异：今日论文的技术路线主要分成 {terms[0]} 与 {terms[1]} 两类，精读时应比较它们各自依赖的数据、硬件假设和优化目标。"
-    methods = [_clean_field(item.final_fields.get("method")) for item in papers]
-    methods = [method for method in methods if method and method != "not_stated"]
-    if len(methods) >= 2:
-        return f"方法差异：至少两篇论文给出了不同实现路径，可重点比较“{_clip(methods[0], 42)}”和“{_clip(methods[1], 42)}”。"
-    return ""
-
-
-def _tracking_insight(items: list[ApprovedItem], papers: list[ApprovedItem]) -> str:
-    strong_evidence = sum(1 for item in papers if (item.material.paper_text_status or {}).get("sufficient_for_deep_summary"))
-    source_diversity = len({source for item in items for source in ((item.material.source_aliases or {item.source: item.key}).keys())})
-    if papers and strong_evidence < len(papers):
-        return "值得追踪：部分论文全文证据还不完整，后续排序应优先保留能覆盖方法、结果和局限章节的来源。"
-    if source_diversity >= 3:
-        return "值得追踪：今日入选内容有多源交叉信号，后续可观察这些论文是否继续获得引用、实现或 release 跟进。"
-    return "值得追踪：后续重点看这些方向是否从单点结果扩展到真实硬件、公开代码或更大规模 benchmark。"
+    related = [item for item in supported if topics[0] in _supported_tags(item)]
+    if len(related) < 2:
+        return ""
+    # Keep entire approved methods: clipping can remove a negation or condition.
+    return "方法对照：" + "；".join(f"《{item.title}》：{_clean_field(item.final_fields.get('method'))}" for item in related[:2]) + "。共同主题不代表实验设置可直接比较。"
 
 
 def _citation_context_insight(papers: list[ApprovedItem]) -> str:
@@ -106,32 +120,18 @@ def _citation_context_insight(papers: list[ApprovedItem]) -> str:
 
 
 def _research_gap_insight(papers: list[ApprovedItem]) -> str:
-    if not papers:
+    supported = [item for item in papers if 'limitations' in item.material.reading.get('verification', {}).get('valid_fields', [])]
+    if not supported:
         return ""
-    limitations = [
-        _clean_field(item.final_fields.get("limitations"))
-        for item in papers
-        if _clean_field(item.final_fields.get("limitations")) and _clean_field(item.final_fields.get("limitations")) != "not_stated"
-    ]
-    combined = " ".join(limitations).lower()
-    if any(term in combined for term in ["小规模", "small", "simulation", "模拟", "12-qubit", "benchmark"]):
-        return "研究空白：今天的论文仍普遍卡在模拟、小规模硬件或有限 benchmark，精读时应优先确认结果能否外推到真实硬件和更大规模任务。"
-    if any(term in combined for term in ["not stated", "not_stated", "未说明"]):
-        return "研究空白：部分论文没有充分交代局限，后续应重点追问实验边界、失败案例和与强基线的差距。"
-    if limitations:
-        return f"研究空白：当前条目的主要未解问题集中在“{_clip(limitations[0], 52)}”，适合整理成后续精读时的问题清单。"
-    weak_evidence = [item for item in papers if not (item.material.paper_text_status or {}).get("sufficient_for_deep_summary")]
-    if weak_evidence:
-        return "研究空白：部分论文缺少足够全文证据，后续应先补齐方法、结果和局限章节再做强结论。"
-    return "研究空白：今天的入选论文还需要继续观察是否出现跨数据集、跨硬件或公开复现实验。"
+    return "已报告局限：" + "；".join(f"《{item.title}》：{_clean_field(item.final_fields.get('limitations'))}" for item in supported[:2])
 
 
 def _top_tags(items: list[ApprovedItem]) -> list[str]:
     counter: Counter[str] = Counter()
     for item in items:
-        for tag in item.material.tags:
+        for tag in _supported_tags(item):
             normalized = tag.strip()
-            if normalized and normalized not in GENERIC_TAGS:
+            if normalized and normalized.lower() not in GENERIC_TAGS:
                 counter[normalized] += 1
     return [tag for tag, count in counter.most_common() if count >= 2]
 

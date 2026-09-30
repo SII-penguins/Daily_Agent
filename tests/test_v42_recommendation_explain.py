@@ -52,11 +52,11 @@ def test_markdown_renders_recommendation_reason_from_score_breakdown():
     markdown = render_daily_markdown([approved], date(2026, 5, 27), RunStatus())
 
     assert "- 入选理由：" in markdown
-    assert "- 新意/差异：相对已有工作，它把硬件噪声直接纳入指标。" in markdown
+    assert "阅读状态：" in markdown
     assert "领域匹配" in markdown
     assert "顶会/权威来源" in markdown
     assert "引用邻域发现" in markdown
-    assert "多源交叉验证" in markdown
+    assert "多源元数据收录" in markdown
 
 
 def test_markdown_recommendation_reason_explains_fulltext_and_citation_signals():
@@ -97,7 +97,7 @@ def test_markdown_recommendation_reason_explains_fulltext_and_citation_signals()
     markdown = render_daily_markdown([approved], date(2026, 5, 27), RunStatus())
     reason_line = next(line for line in markdown.splitlines() if line.startswith("- 入选理由："))
 
-    assert "全文证据覆盖方法/结果/局限" in reason_line
+    assert "全文证据覆盖" not in reason_line  # legacy status cannot prove reading
     assert "引用脉络被引 128 次" in reason_line
     assert "Google Scholar 可追溯" in reason_line
 
@@ -131,5 +131,5 @@ def test_html_renders_paper_novelty_or_difference():
 
     html = render_daily_html([approved], date(2026, 5, 27), RunStatus())
 
-    assert "<dt>新意/差异</dt>" in html
-    assert "相对已有工作，它把 pass embedding 用于候选序列排序。" in html
+    assert 'class="reading-status"' in html and "阅读状态：" in html
+    assert "未核验的旧版阅读记录" in html

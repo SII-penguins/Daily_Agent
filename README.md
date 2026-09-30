@@ -1,8 +1,33 @@
 # Daily Agent
 
+## Evidence-based reading
+
+Papers retain page/section locations and are read in chunks before synthesis. Quotes, numbers and result conditions are checked, followed by a separate model pass for semantic support. Daily cards disclose coverage and gaps; detailed local notes live under `reports/notes/` and are not uploaded automatically. Incomplete reading is never labelled complete, and papers without located problem/method evidence are not published.
+
+Configure budgets under `reading` in `config/sources.yaml`. Budget exhaustion is disclosed. Version, content and reading configuration changes invalidate caches; unchanged published papers are suppressed by default. Configuration readiness from `quality check` is not a certification of reading or factual accuracy; inspect per-item status and health reading metrics.
+
+
 Daily Agent is a local-first research intelligence assistant that collects recent papers and GitHub projects from multiple compliant sources, ranks them with explainable signals, and generates a concise Chinese daily digest for fast reading.
 
 [中文说明](README.zh-CN.md)
+
+## Evidence repair and acceptance
+
+Page screenshots are presentation artifacts; enabling them does not skip visual verification. Image transcription receives a separate review and at most one feedback-guided repair. Failed quote, number or semantic checks can trigger one rewrite using bounded, already-read source chunks. All repaired claims must pass the same checks.
+
+Audit an existing approval snapshot without calling a model or publishing:
+
+```bash
+python scripts/audit_evidence.py \
+  --input data/editorial/YYYY-MM-DD/approval.json \
+  --output tmp/evidence-audit.json
+```
+
+The audit distinguishes extracted-chunk completion, full-text reading, visual fidelity and claim support. Inclusion is not full quality acceptance. OpenReview HTTP 401/403 remains an explicit source failure; other sources cannot substitute for access to its reviews.
+
+Validation on 2026-09-30: a real single-page image/transcription/independent-review cycle passed after one correction (five API calls). This does not certify a whole paper. The eight-paper snapshot still has unresolved gaps: four complete-body readings, three abstract-only documents and one structurally incomplete PDF. Full corpus quality acceptance has not passed; limited-evidence labels remain.
+
+See [reading validation](scripts/VALIDATE_READING.md) and [writing validation](scripts/VALIDATE_WRITING.md). Live validation uses the configured model and may incur API charges; outputs remain local.
 
 ## What It Does
 
@@ -171,7 +196,7 @@ Check whether the current machine is actually running this full-quality profile:
 python -m daily_agent.cli quality check --root "."
 ```
 
-The quality check first repairs config drift back to the full-quality profile, then reports whether local Claude Code drafting, PDF/HTML text extraction, OpenAlex OA link resolving, Unpaywall DOI resolving, citation-context enrichment, citation-neighborhood discovery, query expansion, section-note extraction, daily insight synthesis, high-recall source limits, Google Scholar, CORE, IEEE, Feishu delivery, major conference sources, and the 02:00/07:20/08:00 workflow are full, fallback, disabled, or missing. Add `--no-enforce-full` only when you intentionally want to inspect the current config without repairing it.
+The quality check first repairs config drift back to the full-quality profile, then reports whether the configured local LLM writer, PDF/HTML text extraction, OpenAlex OA link resolving, Unpaywall DOI resolving, citation-context enrichment, citation-neighborhood discovery, query expansion, section-note extraction, daily insight synthesis, high-recall source limits, Google Scholar, CORE, IEEE, Feishu delivery, major conference sources, and the 02:00/07:20/08:00 workflow are full, fallback, disabled, or missing. Add `--no-enforce-full` only when you intentionally want to inspect the current config without repairing it.
 
 Repair config drift back to the full-quality profile:
 
@@ -275,7 +300,7 @@ Daily Agent exposes these MCP tools:
 - `feedback_show`: shows recent feedback events.
 - `feedback_add_text`: records natural-language feedback.
 
-Claude Code is also used internally when `run_digest(..., use_llm=True)` is selected. If the local `claude` command is unavailable, Daily Agent falls back to the rule-based writer.
+When `run_digest(..., use_llm=True)` is selected, Daily Agent always uses the authenticated local `codex` CLI for its internal summarization and full-text writing. Claude Code can still call Daily Agent through MCP, but it is only the outer tool client and is not the report writer. Full-text drafting allows up to 10 minutes per batch and four hours for the whole writing stage, fitting inside the 02:00-to-07:20 preparation window. Prompts cap each evidence excerpt, require concise typed JSON, and use low reasoning effort to avoid wasting that window. The first backend failure still opens a circuit breaker so a broken model connection cannot block the entire morning run; runtime health records this fallback explicitly.
 
 ## Daily Workflow
 
@@ -285,7 +310,7 @@ The default timezone is `Asia/Shanghai`, configured in `config/delivery.yaml`. L
 | --- | --- | --- |
 | 02:00 | Overnight collection | Run `enforce_full_profile(write=True)`, then `quality_check(require_full=True)`; only if the profile is full, run `run_digest(dry_run=True, use_llm=True)` to fetch sources, deduplicate, score, draft, review, and render local Markdown/HTML without publishing. MCP `run_digest` defaults to `require_full=true`. |
 | 07:20 | Review checkpoint | Run `enforce_full_profile(write=True)`, inspect feedback, call `quality_check` and `source_check`, and ask the user whether sources, preferences, time nodes, or delivery settings need adjustment. |
-| 08:00 | Formal delivery | Run `enforce_full_profile(write=True)`, then `quality_check(require_full=True)`; only if the profile is full, run `run_digest(dry_run=False, send="feishu", use_llm=True)` to publish the formal report and update feedback targeting. MCP `run_digest` defaults to `require_full=true`. |
+| 08:00 | Formal delivery | Run the formal digest with `send="cc-connect"`. Daily Agent updates a native Feishu cloud document, then cc-connect sends its mobile-accessible URL to the configured bot session. A Markdown attachment is used only when cloud-document publishing fails. Missing optional source keys are reported but do not block delivery. |
 
 The built-in `schedule_preview` prints all three jobs with the same sequence: repair full-quality config, run the relevant checks, then run the dry-run, checkpoint, or Feishu delivery command.
 

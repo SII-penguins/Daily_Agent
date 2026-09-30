@@ -153,6 +153,14 @@ def test_enforce_full_profile_write_restores_sources_and_quota(tmp_path, monkeyp
     sources["semantic_scholar"]["allowed_publication_types"] = []
     sources["crossref"]["allowed_publication_types"] = []
     sources["paper_text"]["max_excerpt_chars"] = 12_000
+    sources["llm_writer"] = {
+        "provider": "claude",
+        "command": "claude",
+        "batch_size": 2,
+        "timeout_seconds": 90,
+        "run_budget_seconds": 180,
+        "max_input_chars_per_item": 24_000,
+    }
     sources["citation_discovery"] = {"enabled": False, "max_seed_papers": 2, "max_results_per_seed": 1}
     sources["oa_resolver"] = {"enabled": False, "max_papers_per_run": 5, "run_budget_seconds": 0}
     sources["unpaywall"] = {
@@ -202,6 +210,10 @@ def test_enforce_full_profile_write_restores_sources_and_quota(tmp_path, monkeyp
     assert config.sources["neurips"]["years"] == [2026, 2025, 2024]
     assert config.sources["paper_text"]["max_excerpt_chars"] == 100_000
     assert config.sources["paper_text"]["run_budget_seconds"] == 180
+    assert config.sources["llm_writer"]["provider"] == "codex"
+    assert config.sources["llm_writer"]["reasoning_effort"] == "low"
+    assert config.sources["llm_writer"]["timeout_seconds"] == 600
+    assert config.sources["llm_writer"]["run_budget_seconds"] == 14_400
     assert config.sources["citation_discovery"]["enabled"] is True
     assert config.sources["citation_discovery"]["max_seed_papers"] == 20
     assert config.sources["citation_discovery"]["max_results_per_seed"] == 5
@@ -226,6 +238,7 @@ def test_enforce_full_profile_write_restores_sources_and_quota(tmp_path, monkeyp
     assert config.sources["exports"]["endnote_xml_enabled"] is True
     assert config.feedback["events"]["enabled"] is True
     assert config.feedback["feishu_comments"]["enabled"] is True
+    assert config.delivery["delivery"]["default"] == "cc-connect"
     assert config.quota["paper_review_multiplier"] == 4
     assert by_key["paper_text"].status == "full"
     assert by_key["oa_resolver"].status == "full"

@@ -30,7 +30,11 @@ def fetch_pmlr(config: AppConfig, target_date: datetime | None = None, window_da
             except httpx.HTTPError:
                 continue
             venue = str(volume.get("venue") or _venue_from_url(url))
-            for item in _parse_volume(response.text, url, venue)[:max_results]:
+            candidates = _parse_volume(response.text, url, venue)
+            if source_config.get("prioritize_relevant", False):
+                from daily_agent.scoring.relevance import topic_relevance_score
+                candidates.sort(key=lambda item: topic_relevance_score(item, config), reverse=True)
+            for item in candidates[:max_results]:
                 if _matches_interest(item, config):
                     items.append(item)
     return items

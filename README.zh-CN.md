@@ -1,8 +1,33 @@
 # Daily Agent
 
+## 可信阅读与两层日报
+
+论文现在按页/章节保存正文、分块阅读，再核对结论引句、数字与实验条件，并用独立模型调用复核语义支持。日报显示阅读覆盖与缺口，完整阅读笔记保存在 `reports/notes/`；链接仅适用于本地，不会自动上传。未完成阅读不能标为全文已读；缺少可定位问题与方法的条目不会登刊。
+
+`config/sources.yaml` 的 `reading` 管理阅读预算和综合输入上限；预算耗尽会明确降级。缓存随论文版本、正文内容和阅读配置变化失效。默认不重复推荐无新版本的已发表论文。`quality check` 的配置 readiness 不代表文章已读或结论已验证，实际情况见条目状态与 health 的阅读指标。
+
+
 Daily Agent 是一个本地优先的科研情报日报助手。它会从多个合规来源收集最新论文和 GitHub 项目，按领域相关性、时效、顶会来源、引用、证据完整度和个人反馈进行排序，生成适合快速浏览的中文日报。
 
 [English README](README.md)
+
+## 证据修复与验收边界
+
+原页截图用于展示，开启截图不会跳过视觉核验。图片转写经过独立复核，最多进行一次携带反馈的修正；引句、数字或语义检查失败时，可从已读原文块中有界补查并重写一次，修复后仍须通过原有审核。
+
+对已有批准快照进行只读审计，不调用模型、不发布：
+
+```bash
+python scripts/audit_evidence.py \
+  --input data/editorial/YYYY-MM-DD/approval.json \
+  --output tmp/evidence-audit.json
+```
+
+审计分别统计提取块读完、完整正文阅读、视觉保真和论断支持。“允许入选”不等于“全面质量验收通过”。OpenReview 返回 401/403 时明确报告信源访问失败，其他来源不能替代其评审意见访问。
+
+2026-09-30 实测：真实单页的图片核对、转写与独立复核在一次修正后通过，共5次API调用，不代表整篇通过。八篇固定样本仍有缺口：4篇完整正文已读、3篇仅摘要、1篇PDF结构不完整；全面质量验收尚未通过，继续保留证据有限标记。
+
+操作说明见[阅读验收](scripts/VALIDATE_READING.md)和[写作验收](scripts/VALIDATE_WRITING.md)。真实验收调用配置的模型，可能产生API费用，产物仅保存在本地。
 
 ## 功能概览
 
@@ -135,7 +160,7 @@ python -m daily_agent.cli source check --root "." --supervised-scholar-fallback
 python -m daily_agent.cli run --root "." --date today --dry-run --supervised-scholar-fallback
 ```
 
-这个开关只建议在本地有人看着的时候用。有人监督的 fallback 受 `google_scholar.scholarly_runtime_timeout_seconds` 运行预算保护；如果 Scholar/captcha 自动化卡住，本轮会放弃 Google Scholar 结果而不是拖住整条流水线。无人值守的 02:00/07:20/08:00 调度，优先配置 `SERPAPI_API_KEY`。
+这个开关只建议在本地有人看着的时候用。有人监督的 fallback 受 `google_scholar.scholarly_runtime_timeout_seconds` 运行预算保护；如果 Scholar/captcha 自动化卡住，本轮会放弃 Google Scholar 结果而不是拖住整条流水线。无人值守的 00:10/05:30/07:50 调度，优先配置 `SERPAPI_API_KEY`。
 
 ## 满血版配置
 
@@ -171,7 +196,7 @@ python -m daily_agent.cli run --root "." --date today --dry-run --supervised-sch
 python -m daily_agent.cli quality check --root "."
 ```
 
-这个质量检查会先把配置漂移修复回满血版，然后报告本地 Claude Code 写稿、PDF/HTML 正文抽取、OpenAlex OA 链接解析、Unpaywall DOI 解析、引用上下文富化、引用邻域发现、查询扩展、章节笔记抽取、今日洞察生成、高召回信源参数、Google Scholar、CORE、IEEE、飞书投递、顶会来源、02:00/07:20/08:00 工作流分别是 full、fallback、disabled 还是 missing。只有在你明确要诊断当前非满血配置时，才加 `--no-enforce-full`。
+这个质量检查会先把配置漂移修复回满血版，然后报告当前配置的本地 LLM 写稿器、PDF/HTML 正文抽取、OpenAlex OA 链接解析、Unpaywall DOI 解析、引用上下文富化、引用邻域发现、查询扩展、章节笔记抽取、今日洞察生成、高召回信源参数、Google Scholar、CORE、IEEE、飞书投递、顶会来源、00:10/05:30/07:50 工作流分别是 full、fallback、disabled 还是 missing。只有在你明确要诊断当前非满血配置时，才加 `--no-enforce-full`。
 
 把配置漂移修回满血画像：
 
@@ -231,7 +256,7 @@ python -m daily_agent.cli run --root "." --date today --send feishu
 python -m daily_agent.cli source check --root "." --date today --window-days 7
 ```
 
-`source check` 会先把配置漂移修复回满血版，然后使用有界探针参数，避免 07:20 复核节点被满血候选池拖慢；真正的完整收集仍由 `run` 执行，并且有人监督的 Google Scholar fallback 也会受运行预算保护。只有调试某个非满血配置状态时，才加 `--no-enforce-full`。
+`source check` 会先把配置漂移修复回满血版，然后使用有界探针参数，避免 05:30 复核节点被满血候选池拖慢；真正的完整收集仍由 `run` 执行，并且有人监督的 Google Scholar fallback 也会受运行预算保护。只有调试某个非满血配置状态时，才加 `--no-enforce-full`。
 
 检查满血版运行能力：
 
@@ -265,7 +290,7 @@ Daily Agent 暴露这些 MCP tools：
 
 - `setup_checklist`：告诉 Agent 首次使用前应该向你确认哪些配置。
 - `quality_check`：先修复满血配置，再默认要求 LLM 写稿、PDF 正文抽取、Scholar/CORE/IEEE 凭证、飞书投递、调度设置全部为 full；只有希望 Agent 报告缺口但不阻断时才传 `require_full=false`，本地有人监督地检查 Scholar fallback 时可传 `supervised_scholar_fallback=true`，只有调试配置漂移时才传 `enforce_full=false`。
-- `enforce_full_profile`：报告或应用满血版配置画像，包括高召回信源参数、顶会来源列表、查询扩展、OpenAlex OA 链接解析、Unpaywall DOI 解析、全文抽取、引用上下文富化、引用邻域发现、今日洞察和 02:00/07:20/08:00 调度。
+- `enforce_full_profile`：报告或应用满血版配置画像，包括高召回信源参数、顶会来源列表、查询扩展、OpenAlex OA 链接解析、Unpaywall DOI 解析、全文抽取、引用上下文富化、引用邻域发现、今日洞察和 00:10/05:30/07:50 调度。
 - `secrets_template`：打印或写入项目外部 TOML 凭证模板，方便 Agent 帮你补齐满血模式需要的 key，同时不碰仓库文件；传 `missing_only=true` 时只列出缺失或仍是占位符的凭证。
 - `secrets_status`：检查满血凭证是否就绪，但不暴露任何 secret 值。
 - `source_check`：先修复满血配置，再检查启用的数据源，不写报告状态；只有本地有人监督时才建议传 `supervised_scholar_fallback=true`，只有调试配置漂移时才传 `enforce_full=false`。
@@ -275,7 +300,7 @@ Daily Agent 暴露这些 MCP tools：
 - `feedback_show`：查看近期反馈事件。
 - `feedback_add_text`：写入自然语言反馈。
 
-当 `run_digest(..., use_llm=True)` 时，Daily Agent 也会尝试调用本地 Claude Code 进行结构化写稿；如果 `claude` 不可用，会自动回退到规则写稿器。
+当 `run_digest(..., use_llm=True)` 时，Daily Agent 内部的摘要和全文写稿统一调用本机已登录的 `codex` CLI。Claude Code 仍然可以通过 MCP 调用 Daily Agent，但它只是外层工具客户端，不再作为日报写稿器。全文写稿现在允许单批最多 10 分钟、整轮最多 4 小时，匹配 00:10 到 05:30 的准备窗口；同时限制每条证据输入和 JSON 字段长度，并使用低推理强度，避免无意义地消耗时间。首批后端确实失败时仍会立即熔断，避免断开的模型连接拖住整个早晨流程；运行健康报告会如实记录这次降级。
 
 ## 每日工作流
 
@@ -283,9 +308,9 @@ Daily Agent 暴露这些 MCP tools：
 
 | 时间 | 阶段 | Agent 目标 |
 | --- | --- | --- |
-| 02:00 | 夜间收集 | 先调用 `enforce_full_profile(write=True)`，再调用 `quality_check(require_full=True)`；只有质量画像为 full 时，才调用 `run_digest(dry_run=True, use_llm=True)` 拉取信源、去重、评分、写稿、审稿，生成本地 Markdown/HTML，但不正式发布。MCP `run_digest` 默认 `require_full=true`。 |
-| 07:20 | 复核节点 | 先调用 `enforce_full_profile(write=True)`，检查或同步反馈，再调用 `quality_check` 和 `source_check`，提醒用户确认信源、偏好内容、工作时间节点、推送方式是否需要调整。 |
-| 08:00 | 正式推送 | 先调用 `enforce_full_profile(write=True)`，再调用 `quality_check(require_full=True)`；只有质量画像为 full 时，才调用 `run_digest(dry_run=False, send="feishu", use_llm=True)` 生成正式日报并更新反馈索引。MCP `run_digest` 默认 `require_full=true`。 |
+| 00:10 | 夜间生成 | 完整抓取、论文池筛选、全文阅读、写作与审核，封存当天日报。 |
+| 05:30 | 复核补救 | 缺少完成快照则补生成；同步反馈并检查信源。 |
+| 07:50 | 投递 | 只发送当天已封存日报，不重新生成；本机 launchd 在07:55、07:58补重试，成功收据防重复。目标08:00前收到。 |
 
 当前内置的 `schedule_preview` 会生成完整三个任务，并按同样顺序执行：先修复满血配置，再做对应检查，最后执行 dry-run、复核 checkpoint 或飞书正式投递。
 
@@ -334,3 +359,22 @@ python -m pytest tests
 ## License
 
 MIT License. See [LICENSE](LICENSE).
+
+
+### 日报分层写作与本地样稿
+
+论文正文采用问题与方法、结果及条件、局限、编辑启发的段落式解读。
+`sources.yaml` 的 `report_writing.featured_papers`（默认 2）控制重点解读篇数；
+只有阅读完成且证据充分的论文进入重点，其余简讯也保留结果边界。
+原批准字段、原文引句和逐页记录保存在独立笔记；资料信息移到索引或 HTML 折叠区。
+
+已有 `approval.json` 可直接生成隔离样稿，不重新检索、调用模型或登记发表：
+
+```bash
+python3 scripts/preview_writing.py --input path/to/approval.json --output tmp/writing-preview --date 2026-09-28
+```
+
+输出目录必须尚不存在。产物包含 Markdown、HTML、阅读笔记、输入快照及段落到原字段的 `composition-audit.json`。
+此命令验证编排，不代表新的全文阅读验收；原来的证据不足状态会保留。
+
+真实模型验收可使用 [API 写作验收脚本](scripts/VALIDATE_WRITING.md)：固定本地素材，支持凭据文件、响应缓存、流式调用、逐条语义审核和整期终审，独立于生产调度。

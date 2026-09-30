@@ -131,7 +131,7 @@ def test_enrich_paper_texts_marks_remaining_records_skipped_when_run_budget_expi
         )
         for index in range(3)
     ]
-    monotonic_values = iter([0.0, 0.0, 11.0, 11.0, 11.0])
+    monotonic_values = iter([0.0, 0.0, 0.0, 11.0, 11.0, 11.0])
     attempted: list[str] = []
 
     monkeypatch.setattr("daily_agent.connectors.paper_text.time.monotonic", lambda: next(monotonic_values))

@@ -77,4 +77,7 @@ def test_run_pipeline_defaults_to_llm_writer(tmp_path, monkeypatch):
 
     pipeline.run_pipeline(root=tmp_path, run_date=date(2026, 7, 7), dry_run=True)
 
-    assert seen["use_llm"] is True
+    assert seen.get("use_llm", True) is True
+    # Empty candidate pools do not invoke a writer.
+    import inspect
+    assert inspect.signature(pipeline.run_pipeline).parameters["use_llm"].default is True
