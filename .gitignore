@@ -47,3 +47,9 @@ progress.txt
 
 # Local API acceptance credentials
 secret.md
+
+# Local connector attachments, research snapshots, and unrelated assets
+.cc-connect/
+sources/
+/感官体验站_素材组.zip
+/感官体验站素材/

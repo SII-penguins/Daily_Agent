@@ -149,3 +149,74 @@ def test_enrich_paper_texts_marks_remaining_records_skipped_when_run_budget_expi
     assert records[1].paper_text_status["status"] == "skipped"
     assert records[1].paper_text_status["reason"] == "run_budget_exceeded"
     assert records[2].paper_text_status["status"] == "skipped"
+
+
+def test_landing_metadata_follows_pdf_within_url_budget(tmp_path, monkeypatch):
+    from daily_agent.connectors.paper_text import _landing_pdf_urls
+    from daily_agent.paper_document import build_document
+    cfg = load_config('/Users/wuzixie/Daily_Agent')
+    object.__setattr__(cfg, 'root', tmp_path)
+    cfg.sources['paper_text'].update(max_urls_per_paper=2)
+    record = MaterialRecord(key='paper:linked', source='openalex', item_type='paper',
+                          title='Linked Paper', url='https://publisher.test/article')
+    html = b'<html><meta name="citation_pdf_url" content="/paper.pdf"></html>'
+    assert _landing_pdf_urls(html, record.url) == ['https://publisher.test/paper.pdf']
+    assert _landing_pdf_urls(b'<meta name="citation_pdf_url" content="file:///secret.pdf">', record.url) == []
+    calls = []
+    def download(client, url, **kwargs):
+        calls.append(url)
+        return html if url == record.url else b'%PDF-fixture'
+    def extract(content, record, url, settings):
+        if content.startswith(b'%PDF'):
+            text = 'Linked Paper\nMethods\n' + 'We compare models. ' * 200 + '\nResults\nResults are measured.\nDiscussion\nLimited results.'
+            return build_document(record, [{'page':1, 'text':text}], url, 'pdf')
+        return build_document(record, [{'page':None, 'text':'Short abstract'}], url, 'html')
+    monkeypatch.setattr('daily_agent.connectors.paper_text._download_limited', download)
+    monkeypatch.setattr('daily_agent.paper_document.extract_document', extract)
+    enrich_paper_texts([record], cfg)
+    assert calls == [record.url, 'https://publisher.test/paper.pdf']
+    assert record.paper_document['document_kind'] == 'full_text'
+
+
+def test_abstract_cache_retries_and_retains_evidence_on_failed_fetch(tmp_path, monkeypatch):
+    from daily_agent.paper_document import build_document, atomic_json, digest, version_identity
+    cfg = load_config('/Users/wuzixie/Daily_Agent')
+    object.__setattr__(cfg, 'root', tmp_path)
+    record = MaterialRecord(key='paper:cached', source='openalex', item_type='paper',
+                            title='Cached Paper', url='https://publisher.test/article')
+    doc = build_document(record, [{'page':None, 'text':'Cached Paper abstract.'}], record.url, 'html')
+    path = tmp_path/'data/paper_text/v3'/(digest([version_identity(record), cfg.sources['paper_text'], 4])+'.json')
+    atomic_json(path, doc)
+    calls = []
+    def download(client, url, **kwargs):
+        calls.append(url)
+        return None
+    monkeypatch.setattr('daily_agent.connectors.paper_text._download_limited', download)
+    enrich_paper_texts([record], cfg)
+    assert calls == [record.url]
+    assert record.paper_document['content_hash'] == doc['content_hash']
+    assert record.paper_document['source_type'] == 'html'
+
+
+def test_parser_upgrade_reuses_hash_verified_local_pdf(tmp_path, monkeypatch):
+    import hashlib
+    from daily_agent.paper_document import build_document, atomic_json, digest, version_identity
+    cfg = load_config('/Users/wuzixie/Daily_Agent'); object.__setattr__(cfg, 'root', tmp_path)
+    record = MaterialRecord(key='paper:local', source='openalex', item_type='paper',
+                            title='Local Paper', url='https://publisher.test/article')
+    pdf = tmp_path/'old.pdf'; pdf.write_bytes(b'%PDF-fixture')
+    doc = build_document(record, [{'page':1, 'text':'Local Paper'}], record.url, 'pdf')
+    doc.update(schema_version=0, source_pdf_sha256=hashlib.sha256(pdf.read_bytes()).hexdigest(),
+               source_pdf_path=str(pdf))
+    path = tmp_path/'data/paper_text/v3'/(digest([version_identity(record), cfg.sources['paper_text'], 4])+'.json')
+    atomic_json(path, doc)
+    def extract(content, record, url, settings):
+        assert content == b'%PDF-fixture'
+        text = 'Local Paper\nMethods\n' + 'We compare models. '*200 + '\nResults\nMeasured results.\nDiscussion\nLimits.'
+        return build_document(record, [{'page':1,'text':text}], url, 'pdf')
+    def forbidden(*args, **kwargs):
+        raise AssertionError('Do not refetch an intact local PDF merely because the parser changed')
+    monkeypatch.setattr('daily_agent.paper_document.extract_document', extract)
+    monkeypatch.setattr('daily_agent.connectors.paper_text._download_limited', forbidden)
+    enrich_paper_texts([record], cfg)
+    assert record.paper_document['document_kind'] == 'full_text'

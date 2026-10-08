@@ -15,11 +15,12 @@ def test_cc_connect_sender_targets_configured_project_and_session(tmp_path, monk
     report.write_text("# Daily", encoding="utf-8")
     captured = {}
 
-    def fake_run(command, check):
+    def fake_run(command, root, timeout):
         captured["command"] = command
-        captured["check"] = check
+        captured["timeout"] = timeout
+        return 0
 
-    monkeypatch.setattr("daily_agent.delivery.cc_connect.subprocess.run", fake_run)
+    monkeypatch.setattr("daily_agent.delivery.cc_connect.run_process", fake_run)
 
     send_via_cc_connect(
         report,
@@ -40,7 +41,7 @@ def test_cc_connect_sender_targets_configured_project_and_session(tmp_path, monk
         "--session",
         "feishu:chat:user",
     ]
-    assert captured["check"] is True
+    assert captured["timeout"] == 60
 
 
 def test_cc_connect_delivery_uses_target_from_daily_agent_config(tmp_path, monkeypatch):

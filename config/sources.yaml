@@ -241,7 +241,8 @@ exports:
   csv_enabled: true
   endnote_xml_enabled: true
 selection:
-  max_review_batches: 3
+  max_review_batches: 6
+  editorial_batch_size: 8
   repeat_suppression_days: 30
   suppress_unchanged_papers: true
   historical_label_days: 30
@@ -265,8 +266,8 @@ reading:
   max_quote_chars: 600
   prompt_version: 2
   fidelity_enabled: true
-  fidelity_budget_seconds: 1200
-  fidelity_timeout_seconds: 180
+  fidelity_budget_seconds: 7200
+  fidelity_timeout_seconds: 420
 report_writing:
   featured_papers: 2
   source_screenshots_enabled: true

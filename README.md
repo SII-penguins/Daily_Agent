@@ -1,15 +1,28 @@
 # Daily Agent
 
+Daily Agent is a local-first research intelligence assistant that collects recent papers and GitHub projects from multiple compliant sources, ranks them with explainable signals, and generates a concise Chinese daily digest for fast reading.
+
+[中文说明](README.zh-CN.md)
+
+## Workflow recovery
+
+Scheduled and manual external delivery share immutable report snapshots, an outbox, and confirmed receipts. Publication history is committed only after delivery confirmation. Retries are bounded across triggers; permanent errors and ambiguous delivery results open a circuit. Morning recovery uses the remaining review window. Expensive reading runs in small batches while retaining a broad candidate pool. Both paper and repository quotas must be met before early completion. `schedule status` is read-only; `schedule repair` reconciles under a lease; `schedule resolve-delivery` records an operator-confirmed outcome without sending anything. See [the workflow recovery guide](docs/workflow-recovery.md). Local fault injection does not validate live delivery or install an independent monitoring daemon.
+
+The recovery follow-up adds retry timing across controller restarts, local delivery preflight before writing the outbox, and strict validation of formal selection/history records. Missing tools or unavailable delivery configuration do not create ambiguous-send records; failures after invoking the adapter still require remote reconciliation. Preview filenames always remain excluded from publication history.
+
+The process cleanup follow-up applies lessons from Supervisor and psutil. Missing leaders or unconfirmed termination retain process evidence and block new same-day stages as `cleanup_pending`; version changes and budget resets cannot bypass cleanup. Read-only status explains the blocker; confirmed cleanup preserves attempts and checkpoints. Process identity remains a coarse snapshot, and descendants that escape the recorded group are not automatically reclaimed.
+
+## Reading recovery fixes (2026-10-02)
+
+Full-text retrieval follows explicit PDF metadata on landing pages and retries abstract/partial caches. Parser upgrades first reuse hash-verified local PDFs. Page transcription and independent review resume from checkpoints; bounded corrections can include the original page and detail crops. Fidelity uses a 7200-second stage budget and 420-second call timeout. Budget changes preserve verified reading caches.
+
+Acceptance distinguishes reading all extracted chunks from reading a complete document. Full acceptance requires complete source pages, visual fidelity, and supported claims. Fully reviewed page images can resolve native OCR failures while retaining native evidence. Access denial, exhausted budgets, and unreadable symbols remain explicit gaps; inclusion or successful delivery does not establish full acceptance.
+
 ## Evidence-based reading
 
 Papers retain page/section locations and are read in chunks before synthesis. Quotes, numbers and result conditions are checked, followed by a separate model pass for semantic support. Daily cards disclose coverage and gaps; detailed local notes live under `reports/notes/` and are not uploaded automatically. Incomplete reading is never labelled complete, and papers without located problem/method evidence are not published.
 
 Configure budgets under `reading` in `config/sources.yaml`. Budget exhaustion is disclosed. Version, content and reading configuration changes invalidate caches; unchanged published papers are suppressed by default. Configuration readiness from `quality check` is not a certification of reading or factual accuracy; inspect per-item status and health reading metrics.
-
-
-Daily Agent is a local-first research intelligence assistant that collects recent papers and GitHub projects from multiple compliant sources, ranks them with explainable signals, and generates a concise Chinese daily digest for fast reading.
-
-[中文说明](README.zh-CN.md)
 
 ## Evidence repair and acceptance
 
@@ -56,6 +69,8 @@ Google Scholar support is configurable. The stable unattended path uses SerpAPI'
 config/                 Runtime configuration
 src/daily_agent/        Application source code
 tests/                  Unit and pipeline tests
+docs/                   Workflow recovery guide
+scripts/                Local reading and writing validation
 pyproject.toml          Python package metadata
 README.md              English README
 README.zh-CN.md         Chinese README
@@ -160,7 +175,7 @@ python -m daily_agent.cli source check --root "." --supervised-scholar-fallback
 python -m daily_agent.cli run --root "." --date today --dry-run --supervised-scholar-fallback
 ```
 
-Use this only for local supervised runs. The supervised fallback has a runtime budget (`google_scholar.scholarly_runtime_timeout_seconds`) and returns no Google Scholar items for that run if Scholar/captcha automation stalls. For unattended 02:00/07:20/08:00 schedules, prefer `SERPAPI_API_KEY`.
+Use this only for local supervised runs. The supervised fallback has a runtime budget (`google_scholar.scholarly_runtime_timeout_seconds`) and returns no Google Scholar items for that run if Scholar/captcha automation stalls. For unattended 00:10/05:30/07:50 schedules, prefer `SERPAPI_API_KEY`.
 
 ## Full-Quality Profile
 
@@ -196,7 +211,7 @@ Check whether the current machine is actually running this full-quality profile:
 python -m daily_agent.cli quality check --root "."
 ```
 
-The quality check first repairs config drift back to the full-quality profile, then reports whether the configured local LLM writer, PDF/HTML text extraction, OpenAlex OA link resolving, Unpaywall DOI resolving, citation-context enrichment, citation-neighborhood discovery, query expansion, section-note extraction, daily insight synthesis, high-recall source limits, Google Scholar, CORE, IEEE, Feishu delivery, major conference sources, and the 02:00/07:20/08:00 workflow are full, fallback, disabled, or missing. Add `--no-enforce-full` only when you intentionally want to inspect the current config without repairing it.
+The quality check first repairs config drift back to the full-quality profile, then reports whether the configured local LLM writer, PDF/HTML text extraction, OpenAlex OA link resolving, Unpaywall DOI resolving, citation-context enrichment, citation-neighborhood discovery, query expansion, section-note extraction, daily insight synthesis, high-recall source limits, Google Scholar, CORE, IEEE, Feishu delivery, major conference sources, and the 00:10/05:30/07:50 workflow are full, fallback, disabled, or missing. Add `--no-enforce-full` only when you intentionally want to inspect the current config without repairing it.
 
 Repair config drift back to the full-quality profile:
 
@@ -290,7 +305,7 @@ Daily Agent exposes these MCP tools:
 
 - `setup_checklist`: tells the agent what to ask you before first use.
 - `quality_check`: repairs the full-quality profile, then requires LLM drafting, PDF extraction, Scholar/CORE/IEEE credentials, Feishu delivery, and schedule settings to be full by default. Pass `require_full=false` only when the agent should report gaps without blocking, `supervised_scholar_fallback=true` for a local supervised Scholar fallback check, and `enforce_full=false` only for config drift debugging.
-- `enforce_full_profile`: reports or applies the full-quality config profile, including high-recall source limits, conference source lists, query expansion, OpenAlex OA link resolving, Unpaywall DOI resolving, full-text extraction, citation-context enrichment, citation-neighborhood discovery, insight generation, and the 02:00/07:20/08:00 schedule.
+- `enforce_full_profile`: reports or applies the full-quality config profile, including high-recall source limits, conference source lists, query expansion, OpenAlex OA link resolving, Unpaywall DOI resolving, full-text extraction, citation-context enrichment, citation-neighborhood discovery, insight generation, and the 00:10/05:30/07:50 schedule.
 - `secrets_template`: prints or writes an external TOML credential template so the agent can help you fill the keys needed for full mode without touching repository files. Pass `missing_only=true` to include only missing or placeholder credentials.
 - `secrets_status`: reports full-quality credential readiness without exposing secret values.
 - `source_check`: repairs the full-quality profile, then checks enabled sources without writing report state. Pass `supervised_scholar_fallback=true` only for local supervised Scholar fallback checks, and `enforce_full=false` only for config drift debugging.
@@ -300,7 +315,7 @@ Daily Agent exposes these MCP tools:
 - `feedback_show`: shows recent feedback events.
 - `feedback_add_text`: records natural-language feedback.
 
-When `run_digest(..., use_llm=True)` is selected, Daily Agent always uses the authenticated local `codex` CLI for its internal summarization and full-text writing. Claude Code can still call Daily Agent through MCP, but it is only the outer tool client and is not the report writer. Full-text drafting allows up to 10 minutes per batch and four hours for the whole writing stage, fitting inside the 02:00-to-07:20 preparation window. Prompts cap each evidence excerpt, require concise typed JSON, and use low reasoning effort to avoid wasting that window. The first backend failure still opens a circuit breaker so a broken model connection cannot block the entire morning run; runtime health records this fallback explicitly.
+When `run_digest(..., use_llm=True)` is selected, Daily Agent always uses the authenticated local `codex` CLI for its internal summarization and full-text writing. Claude Code can still call Daily Agent through MCP, but it is only the outer tool client and is not the report writer. Full-text drafting allows up to 10 minutes per batch and four hours for the whole writing stage, fitting inside the 00:10-to-05:30 preparation window. Prompts cap each evidence excerpt, require concise typed JSON, and use low reasoning effort to avoid wasting that window. The first backend failure still opens a circuit breaker so a broken model connection cannot block the entire morning run; runtime health records this fallback explicitly.
 
 ## Daily Workflow
 
@@ -308,11 +323,11 @@ The default timezone is `Asia/Shanghai`, configured in `config/delivery.yaml`. L
 
 | Time | Stage | Agent goal |
 | --- | --- | --- |
-| 02:00 | Overnight collection | Run `enforce_full_profile(write=True)`, then `quality_check(require_full=True)`; only if the profile is full, run `run_digest(dry_run=True, use_llm=True)` to fetch sources, deduplicate, score, draft, review, and render local Markdown/HTML without publishing. MCP `run_digest` defaults to `require_full=true`. |
-| 07:20 | Review checkpoint | Run `enforce_full_profile(write=True)`, inspect feedback, call `quality_check` and `source_check`, and ask the user whether sources, preferences, time nodes, or delivery settings need adjustment. |
-| 08:00 | Formal delivery | Run the formal digest with `send="cc-connect"`. Daily Agent updates a native Feishu cloud document, then cc-connect sends its mobile-accessible URL to the configured bot session. A Markdown attachment is used only when cloud-document publishing fails. Missing optional source keys are reported but do not block delivery. |
+| 00:10 | Overnight generation | Collect candidates, read evidence, draft and review items, and seal the approved daily report. |
+| 05:30 | Review and recovery | Recover a missing snapshot within the remaining review window; sync feedback and check sources. |
+| 07:50 | Delivery | Send the sealed report without regenerating it. The launchd preview includes retries at 07:55 and 07:58; confirmed receipts suppress duplicate sends. Target arrival is before 08:00. |
 
-The built-in `schedule_preview` prints all three jobs with the same sequence: repair full-quality config, run the relevant checks, then run the dry-run, checkpoint, or Feishu delivery command.
+`schedule preview` prints the three workflow jobs without installing them. Each job invokes `schedule run-stage` for its stage; the controller handles prerequisites, bounded recovery, and delivery confirmation. See the [recovery guide](docs/workflow-recovery.md) for status and operator actions.
 
 ## Feedback
 

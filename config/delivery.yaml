@@ -39,3 +39,18 @@ schedule:
   target_time: "08:00"
   delivery_time: "07:50"
   preproduction_time: "05:30"
+  recovery:
+    max_attempts: 3
+    base_backoff_seconds: 30
+    max_backoff_seconds: 300
+    heartbeat_seconds: 30
+    stale_seconds: 180
+    generation_timeout_seconds: 18000
+    check_timeout_seconds: 600
+    delivery_timeout_seconds: 480
+    overnight_budget_seconds: 18000
+    review_budget_seconds: 7800
+    delivery_budget_seconds: 600
+    deadline_buffer_seconds: 120
+    min_ready_items: 1
+    require_target_counts: true

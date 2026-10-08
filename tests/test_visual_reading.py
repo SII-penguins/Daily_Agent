@@ -168,3 +168,30 @@ def test_strict_fidelity_requires_explicit_modality_claims(tmp_path):
         return {'page':1,'summary':'公式观察','figures':[],'tables':[],'formulas':['x^2'], 'text_matches_image':True,'issues':[]}
     read_visuals([r],cfg,invoke)
     assert r.reading['visual']['complete'] and not r.reading['visual']['strict_fidelity']
+
+
+def test_pdf_bold_headings_identify_nonstandard_article_sections(tmp_path):
+    fitz = pytest.importorskip('fitz')
+    r = paper()
+    with fitz.open() as pdf:
+        for heading in ['Implementation of the circuit', 'Gate benchmarking', 'Discussion and conclusion']:
+            page = pdf.new_page()
+            page.insert_text((60, 60), r.title)
+            page.insert_text((60, 90), heading, fontname='hebo')
+            for n in range(30):
+                page.insert_text((60, 120 + n * 18), 'We analyze quantum routing with fixed circuit and noise conditions.')
+        content = pdf.tobytes()
+    d = extract_document(content, r, r.url, {'min_body_chars': 3000})
+    assert d['document_kind'] == 'full_text'
+    assert d['source_page_count'] == 3
+    assert {'method', 'results', 'discussion'} <= set(d['coverage']['sections_found'])
+
+
+def test_bold_word_in_body_is_not_a_section_heading():
+    fitz = pytest.importorskip('fitz')
+    from daily_agent.page_evidence import typographic_headings
+    with fitz.open() as pdf:
+        page = pdf.new_page()
+        page.insert_text((60, 60), 'Methods', fontname='hebo')
+        page.insert_text((120, 60), 'are compared in the following paragraph.')
+        assert 'Methodsare compared in the following paragraph.' not in typographic_headings(page)

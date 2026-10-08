@@ -12,6 +12,21 @@ LABELS = {'problem':'解决问题','method':'方法','why_it_works':'为什么�
           'possible_use_or_impact':'可能用途/影响','limitations':'局限'}
 
 
+def fidelity_gaps(visual):
+    pages = visual.get('fidelity', {}).get('pages', [])
+    counts = {}
+    for page in pages:
+        if not page.get('passed'):
+            reason = page.get('reason')
+            counts[reason] = counts.get(reason, 0) + 1
+    labels = {'FidelityBudgetExhausted': '核验预算耗尽',
+              'TimeoutExpired': '模型调用超时',
+              '逐页重建/独立复核未通过': '转写或独立复核不通过',
+              'TimeoutError': '核验超时或预算耗尽'}
+    return [f'页面保真核验：{count} 页{labels[reason]}'
+            for reason, count in counts.items() if reason in labels]
+
+
 def reading_label(material):
     doc, reading = material.paper_document, material.reading
     if not doc: return '未核验的旧版阅读记录'
@@ -31,6 +46,7 @@ def gaps(material):
     if material.reading.get('failures'): values.append(f"{len(material.reading['failures'])} 个块未完成阅读")
     if material.reading.get('synthesis_error'): values.append(material.reading['synthesis_error'])
     visual=material.reading.get('visual',{})
+    values.extend(fidelity_gaps(visual))
     if visual.get('strict_fidelity'):
         values=[v for v in values if v != '图表图像、公式视觉保真及外部补充材料未核验']
         values.append('使用逐页重建并经独立模型图片复核的文本；原生抽取差异保留，非数学正确性认证，外部补充材料未核验')
@@ -68,6 +84,7 @@ def card_gaps(material):
     if reading.get('synthesis_error'):
         values.append('整篇综合未完成')
     visual = reading.get('visual', {})
+    values.extend(fidelity_gaps(visual))
     if visual.get('required_pages'):
         values = [v for v in values if v != '图表图像、公式视觉保真及外部补充材料未核验']
         if visual.get('strict_fidelity'):

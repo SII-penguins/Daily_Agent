@@ -86,6 +86,73 @@ def run_pipeline(
     use_llm: bool = True,
     delivery_mode: str = "local",
 ) -> PipelineResult:
+    # Manual runs and scheduled runs share a material library and report paths.
+    # A scheduling-only lock cannot protect manual callers against concurrent writes.
+    from daily_agent.workflow_state import exclusive_lock
+    config = load_config(root)
+    external = not dry_run and delivery_mode != "local"
+    with exclusive_lock(config.state_dir / "pipeline.lock"):
+        result = _run_pipeline_unlocked(root, run_date, dry_run, use_llm, delivery_mode,
+                                        defer_delivery=external)
+    if external:
+        # Generation releases its lock before the outbox commits publication.
+        # Until a confirmed receipt exists, formal history must remain unchanged.
+        from daily_agent.scheduling import deliver_ready_report, validate_ready_report, _delivery_receipt
+        from daily_agent.health import summarize_delivery, _overall, build_issue
+        receipt = None
+        try:
+            import hashlib
+            payload = validate_ready_report(config, result.run_date)
+            if hashlib.sha256(result.daily_markdown.encode()).hexdigest() != payload["sha256"]:
+                raise RuntimeError("An already sent/frozen issue cannot be replaced by this generation")
+            deliver_ready_report(config, result.run_date, delivery_mode=delivery_mode)
+            receipt = _delivery_receipt(config, result.run_date, payload)
+            result.status.delivery = DeliveryStatus.from_dict(receipt["status"])
+            result.selected_path = config.selected_dir / f"selected-{result.run_date.isoformat()}.json"
+            for attribute, suffix in (("bibtex_path", ".bib"), ("ris_path", ".ris"),
+                                      ("csv_path", ".csv"), ("endnote_xml_path", ".xml")):
+                if getattr(result, attribute, None) is not None:
+                    setattr(result, attribute, result.selected_path.with_suffix(suffix))
+        except Exception as exc:
+            try:
+                receipt = _delivery_receipt(config, result.run_date, validate_ready_report(config, result.run_date))
+            except (OSError, RuntimeError, ValueError, KeyError, TypeError):
+                receipt = None
+            if receipt:
+                result.status.delivery = DeliveryStatus.from_dict(receipt["status"])
+                _add_error_once(result.status, f"Local publication pending: {exc}")
+            else:
+                result.status.delivery = DeliveryStatus(requested_mode=delivery_mode, final_mode="local", ok=False,
+                                                         error=str(exc))
+                _add_error_once(result.status, f"Delivery: {exc}")
+        current = result.health["current"]
+        current["signals"]["delivery"] = summarize_delivery(result.status.delivery)
+        current["summary"]["feishu_fallback_used"] = result.status.delivery.fallback_used
+        for check in current["checks"]:
+            if check["id"] == "delivery_failed":
+                check["status"] = "pass" if result.status.delivery.ok else "fail"
+                check["metrics"] = {"ok": result.status.delivery.ok}
+            elif check["id"] == "feishu_fallback":
+                check["status"] = "fail" if result.status.delivery.fallback_used else "pass"
+        pending = bool(receipt and not receipt.get("publication_reconciled"))
+        current["checks"].append(build_issue("local_publication_pending", "error", "fail" if pending else "pass",
+                                             "Confirmed delivery is awaiting local publication reconciliation"))
+        current["overall"] = _overall(current["checks"])
+        result.health["history"][-1].update(overall=current["overall"],
+                                            issue_count=sum(check["status"] == "fail" for check in current["checks"]))
+        result.health_path = write_health_report(config, result.health)
+        write_run_log(config, result.run_date, result.status, dry_run=False)
+    return result
+
+
+def _run_pipeline_unlocked(
+    root: str | Path | None = None,
+    run_date: date | None = None,
+    dry_run: bool = True,
+    use_llm: bool = True,
+    delivery_mode: str = "local",
+    *, defer_delivery: bool = False,
+) -> PipelineResult:
     config = load_config(root)
     today = run_date or date.today()
     target_dt = datetime(today.year, today.month, today.day, tzinfo=timezone.utc)
@@ -127,16 +194,16 @@ def run_pipeline(
     next_window = index + 1
     max_batches = max(1, int(config.sources.get("selection", {}).get("max_review_batches", 3)))
     for batch_index in range(max_batches):
-        batch = _build_shortlist_from_library(
-            config, remaining_library(), today)
+        batch = _bounded_editorial_batch(config, _build_shortlist_from_library(
+            config, remaining_library(), today), approved)
         while not batch and next_window < len(windows):
             arxiv_window, github_window = windows[next_window]
             next_window += 1
             raw_items.extend(_fetch_windowed_sources(config, target_dt, arxiv_window, github_window, status))
             upsert_materials(config, _prepare_selected_items(raw_items, config, history, target_dt), today)
             library = load_material_library(config)
-            batch = _build_shortlist_from_library(
-                config, remaining_library(), today)
+            batch = _bounded_editorial_batch(config, _build_shortlist_from_library(
+                config, remaining_library(), today), approved)
             status.fallback = "审核后内容不足，已扩展检索窗口"
         if not batch:
             break
@@ -158,7 +225,8 @@ def run_pipeline(
         # Retain reading work even when an otherwise good paper misses today's quota.
         library.update({record.key: record for record in batch})
         write_material_library(config, library)
-        if sum(item.item_type == "paper" for item in approved) >= int(config.quota.get("paper_target", 8)):
+        if (sum(item.item_type == "paper" for item in approved) >= int(config.quota.get("paper_target", 8))
+                and sum(item.item_type == "repo" for item in approved) >= int(config.quota.get("github_target", 2))):
             break
     if sum(item.item_type == "paper" for item in approved) < int(config.quota.get("paper_target", 8)):
         status.fallback = status.fallback or "论文池补选后仍不足目标；保留证据审核门槛"
@@ -177,18 +245,18 @@ def run_pipeline(
     daily_html_path = write_daily_html_report(config, today, daily_html)
     weekly_report_path = write_weekly_report(config, today, daily_markdown)
     weekly_html_path = write_weekly_html_report(config, today, daily_html)
-    selected_path = write_selected(config, approved, today, dry_run=dry_run)
-    bibtex_path = write_bibtex_export(config, approved, today, dry_run=dry_run)
-    ris_path = write_ris_export(config, approved, today, dry_run=dry_run)
-    csv_path = write_csv_export(config, approved, today, dry_run=dry_run)
-    endnote_xml_path = write_endnote_xml_export(config, approved, today, dry_run=dry_run)
+    selected_path = write_selected(config, approved, today, dry_run=dry_run or defer_delivery)
+    bibtex_path = write_bibtex_export(config, approved, today, dry_run=dry_run or defer_delivery)
+    ris_path = write_ris_export(config, approved, today, dry_run=dry_run or defer_delivery)
+    csv_path = write_csv_export(config, approved, today, dry_run=dry_run or defer_delivery)
+    endnote_xml_path = write_endnote_xml_export(config, approved, today, dry_run=dry_run or defer_delivery)
     editorial_path = write_editorial_artifacts(config, today, shortlist, drafts, reviews, approved)
-    if not dry_run:
+    if not dry_run and not defer_delivery:
         mark_materials_published(config, [item.material for item in approved], today)
         write_published_index(config, approved, today)
     cleanup_retention(config, today)
 
-    if dry_run:
+    if dry_run or defer_delivery:
         status.delivery = DeliveryStatus(requested_mode="dry-run", final_mode="local", ok=True)
     else:
         try:
@@ -322,6 +390,20 @@ def upsert_materials_preview(library: dict[str, MaterialRecord], items: list[Dig
 def _build_shortlist_from_library(config: AppConfig, library: dict[str, MaterialRecord], today: date) -> list[MaterialRecord]:
     candidates = select_library_candidates(config, library, today)
     return build_shortlist(config, {record.key: record for record in candidates}, today)
+
+
+def _bounded_editorial_batch(config, records: list[MaterialRecord], approved: list[ApprovedItem]) -> list[MaterialRecord]:
+    """Backpressure: a broad candidate pool need not become one expensive reading batch."""
+    size = int(config.sources.get("selection", {}).get("editorial_batch_size", 0))
+    if size <= 0:
+        return records  # compatibility for callers without a batch policy
+    papers_needed = max(0, int(config.quota.get("paper_target", 8)) - sum(item.item_type == "paper" for item in approved))
+    repos_needed = max(0, int(config.quota.get("github_target", 2)) - sum(item.item_type == "repo" for item in approved))
+    papers = [record for record in records if record.item_type == "paper"] if papers_needed else []
+    repos = [record for record in records if record.item_type == "repo"] if repos_needed else []
+    reserve_repos = min(repos_needed, len(repos), max(0, size - 1) if papers else size)
+    keys = {record.key for record in repos[:reserve_repos] + papers[:size - reserve_repos]}
+    return [record for record in records if record.key in keys]
 
 
 def _shortlist_target(config: AppConfig) -> int:

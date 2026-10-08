@@ -73,7 +73,10 @@ def evaluate_run_health(
         "duplicate_approved_keys": duplicate_approved_keys,
         "update_signal_count": update_signal_count,
         "paper_text_available_count": paper_text_available_count,
-        "paper_reading_complete_count": sum(1 for i in approved if i.item_type == "paper" and i.material.reading.get("complete")),
+        "paper_chunks_read_complete_count": sum(1 for i in approved if i.item_type == "paper" and i.material.reading.get("complete")),
+        "paper_reading_complete_count": sum(1 for i in approved if i.item_type == "paper"
+                                             and i.material.reading.get("complete")
+                                             and i.material.paper_document.get("document_kind") == "full_text"),
         "paper_located_claim_count": sum(len(i.material.reading.get("claim_evidence", [])) for i in approved if i.item_type == "paper"),
         "paper_limited_count": sum(1 for i in approved if i.item_type == "paper" and i.material.reading.get("verification", {}).get("status") != "located"),
         "paper_text_insufficient_count": paper_text_insufficient_count,

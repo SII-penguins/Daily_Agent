@@ -8,13 +8,20 @@ import tempfile
 from pathlib import Path
 from html.parser import HTMLParser
 
-SCHEMA = 6
+SCHEMA = 7
 NUMBERED_HEADING = re.compile(r'^\s*(?:[1-9](?:\.\d+)*|[IVX]+)[.\s]+[A-Za-z][A-Za-z ,:/()–—-]{2,90}$')
-HEADINGS = re.compile(r'^\s*(?:(?:\d+(?:\.\d+)*|[IVX]+)[.\s]+)?(abstract|introduction|background|related work|methods?|methodology|approach|experimental setup|experiments?|evaluation|results?(?: and discussion)?|discussion|limitations?|conclusions?|references|appendix|supplementary material)\s*[:.]?\s*$', re.I)
+HEADINGS = re.compile(r'^\s*(?:(?:\d+(?:\.\d+)*|[IVX]+)[.\s]+)?(abstract|introduction|background|related work|methods?|methodology|approach|experimental setup|experiments?|evaluation|results?(?: and discussion)?|discussion(?: and conclusions?)?|limitations?|conclusions?(?: and (?:outlook|discussion))?|references|appendix|supplementary material)\s*[:.]?\s*$', re.I)
 
 
 def digest(value) -> str:
     return hashlib.sha256(json.dumps(value, ensure_ascii=False, sort_keys=True).encode()).hexdigest()
+
+
+def evidence_settings(settings):
+    """Scheduling changes must not invalidate already verified evidence."""
+    return {key:value for key, value in settings.items()
+            if not key.endswith(('_budget_seconds', '_timeout_seconds'))
+            and key not in {'timeout_seconds', 'concurrent_reads'}}
 
 
 def version_identity(record) -> str:
@@ -41,8 +48,8 @@ def load_json(path: Path):
 
 def section_kind(title: str) -> str:
     t = title.lower()
-    if re.search(r'method|approach|architecture|framework|algorithm|protocol', t): return 'method'
-    if re.search(r'result|experiment|evaluation|scaling|performance', t): return 'results'
+    if re.search(r'method|approach|architecture|framework|algorithm|protocol|implementation', t): return 'method'
+    if re.search(r'result|experiment|evaluation|scaling|performance|benchmark', t): return 'results'
     if 'limitation' in t: return 'limitations'
     if 'discussion' in t: return 'discussion'
     if 'conclusion' in t: return 'conclusion'
@@ -69,7 +76,9 @@ def build_document(record, pages: list[dict], source_url: str | None, source_typ
         offset = 0
         for line in page['text'].splitlines(keepends=True):
             heading = HEADINGS.match(line.strip())
-            if heading or (NUMBERED_HEADING.match(line.strip()) and not re.search(r'\S {4,}\S',line.strip())):
+            if (heading or (line.strip() in page.get('headings', [])
+                            and section_kind(line.strip()) in {'method', 'results', 'discussion', 'conclusion', 'limitations', 'references'})
+                    or (NUMBERED_HEADING.match(line.strip()) and not re.search(r'\S {4,}\S',line.strip()))):
                 title = line.strip(); kind = section_kind(heading.group(1) if heading else title)
                 sections.append({'title': title, 'kind': kind, 'page': page.get('page')})
             start = 0
@@ -123,22 +132,27 @@ class StructuredHTML(HTMLParser):
 def extract_document(content: bytes, record, url: str, settings: dict) -> dict:
     if content.startswith(b'%PDF'):
         pages, errors = [], []
+        source_page_count = None
         try:
             import fitz
             with fitz.open(stream=content, filetype='pdf') as pdf:
+                source_page_count = len(pdf)
                 from daily_agent.page_evidence import extract_pages
                 pages, errors = extract_pages(pdf, settings)
         except Exception:
             try:
                 from pypdf import PdfReader
                 from io import BytesIO
-                for i, page in enumerate(PdfReader(BytesIO(content)).pages):
+                reader = PdfReader(BytesIO(content))
+                source_page_count = len(reader.pages)
+                for i, page in enumerate(reader.pages):
                     try: value = page.extract_text() or ''
                     except Exception: value = ''; errors.append(f'第 {i+1} 页解析失败')
                     pages.append({'page': i+1, 'text': value, 'visual_required': True})
             except Exception: errors.append('PDF 解析器不可用或文件损坏')
         document = build_document(record, pages, url, 'pdf', settings, errors)
         document['source_pdf_sha256'] = hashlib.sha256(content).hexdigest()
+        document['source_page_count'] = source_page_count
         return document
     if not re.search(rb'<(?:html|body|article|main)\b', content[:4096], re.I):
         return build_document(record, [], url, 'html', settings, ['响应不是可识别的论文文档'])

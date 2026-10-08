@@ -7,6 +7,25 @@ import tempfile
 import time
 
 
+def typographic_headings(page):
+    """Keep short, uniformly bold PDF lines as heading candidates.
+
+    A partly bold caption or bibliography entry is not a heading. Candidates
+    only add section boundaries; they do not establish document completeness.
+    """
+    headings = []
+    for block in page.get_text('dict')['blocks']:
+        for line in block.get('lines', []):
+            spans = [s for s in line['spans'] if s['text'].strip()]
+            text = ''.join(s['text'] for s in line['spans']).strip()
+            if (spans and all(s['flags'] & 16 for s in spans)
+                    and 3 <= len(text) <= 100 and len(text.split()) <= 12
+                    and not text.endswith(('.', ',', ';'))
+                    and not text.lower().startswith(('fig.', 'figure ', 'table ', 'extended data fig.', 'nature'))):
+                headings.append(text)
+    return headings
+
+
 def ordered_text(page):
     blocks = []
     for block in page.get_text('dict')['blocks']:
@@ -41,7 +60,8 @@ def extract_pages(pdf, settings):
     started=time.monotonic()
     for index,page in enumerate(pdf):
         text=ordered_text(page)
-        item={'page':index+1,'text':text,'text_source':'native','visual_required':True}
+        item={'page':index+1,'text':text,'text_source':'native','visual_required':True,
+              'headings':typographic_headings(page)}
         low_text=len(text.strip()) < int(settings.get('ocr_min_chars',80))
         output=settings.get('page_image_dir')
         image=None

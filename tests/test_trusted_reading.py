@@ -306,3 +306,17 @@ def test_rejected_semantics_gets_one_rewrite_and_fresh_review(tmp_path,monkeypat
     assert 'method' in out[0].verification['valid_fields']
     assert out[0].verification['semantic_support']=='model_checked'
     assert r.reading['semantic_rewrite_attempted']
+
+
+def test_reading_budget_changes_reuse_validated_notes(tmp_path):
+    cfg = config(tmp_path); r = paper(); attach_document(r, document(r))
+    read_papers([r], cfg, responder)
+    identity = r.reading['fingerprint']
+    cfg.sources['reading'].update(run_budget_seconds=0, timeout_seconds=1, concurrent_reads=3)
+    def forbidden(*args):
+        raise AssertionError('Validated notes must survive a scheduling change')
+    read_papers([r], cfg, forbidden)
+    assert r.reading['complete'] and r.reading['fingerprint'] == identity
+    cfg.sources['reading']['prompt_version'] = 99
+    read_papers([r], cfg, forbidden)
+    assert not r.reading['complete'] and r.reading['fingerprint'] != identity

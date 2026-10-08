@@ -116,7 +116,8 @@ def draft_report_items(config: AppConfig, shortlist: list[MaterialRecord], use_l
     def invoke(prompt, timeout, image_path=None):
         command = _llm_writer_command(settings, prompt)
         if image_path:
-            command[-1:-1] = ["--image", image_path, "--"]
+            images = image_path if isinstance(image_path, list) else [image_path]
+            command[-1:-1] = ["--image", *images, "--"]
         result = subprocess.run(command, check=True,
                                 capture_output=True, text=True, timeout=timeout)
         return _decode_model_json(result.stdout)
