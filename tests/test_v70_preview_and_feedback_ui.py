@@ -53,7 +53,7 @@ def test_html_feedback_block_is_responsive_and_does_not_show_terminal_instructio
 
 
 def test_html_document_styles_feedback_panel_to_wrap_without_overlap(tmp_path):
-    config = load_config("/Users/wuzixie/Daily_Agent")
+    config = load_config(str(Path(__file__).resolve().parents[1]))
     object.__setattr__(config, "root", tmp_path)
 
     path = write_daily_html_report(config, date(2026, 7, 9), render_daily_html([_approved_paper()], date(2026, 7, 9), RunStatus()))
@@ -114,12 +114,17 @@ def test_mcp_preview_report_starts_preview_server(monkeypatch):
     assert seen["args"] == ["preview", "start", "--root", "/tmp/daily-agent", "--report", "latest"]
 
 
-def test_readme_describes_agent_started_preview_instead_of_manual_feedback_server():
+def test_readme_links_to_agent_started_preview_instead_of_manual_feedback_server():
     root = Path(__file__).resolve().parents[1]
     readme = (root / "README.md").read_text(encoding="utf-8")
     chinese = (root / "README.zh-CN.md").read_text(encoding="utf-8")
 
-    assert "preview_report" in readme
-    assert "preview_report" in chinese
-    assert "ask Codex or Claude Code" in readme
-    assert "让 Codex 或 Claude Code" in chinese
+    assert "](docs/local-guide.md)" in readme
+    assert "](docs/local-guide.zh-CN.md)" in chinese
+    local_guide = (root / "docs/local-guide.md").read_text(encoding="utf-8")
+    chinese_guide = (root / "docs/local-guide.zh-CN.md").read_text(encoding="utf-8")
+
+    assert "preview_report" in local_guide
+    assert "preview_report" in chinese_guide
+    assert "ask Codex or Claude Code" in local_guide
+    assert "让 Codex 或 Claude Code" in chinese_guide

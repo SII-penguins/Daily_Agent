@@ -1,3 +1,4 @@
+from pathlib import Path
 import httpx
 
 from daily_agent.config import load_config
@@ -72,7 +73,7 @@ def test_download_limited_returns_none_for_blocked_status():
 
 
 def test_enrich_paper_texts_limits_urls_per_paper(tmp_path, monkeypatch):
-    config = load_config("/Users/wuzixie/Daily_Agent")
+    config = load_config(str(Path(__file__).resolve().parents[1]))
     object.__setattr__(config, "root", tmp_path)
     config.sources["paper_text"] = {
         "enabled": True,
@@ -110,7 +111,7 @@ def test_enrich_paper_texts_limits_urls_per_paper(tmp_path, monkeypatch):
 
 
 def test_enrich_paper_texts_marks_remaining_records_skipped_when_run_budget_expires(tmp_path, monkeypatch):
-    config = load_config("/Users/wuzixie/Daily_Agent")
+    config = load_config(str(Path(__file__).resolve().parents[1]))
     object.__setattr__(config, "root", tmp_path)
     config.sources["paper_text"] = {
         "enabled": True,
@@ -154,7 +155,7 @@ def test_enrich_paper_texts_marks_remaining_records_skipped_when_run_budget_expi
 def test_landing_metadata_follows_pdf_within_url_budget(tmp_path, monkeypatch):
     from daily_agent.connectors.paper_text import _landing_pdf_urls
     from daily_agent.paper_document import build_document
-    cfg = load_config('/Users/wuzixie/Daily_Agent')
+    cfg = load_config(str(Path(__file__).resolve().parents[1]))
     object.__setattr__(cfg, 'root', tmp_path)
     cfg.sources['paper_text'].update(max_urls_per_paper=2)
     record = MaterialRecord(key='paper:linked', source='openalex', item_type='paper',
@@ -180,7 +181,7 @@ def test_landing_metadata_follows_pdf_within_url_budget(tmp_path, monkeypatch):
 
 def test_abstract_cache_retries_and_retains_evidence_on_failed_fetch(tmp_path, monkeypatch):
     from daily_agent.paper_document import build_document, atomic_json, digest, version_identity
-    cfg = load_config('/Users/wuzixie/Daily_Agent')
+    cfg = load_config(str(Path(__file__).resolve().parents[1]))
     object.__setattr__(cfg, 'root', tmp_path)
     record = MaterialRecord(key='paper:cached', source='openalex', item_type='paper',
                             title='Cached Paper', url='https://publisher.test/article')
@@ -201,7 +202,7 @@ def test_abstract_cache_retries_and_retains_evidence_on_failed_fetch(tmp_path, m
 def test_parser_upgrade_reuses_hash_verified_local_pdf(tmp_path, monkeypatch):
     import hashlib
     from daily_agent.paper_document import build_document, atomic_json, digest, version_identity
-    cfg = load_config('/Users/wuzixie/Daily_Agent'); object.__setattr__(cfg, 'root', tmp_path)
+    cfg = load_config(str(Path(__file__).resolve().parents[1])); object.__setattr__(cfg, 'root', tmp_path)
     record = MaterialRecord(key='paper:local', source='openalex', item_type='paper',
                             title='Local Paper', url='https://publisher.test/article')
     pdf = tmp_path/'old.pdf'; pdf.write_bytes(b'%PDF-fixture')

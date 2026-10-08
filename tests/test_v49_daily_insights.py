@@ -1,4 +1,5 @@
 from __future__ import annotations
+from pathlib import Path
 
 from datetime import date
 
@@ -137,7 +138,7 @@ def test_render_daily_insights_fallback_when_sample_is_too_small():
 def test_health_summary_counts_daily_insights(tmp_path, monkeypatch):
     from daily_agent.config import load_config
 
-    config = load_config("/Users/wuzixie/Daily_Agent")
+    config = load_config(str(Path(__file__).resolve().parents[1]))
     object.__setattr__(config, "root", tmp_path)
     monkeypatch.setattr("daily_agent.health.run_quality_check", lambda config: type("Profile", (), {"overall": "full", "checks": []})())
     items = [
@@ -177,7 +178,7 @@ def test_quality_check_requires_daily_insights_full_profile(tmp_path):
     from daily_agent.config import load_config
     from daily_agent.quality import run_quality_check
 
-    config = load_config("/Users/wuzixie/Daily_Agent")
+    config = load_config(str(Path(__file__).resolve().parents[1]))
     object.__setattr__(config, "root", tmp_path)
     config.sources["insights"] = {"enabled": True, "include_in_reports": True, "max_insights": 1, "min_items": 3}
 
@@ -193,7 +194,7 @@ def test_quality_check_requires_research_gap_insights_full_profile(tmp_path):
     from daily_agent.config import load_config
     from daily_agent.quality import run_quality_check
 
-    config = load_config("/Users/wuzixie/Daily_Agent")
+    config = load_config(str(Path(__file__).resolve().parents[1]))
     object.__setattr__(config, "root", tmp_path)
     config.sources["insights"] = {"enabled": True, "include_in_reports": True, "max_insights": 4, "min_items": 2, "research_gap_enabled": False}
 

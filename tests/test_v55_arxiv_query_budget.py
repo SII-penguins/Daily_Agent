@@ -1,3 +1,4 @@
+from pathlib import Path
 from datetime import datetime, timezone
 
 from daily_agent.config import load_config
@@ -5,7 +6,7 @@ from daily_agent.connectors.arxiv import fetch_arxiv
 
 
 def test_arxiv_limits_queries_per_domain_before_rate_limit_sleep(monkeypatch):
-    config = load_config("/Users/wuzixie/Daily_Agent")
+    config = load_config(str(Path(__file__).resolve().parents[1]))
     config.sources["arxiv"] = {
         "enabled": True,
         "recent_days": 7,

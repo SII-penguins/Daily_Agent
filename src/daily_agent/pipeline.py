@@ -17,6 +17,7 @@ from daily_agent.connectors import (
     fetch_google_scholar,
     fetch_ieee,
     fetch_neurips,
+    fetch_nature,
     enrich_open_access_links,
     enrich_unpaywall_links,
     fetch_openalex,
@@ -163,7 +164,7 @@ def _run_pipeline_unlocked(
     selected_items: list[DigestItem] = []
     shortlist = []
     expanded = False
-    for index, (arxiv_window, github_window) in enumerate(_fallback_window_steps(config)):
+    for index, (arxiv_window, github_window) in enumerate(_fallback_window_steps(config, target_dt)):
         if index > 0:
             expanded = True
         window_items = _fetch_windowed_sources(config, target_dt, arxiv_window, github_window, status)
@@ -190,7 +191,7 @@ def _run_pipeline_unlocked(
         return {key: value for key, value in library.items()
                 if key not in attempted and not
                 (set(_identity_keys(value.to_digest_item())) & attempted_identities)}
-    windows = _fallback_window_steps(config)
+    windows = _fallback_window_steps(config, target_dt)
     next_window = index + 1
     max_batches = max(1, int(config.sources.get("selection", {}).get("max_review_batches", 3)))
     for batch_index in range(max_batches):
@@ -210,12 +211,37 @@ def _run_pipeline_unlocked(
         attempted.update(record.key for record in batch)
         for record in batch:
             attempted_identities.update(_identity_keys(record.to_digest_item()))
-        batch = enrich_open_access_links(batch, config)
-        batch = enrich_unpaywall_links(batch, config)
-        batch = enrich_paper_texts(batch, config)
-        batch = enrich_citation_contexts(batch, config)
+        def enrich_batch(values):
+            values = enrich_open_access_links(values, config)
+            values = enrich_unpaywall_links(values, config)
+            values = enrich_paper_texts(values, config)
+            from daily_agent.author_context import enrich_author_contexts
+            contextual = enrich_author_contexts([record.to_digest_item() for record in values], config)
+            for record, item in zip(values, contextual):
+                if item.raw.get("research_context"):
+                    record.raw["research_context"] = item.raw["research_context"]
+            return enrich_citation_contexts(values, config)
+        from daily_agent.cloud_cache import prepare_batch
+        batch = prepare_batch(config, today, batch, enrich_batch)
+        from daily_agent.cloud_cache import enabled as cloud_checkpoints_enabled
+        if cloud_checkpoints_enabled(config):
+            # A pending parent response must not lose downloaded documents or
+            # README enrichment and force the next resume to fetch them again.
+            library.update({record.key: record for record in batch})
+            write_material_library(config, library)
+        if use_llm and config.sources.get("llm_writer", {}).get("provider") == "parent_queue":
+            # Author research is independent of scientific reading/review and
+            # may suspend. Persist full text before its first queued request.
+            library.update({record.key: record for record in batch})
+            write_material_library(config, library)
+            from daily_agent.author_context import enrich_selected_author_contexts
+            batch = enrich_selected_author_contexts(batch, config)
+            library.update({record.key: record for record in batch})
+            write_material_library(config, library)
         write_editorial_artifacts(config, today, shortlist + batch, drafts, reviews, approved)
         batch_drafts = draft_report_items(config, batch, use_llm=use_llm)
+        from daily_agent.scientific_analysis import analyze_papers
+        analyze_papers(config, batch, batch_drafts, use_llm=use_llm)
         batch_reviews = review_draft(config, batch_drafts, use_llm=use_llm)
         shortlist.extend(batch)
         drafts.extend(batch_drafts)
@@ -230,6 +256,9 @@ def _run_pipeline_unlocked(
             break
     if sum(item.item_type == "paper" for item in approved) < int(config.quota.get("paper_target", 8)):
         status.fallback = status.fallback or "论文池补选后仍不足目标；保留证据审核门槛"
+    from daily_agent.material_pool import retain_quota_deferred
+    retain_quota_deferred(config, library, shortlist, drafts, reviews, approved, today)
+    write_material_library(config, library)
     approved = cache_selected_pdfs(approved, config, today)
 
     if not approved:
@@ -237,6 +266,9 @@ def _run_pipeline_unlocked(
 
     from daily_agent.rendering.notes import write_reading_notes
     write_reading_notes(config, approved, today, dry_run=dry_run)
+    # Keep reviewed visual selections/assets and author context for later issues.
+    library.update({item.material.key: item.material for item in approved})
+    write_material_library(config, library)
     insight_config = config.sources.get("insights", {}) or {}
     writing_config = config.sources.get("report_writing", {}) or {}
     daily_markdown = render_daily_markdown(approved, today, status, insight_config=insight_config, writing_config=writing_config)
@@ -313,10 +345,15 @@ def _run_pipeline_unlocked(
     )
 
 
-def _fallback_window_steps(config: AppConfig) -> list[tuple[int, int]]:
+def _fallback_window_steps(config: AppConfig, target_dt: datetime | None = None) -> list[tuple[int, int]]:
     arxiv_config = config.sources.get("arxiv", {}) or {}
     github_config = config.sources.get("github", {}) or {}
     recent_days = int(arxiv_config.get("recent_days", 7))
+    from daily_agent.discovery_window import lookback_start
+    day = (target_dt or datetime.now(timezone.utc)).date()
+    start = lookback_start(config, day)
+    if start:
+        return [((day - start).days, int(github_config.get("normal_active_days", 30)))]
     arxiv_windows = _unique_sorted([recent_days, *[int(value) for value in arxiv_config.get("fallback_windows_days", [])]])
     normal_days = int(github_config.get("normal_active_days", 30))
     high_days = int(github_config.get("high_relevance_active_days", normal_days))
@@ -332,25 +369,33 @@ def _unique_sorted(values: list[int]) -> list[int]:
 
 
 def _fetch_windowed_sources(config: AppConfig, target_dt: datetime, arxiv_window: int, github_window: int, status: RunStatus) -> list[DigestItem]:
+    from daily_agent.cloud_cache import fetch_source
+    def fetch(name, callback, status, **kwargs):
+        return fetch_source(config, target_dt.date(), name, callback, status, _fetch_source, **kwargs)
     raw_items: list[DigestItem] = []
-    raw_items.extend(_fetch_source(f"arXiv/{arxiv_window}d", lambda: fetch_arxiv(config, target_dt, window_days=arxiv_window), status))
-    raw_items.extend(_fetch_source(f"GitHub/{github_window}d", lambda: fetch_github(config, target_dt, window_days=github_window), status))
-    raw_items.extend(_fetch_source(f"OpenAlex/{arxiv_window}d", lambda: fetch_openalex(config, target_dt, window_days=arxiv_window), status))
-    raw_items.extend(_fetch_source(f"Semantic Scholar/{arxiv_window}d", lambda: fetch_semantic_scholar(config, target_dt, window_days=arxiv_window), status))
-    raw_items.extend(_fetch_source(f"Citation Discovery/{arxiv_window}d", lambda: fetch_citation_discovery(config, target_dt, window_days=arxiv_window, library=load_material_library(config)), status))
-    raw_items.extend(_fetch_source(f"Google Scholar/{arxiv_window}d", lambda: fetch_google_scholar(config, target_dt, window_days=arxiv_window), status, skip_reason=google_scholar_skip_reason(config)))
-    raw_items.extend(_fetch_source(f"Crossref/{arxiv_window}d", lambda: fetch_crossref(config, target_dt, window_days=arxiv_window), status))
-    raw_items.extend(_fetch_source(f"CORE/{arxiv_window}d", lambda: fetch_core(config, target_dt, window_days=arxiv_window), status, skip_reason=_core_skip_reason(config)))
-    raw_items.extend(_fetch_source(f"DBLP/{arxiv_window}d", lambda: fetch_dblp(config, target_dt, window_days=arxiv_window), status))
-    raw_items.extend(_fetch_source(f"IEEE/{arxiv_window}d", lambda: fetch_ieee(config, target_dt, window_days=arxiv_window), status, skip_reason=_ieee_skip_reason(config)))
-    raw_items.extend(_fetch_source(f"OpenReview/{arxiv_window}d", lambda: fetch_openreview(config, target_dt, window_days=arxiv_window), status))
-    raw_items.extend(_fetch_source(f"PMLR/{arxiv_window}d", lambda: fetch_pmlr(config, target_dt, window_days=arxiv_window), status))
-    raw_items.extend(_fetch_source(f"NeurIPS/{arxiv_window}d", lambda: fetch_neurips(config, target_dt, window_days=arxiv_window), status))
+    raw_items.extend(fetch(f"arXiv/{arxiv_window}d", lambda: fetch_arxiv(config, target_dt, window_days=arxiv_window), status))
+    raw_items.extend(fetch(f"GitHub/{github_window}d", lambda: fetch_github(config, target_dt, window_days=github_window), status))
+    raw_items.extend(fetch(f"OpenAlex/{arxiv_window}d", lambda: fetch_openalex(config, target_dt, window_days=arxiv_window), status))
+    raw_items.extend(fetch(f"Semantic Scholar/{arxiv_window}d", lambda: fetch_semantic_scholar(config, target_dt, window_days=arxiv_window), status))
+    raw_items.extend(fetch(f"Citation Discovery/{arxiv_window}d", lambda: fetch_citation_discovery(config, target_dt, window_days=arxiv_window, library=load_material_library(config)), status))
+    raw_items.extend(fetch(f"Google Scholar/{arxiv_window}d", lambda: fetch_google_scholar(config, target_dt, window_days=arxiv_window), status, skip_reason=google_scholar_skip_reason(config)))
+    raw_items.extend(fetch(f"Crossref/{arxiv_window}d", lambda: fetch_crossref(config, target_dt, window_days=arxiv_window), status))
+    raw_items.extend(fetch(f"CORE/{arxiv_window}d", lambda: fetch_core(config, target_dt, window_days=arxiv_window), status, skip_reason=_core_skip_reason(config)))
+    raw_items.extend(fetch(f"DBLP/{arxiv_window}d", lambda: fetch_dblp(config, target_dt, window_days=arxiv_window), status))
+    raw_items.extend(fetch(f"IEEE/{arxiv_window}d", lambda: fetch_ieee(config, target_dt, window_days=arxiv_window), status, skip_reason=_ieee_skip_reason(config)))
+    raw_items.extend(fetch(f"OpenReview/{arxiv_window}d", lambda: fetch_openreview(config, target_dt, window_days=arxiv_window), status))
+    raw_items.extend(fetch(f"PMLR/{arxiv_window}d", lambda: fetch_pmlr(config, target_dt, window_days=arxiv_window), status))
+    raw_items.extend(fetch(f"NeurIPS/{arxiv_window}d", lambda: fetch_neurips(config, target_dt, window_days=arxiv_window), status))
+    raw_items.extend(fetch(f"Nature/{arxiv_window}d", lambda: fetch_nature(config, target_dt, window_days=arxiv_window), status))
     return raw_items
 
 
 def _prepare_selected_items(raw_items: list[DigestItem], config: AppConfig, history, target_dt: datetime) -> list[DigestItem]:
+    from daily_agent.discovery_window import within_discovery_window
     items = deduplicate_items(raw_items)
+    items = [item for item in items if within_discovery_window(item, config, target_dt.date())]
+    from daily_agent.author_context import enrich_author_contexts
+    items = enrich_author_contexts(items, config)
     if history:
         max_update_signal_repos = int(config.sources.get("github", {}).get("update_signal_max_repos", 10))
         items = enrich_github_update_signals(items, history, max_repos=max_update_signal_repos)
@@ -373,11 +418,17 @@ def upsert_materials_preview(library: dict[str, MaterialRecord], items: list[Dig
             incoming.quality_status = existing.quality_status if existing.quality_status in {"published", "archived", "rejected"} else incoming.quality_status
             incoming.readme_excerpt = existing.readme_excerpt or incoming.readme_excerpt
             from daily_agent.paper_document import version_identity
-            if version_identity(incoming) == version_identity(existing):
+            from daily_agent.material_pool import same_source_version
+            if same_source_version(incoming, existing):
                 incoming.paper_text_excerpt = existing.paper_text_excerpt or incoming.paper_text_excerpt
                 incoming.paper_text_status = incoming.paper_text_status or existing.paper_text_status
                 incoming.paper_document = existing.paper_document
                 incoming.reading = existing.reading
+                for field in ("paper_visual_selection", "local_pdf_path", "citation_context", "pool_review"):
+                    if field not in incoming.raw and field in existing.raw:
+                        incoming.raw[field] = existing.raw[field]
+                if existing.raw.get("pool_deferral"):
+                    incoming.raw["pool_deferral"] = existing.raw["pool_deferral"]
             if existing.raw.get("published_paper_identity"):
                 incoming.raw["published_paper_identity"] = existing.raw["published_paper_identity"]
             incoming.detail = {**existing.detail, **incoming.detail}
@@ -471,8 +522,23 @@ def _fetch_source(name: str, fetcher: Callable[[], list[DigestItem]], status: Ru
             return items
         except Exception as exc:
             last_error = exc
+            # A partially successful source is not a fully healthy probe. Preserve
+            # useful notes and expose all failed subrequests without blind retries.
+            if (getattr(exc, "partial_success", False)
+                    or hasattr(exc, "partial_items") and any(
+                        row.get("status_code") in {401, 403, 429} for row in getattr(exc, "failures", []))):
+                items = exc.partial_items
+                message = str(exc)
+                status.sources.append(SourceStatus(name=name, ok=False, item_count=len(items), retries=attempt, error=message))
+                status.errors.append(f"{name}: {message}")
+                return items
+            import httpx
+            code = getattr(getattr(exc, "response", None), "status_code", None)
+            retryable = isinstance(exc, (httpx.TransportError, TimeoutError)) or code in {408, 500, 502, 503, 504}
+            if not retryable:
+                break
     message = str(last_error) if last_error else "未知错误"
-    status.sources.append(SourceStatus(name=name, ok=False, retries=retries, error=message))
+    status.sources.append(SourceStatus(name=name, ok=False, retries=attempt, error=message))
     status.errors.append(f"{name}: {message}")
     normalized_name = name.lower()
     if normalized_name.startswith("arxiv"):

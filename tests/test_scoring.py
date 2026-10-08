@@ -1,3 +1,4 @@
+from pathlib import Path
 import json
 from datetime import date, datetime, timezone
 
@@ -75,7 +76,7 @@ def test_github_dedup_merges_source_tags():
 
 
 def test_score_items_does_not_accumulate_rule_breakdown():
-    config = load_config("/Users/wuzixie/Daily_Agent")
+    config = load_config(str(Path(__file__).resolve().parents[1]))
     item = DigestItem(
         id="2401.00002",
         source="arxiv",
@@ -95,7 +96,7 @@ def test_score_items_does_not_accumulate_rule_breakdown():
 
 
 def test_material_upsert_deduplicates_by_key(tmp_path):
-    config = load_config("/Users/wuzixie/Daily_Agent")
+    config = load_config(str(Path(__file__).resolve().parents[1]))
     object.__setattr__(config, "root", tmp_path)
     item = DigestItem(
         id="owner/repo",
@@ -112,7 +113,7 @@ def test_material_upsert_deduplicates_by_key(tmp_path):
 
 
 def test_select_library_candidates_suppresses_recent_published_without_update_label(tmp_path):
-    config = load_config("/Users/wuzixie/Daily_Agent")
+    config = load_config(str(Path(__file__).resolve().parents[1]))
     object.__setattr__(config, "root", tmp_path)
     record = MaterialRecord(
         key="github:owner/repo",
@@ -131,13 +132,14 @@ def test_select_library_candidates_suppresses_recent_published_without_update_la
 
 
 def test_select_library_candidates_allows_recent_published_with_update_label(tmp_path):
-    config = load_config("/Users/wuzixie/Daily_Agent")
+    config = load_config(str(Path(__file__).resolve().parents[1]))
     object.__setattr__(config, "root", tmp_path)
     record = MaterialRecord(
         key="arxiv:2401.00001",
         source="arxiv",
         item_type="paper",
         title="Updated Paper",
+        source_updated_at="2026-05-18T00:00:00Z",
         url="https://arxiv.org/abs/2401.00001v2",
         score=99,
         quality_status="published",
@@ -151,7 +153,7 @@ def test_select_library_candidates_allows_recent_published_with_update_label(tmp
 
 
 def test_mark_materials_published_consumes_update_label(tmp_path):
-    config = load_config("/Users/wuzixie/Daily_Agent")
+    config = load_config(str(Path(__file__).resolve().parents[1]))
     object.__setattr__(config, "root", tmp_path)
     record = MaterialRecord(
         key="github:owner/repo",
@@ -173,7 +175,7 @@ def test_mark_materials_published_consumes_update_label(tmp_path):
 
 
 def test_github_major_update_history_gate():
-    config = load_config("/Users/wuzixie/Daily_Agent")
+    config = load_config(str(Path(__file__).resolve().parents[1]))
     previous = SelectedRecord(
         key="github:owner/repo",
         selected_at="2026-05-17",
@@ -257,7 +259,7 @@ def test_selected_record_stores_github_release_and_tag_baseline():
 
 
 def test_github_release_or_tag_change_counts_as_major_update():
-    config = load_config("/Users/wuzixie/Daily_Agent")
+    config = load_config(str(Path(__file__).resolve().parents[1]))
     previous_release = SelectedRecord(
         key="github:owner/release-repo",
         selected_at="2026-05-17",
@@ -327,7 +329,7 @@ def test_github_release_or_tag_change_counts_as_major_update():
 def test_pipeline_shortlist_uses_library_candidate_suppression(tmp_path, monkeypatch):
     from daily_agent.pipeline import run_pipeline
 
-    config = load_config("/Users/wuzixie/Daily_Agent")
+    config = load_config(str(Path(__file__).resolve().parents[1]))
     object.__setattr__(config, "root", tmp_path)
     repeated = MaterialRecord(
         key="github:old/repo",
@@ -371,7 +373,7 @@ def test_pipeline_shortlist_uses_library_candidate_suppression(tmp_path, monkeyp
 def test_pipeline_enriches_paper_text_before_rule_writer_when_llm_disabled(tmp_path, monkeypatch):
     from daily_agent.pipeline import run_pipeline
 
-    config = load_config("/Users/wuzixie/Daily_Agent")
+    config = load_config(str(Path(__file__).resolve().parents[1]))
     object.__setattr__(config, "root", tmp_path)
     config.quota["max_items"] = 1
     config.quota["paper_target"] = 1
@@ -383,6 +385,7 @@ def test_pipeline_enriches_paper_text_before_rule_writer_when_llm_disabled(tmp_p
         source="arxiv",
         item_type="paper",
         title="Quantum compilation with sparse routing",
+        source_updated_at="2026-05-18T00:00:00Z",
         url="https://arxiv.org/abs/2401.00999v1",
         pdf_url="https://arxiv.org/pdf/2401.00999v1",
         abstract="This paper studies a relevant quantum compilation problem.",
@@ -418,7 +421,7 @@ def test_pipeline_enriches_paper_text_before_rule_writer_when_llm_disabled(tmp_p
 
 
 def test_editorial_flow_approves_specific_draft():
-    config = load_config("/Users/wuzixie/Daily_Agent")
+    config = load_config(str(Path(__file__).resolve().parents[1]))
     material = MaterialRecord(
         key="github:owner/repo",
         source="github",
@@ -441,7 +444,7 @@ def test_editorial_flow_approves_specific_draft():
 
 
 def test_editorial_review_rejects_paper_without_method():
-    config = load_config("/Users/wuzixie/Daily_Agent")
+    config = load_config(str(Path(__file__).resolve().parents[1]))
     material = MaterialRecord(
         key="arxiv:2401.00003",
         source="arxiv",
@@ -460,7 +463,7 @@ def test_editorial_review_rejects_paper_without_method():
 
 
 def test_paper_text_excerpt_supplies_missing_method():
-    config = load_config("/Users/wuzixie/Daily_Agent")
+    config = load_config(str(Path(__file__).resolve().parents[1]))
     material = MaterialRecord(
         key="arxiv:2401.00006",
         source="arxiv",
@@ -486,7 +489,7 @@ def test_paper_text_excerpt_supplies_missing_method():
 
 
 def test_llm_draft_falls_back_to_rule_method_when_method_is_not_stated(monkeypatch):
-    config = load_config("/Users/wuzixie/Daily_Agent")
+    config = load_config(str(Path(__file__).resolve().parents[1]))
     material = MaterialRecord(
         key="arxiv:2605.28599",
         source="arxiv",
@@ -650,7 +653,7 @@ def test_html_text_extraction_removes_boilerplate_and_keeps_article_sections():
 
 
 def test_enrich_paper_texts_falls_back_to_html_when_no_pdf_url(tmp_path, monkeypatch):
-    config = load_config("/Users/wuzixie/Daily_Agent")
+    config = load_config(str(Path(__file__).resolve().parents[1]))
     object.__setattr__(config, "root", tmp_path)
     config.sources["paper_text"] = {
         "enabled": True,
@@ -706,7 +709,7 @@ def test_enrich_paper_texts_falls_back_to_html_when_no_pdf_url(tmp_path, monkeyp
 
 
 def test_enrich_paper_texts_treats_non_pdf_pdf_url_as_html_landing_page(tmp_path, monkeypatch):
-    config = load_config("/Users/wuzixie/Daily_Agent")
+    config = load_config(str(Path(__file__).resolve().parents[1]))
     object.__setattr__(config, "root", tmp_path)
     config.sources["paper_text"] = {
         "enabled": True,
@@ -762,7 +765,7 @@ def test_enrich_paper_texts_treats_non_pdf_pdf_url_as_html_landing_page(tmp_path
 
 
 def test_enrich_paper_texts_scans_beyond_final_excerpt_budget_for_html_sections(tmp_path, monkeypatch):
-    config = load_config("/Users/wuzixie/Daily_Agent")
+    config = load_config(str(Path(__file__).resolve().parents[1]))
     object.__setattr__(config, "root", tmp_path)
     config.sources["paper_text"] = {
         "enabled": True,
@@ -824,7 +827,7 @@ def test_enrich_paper_texts_scans_beyond_final_excerpt_budget_for_html_sections(
 
 
 def test_enrich_paper_texts_records_section_coverage_status(tmp_path, monkeypatch):
-    config = load_config("/Users/wuzixie/Daily_Agent")
+    config = load_config(str(Path(__file__).resolve().parents[1]))
     object.__setattr__(config, "root", tmp_path)
     config.sources["paper_text"] = {
         "enabled": True,
@@ -1031,7 +1034,7 @@ def test_fulltext_rule_fallback_qec_paper_passes_review():
 
 
 def test_enrich_paper_texts_backfills_status_for_existing_excerpt(tmp_path):
-    config = load_config("/Users/wuzixie/Daily_Agent")
+    config = load_config(str(Path(__file__).resolve().parents[1]))
     object.__setattr__(config, "root", tmp_path)
     config.sources["paper_text"] = {"enabled": True, "max_papers_per_run": 1}
     material = MaterialRecord(
@@ -1059,7 +1062,7 @@ def test_health_reports_full_text_evidence_gaps(tmp_path, monkeypatch):
     from daily_agent.health import evaluate_run_health
     from daily_agent.models import DeliveryStatus, EditorialDraft, EditorialReview
 
-    config = load_config("/Users/wuzixie/Daily_Agent")
+    config = load_config(str(Path(__file__).resolve().parents[1]))
     object.__setattr__(config, "root", tmp_path)
     monkeypatch.setattr("daily_agent.health.run_quality_check", lambda config: type("Profile", (), {"overall": "full", "checks": []})())
     paper = MaterialRecord(
@@ -1124,7 +1127,7 @@ def test_health_counts_approved_paper_section_notes(tmp_path, monkeypatch):
     from daily_agent.health import evaluate_run_health
     from daily_agent.models import DeliveryStatus, EditorialDraft, EditorialReview
 
-    config = load_config("/Users/wuzixie/Daily_Agent")
+    config = load_config(str(Path(__file__).resolve().parents[1]))
     object.__setattr__(config, "root", tmp_path)
     monkeypatch.setattr("daily_agent.health.run_quality_check", lambda config: type("Profile", (), {"overall": "full", "checks": []})())
     paper = MaterialRecord(
@@ -1187,7 +1190,7 @@ def test_health_counts_approved_paper_section_notes(tmp_path, monkeypatch):
 
 
 def test_rule_drafting_extracts_result_and_limitation_sentences():
-    config = load_config("/Users/wuzixie/Daily_Agent")
+    config = load_config(str(Path(__file__).resolve().parents[1]))
     material = MaterialRecord(
         key="arxiv:2401.00005",
         source="arxiv",
@@ -1210,7 +1213,7 @@ def test_rule_drafting_extracts_result_and_limitation_sentences():
 
 
 def test_llm_drafting_accepts_valid_structured_json(monkeypatch):
-    config = load_config("/Users/wuzixie/Daily_Agent")
+    config = load_config(str(Path(__file__).resolve().parents[1]))
     material = MaterialRecord(
         key="arxiv:2401.00004",
         source="arxiv",
@@ -1261,7 +1264,7 @@ def test_llm_drafting_accepts_valid_structured_json(monkeypatch):
 
 
 def test_llm_drafting_falls_back_when_required_field_missing(monkeypatch):
-    config = load_config("/Users/wuzixie/Daily_Agent")
+    config = load_config(str(Path(__file__).resolve().parents[1]))
     material = MaterialRecord(
         key="github:owner/repo",
         source="github",
@@ -1290,7 +1293,7 @@ def test_llm_drafting_falls_back_when_required_field_missing(monkeypatch):
 
 
 def test_llm_drafting_falls_back_when_output_is_partial(monkeypatch):
-    config = load_config("/Users/wuzixie/Daily_Agent")
+    config = load_config(str(Path(__file__).resolve().parents[1]))
     first = MaterialRecord(
         key="github:owner/one",
         source="github",
@@ -1342,7 +1345,7 @@ def test_llm_drafting_falls_back_when_output_is_partial(monkeypatch):
 
 
 def test_llm_drafting_falls_back_when_json_is_malformed(monkeypatch):
-    config = load_config("/Users/wuzixie/Daily_Agent")
+    config = load_config(str(Path(__file__).resolve().parents[1]))
     material = MaterialRecord(
         key="github:owner/repo",
         source="github",
@@ -1367,7 +1370,7 @@ def test_llm_drafting_falls_back_when_json_is_malformed(monkeypatch):
 
 
 def test_markdown_renders_deep_repo_fields():
-    config = load_config("/Users/wuzixie/Daily_Agent")
+    config = load_config(str(Path(__file__).resolve().parents[1]))
     material = MaterialRecord(
         key="github:owner/repo",
         source="github",

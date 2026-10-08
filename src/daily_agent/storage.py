@@ -83,11 +83,17 @@ def upsert_materials(config: AppConfig, items: list[DigestItem], run_date: date)
             incoming.published_dates = existing.published_dates
             incoming.quality_status = existing.quality_status if existing.quality_status in {"published", "archived", "rejected"} else incoming.quality_status
             incoming.readme_excerpt = existing.readme_excerpt or incoming.readme_excerpt
-            if version_identity(incoming) == version_identity(existing):
+            from daily_agent.material_pool import same_source_version
+            if same_source_version(incoming, existing):
                 incoming.paper_text_excerpt = existing.paper_text_excerpt or incoming.paper_text_excerpt
                 incoming.paper_text_status = incoming.paper_text_status or existing.paper_text_status
                 incoming.paper_document = existing.paper_document
                 incoming.reading = existing.reading
+                for field in ("paper_visual_selection", "local_pdf_path", "citation_context", "pool_review"):
+                    if field not in incoming.raw and field in existing.raw:
+                        incoming.raw[field] = existing.raw[field]
+                if existing.raw.get("pool_deferral"):
+                    incoming.raw["pool_deferral"] = existing.raw["pool_deferral"]
             if existing.raw.get("published_paper_identity"):
                 incoming.raw["published_paper_identity"] = existing.raw["published_paper_identity"]
             incoming.detail = {**existing.detail, **incoming.detail}
@@ -101,7 +107,18 @@ def upsert_materials(config: AppConfig, items: list[DigestItem], run_date: date)
 def select_library_candidates(config: AppConfig, library: dict[str, MaterialRecord], run_date: date) -> list[MaterialRecord]:
     repeat_days = int(config.sources.get("selection", {}).get("repeat_suppression_days", 30))
     candidates = []
+    from daily_agent.cloud_workflow import reserved_delivery_identities
+    from daily_agent.scoring.dedup import _identity_keys
+    reserved = reserved_delivery_identities(config, run_date)
     for record in library.values():
+        if ({record.key} | set(_identity_keys(record.to_digest_item()))) & reserved:
+            continue
+        from daily_agent.discovery_window import within_discovery_window
+        deferral = record.raw.get("pool_deferral") or {}
+        deferred = ((deferral.get("status"), deferral.get("reason")) in {( "quota_deferred", "daily_count_limit"), ("screening_deferred", "daily_count_limit_before_review")}
+                    and deferral.get("version_identity") == version_identity(record))
+        if not deferred and not within_discovery_window(record, config, run_date):
+            continue
         if record.quality_status in {"rejected", "archived"}:
             continue
         if (record.item_type == "paper" and record.published_dates
@@ -129,6 +146,12 @@ def select_library_candidates(config: AppConfig, library: dict[str, MaterialReco
         item.is_historical_supplement = bool(record.raw.get("is_historical_supplement"))
         score_items([item], config, target_date=target)
         record.score, record.score_breakdown = item.score, item.score_breakdown
+        record.raw["publication_evidence"] = item.raw.get("publication_evidence", {})
+        from daily_agent.material_pool import deferred_revisit_score
+        revisit = deferred_revisit_score(record, config, run_date)
+        if revisit:
+            record.score_breakdown["deferred_revisit"] = revisit
+            record.score = round(record.score + revisit, 3)
     candidates.sort(key=lambda item: item.score, reverse=True)
     # Old libraries can contain both DOI and arXiv records for the same paper.
     published_keys = set()
@@ -161,6 +184,7 @@ def mark_materials_published(config: AppConfig, records: list[MaterialRecord], r
         stored.evidence = _merge_evidence(stored.evidence, record.evidence)
         if stamp not in stored.published_dates:
             stored.published_dates.append(stamp)
+        stored.raw.pop("pool_deferral", None)
         stored.quality_status = "published"
         stored.update_label = None
         library[stored.key] = stored
@@ -565,18 +589,21 @@ def cleanup_retention(config: AppConfig, today: date | None = None) -> None:
     html_keep_days = int(config.delivery.get("retention", {}).get("weekly_html_keep_days", markdown_keep_days))
     logs_keep_days = int(config.delivery.get("retention", {}).get("logs_keep_days", 7))
 
+    protected = _retained_delivery_artifacts(config)
+    from daily_agent.deferred_review_cache import protected_artifacts
+    protected.update(protected_artifacts(config))
     selected_cutoff = today - timedelta(days=selected_keep_weeks * 7)
-    _delete_old_files(config.selected_dir.glob("selected-*.json"), selected_cutoff)
-    _delete_old_files(config.selected_dir.glob("selected-*.bib"), selected_cutoff)
-    _delete_old_files(config.selected_dir.glob("selected-*.ris"), selected_cutoff)
-    _delete_old_files(config.selected_dir.glob("selected-*.csv"), selected_cutoff)
-    _delete_old_files(config.selected_dir.glob("selected-*.xml"), selected_cutoff)
+    _delete_old_files(config.selected_dir.glob("selected-*.json"), selected_cutoff, protected)
+    _delete_old_files(config.selected_dir.glob("selected-*.bib"), selected_cutoff, protected)
+    _delete_old_files(config.selected_dir.glob("selected-*.ris"), selected_cutoff, protected)
+    _delete_old_files(config.selected_dir.glob("selected-*.csv"), selected_cutoff, protected)
+    _delete_old_files(config.selected_dir.glob("selected-*.xml"), selected_cutoff, protected)
     pdf_cache_dir = config.root / str((config.sources.get("pdf_cache", {}) or {}).get("output_dir") or "data/pdfs")
-    _delete_old_date_dirs(pdf_cache_dir.glob("????-??-??"), selected_cutoff)
+    _delete_old_date_dirs(pdf_cache_dir.glob("????-??-??"), selected_cutoff, protected)
     markdown_cutoff = today - timedelta(days=markdown_keep_days + 7)
-    _delete_old_files(config.reports_dir.glob("daily-agent-*.md"), markdown_cutoff)
+    _delete_old_files(config.reports_dir.glob("daily-agent-*.md"), markdown_cutoff, protected)
     html_cutoff = today - timedelta(days=html_keep_days + 7)
-    _delete_old_files(config.reports_dir.glob("daily-agent-*.html"), html_cutoff)
+    _delete_old_files(config.reports_dir.glob("daily-agent-*.html"), html_cutoff, protected)
     logs_cutoff = today - timedelta(days=logs_keep_days)
     _delete_old_files(config.logs_dir.glob("*.log"), logs_cutoff)
 
@@ -877,8 +904,44 @@ def _write_history_index(config: AppConfig, records: Iterable[SelectedRecord], t
     atomic_json(_history_index_path(config), payload)
 
 
-def _delete_old_files(paths: Iterable[Path], cutoff: date) -> None:
+def _retained_delivery_artifacts(config: AppConfig) -> set[Path]:
+    """Retained seals own their assets until their manifests are explicitly retired.
+
+    Fail closed on corrupt delivery evidence before deleting anything. Scan both
+    legacy ready records and cloud outboxes; never follow a reference outside root.
+    """
+    protected: set[Path] = set()
+    root = config.root.resolve()
+    path_fields = {"report", "path", "source_pdf_path", "local_pdf_path", "local_pdf_relative_path",
+                   "image_path", "asset_path", "artifact_path"}
+
+    def collect(value):
+        if isinstance(value, dict):
+            for key, item in value.items():
+                if key in path_fields and isinstance(item, str) and not re.match(r"^[a-z]+://", item):
+                    path = Path(item)
+                    path = (path if path.is_absolute() else root / path).resolve()
+                    if path.is_relative_to(root):
+                        protected.add(path)
+                collect(item)
+        elif isinstance(value, list):
+            for item in value:
+                collect(item)
+
+    for directory in (config.state_dir / "ready-reports", config.state_dir / "chatgpt-outbox",
+                      config.state_dir / "cloud-delivery"):
+        for manifest in directory.glob("*.json"):
+            value = read_json(manifest)
+            if not isinstance(value, dict):
+                raise StateCorrupt(f"Invalid retained delivery record: {manifest}")
+            collect(value)
+    return protected
+
+
+def _delete_old_files(paths: Iterable[Path], cutoff: date, protected: set[Path] | None = None) -> None:
     for path in paths:
+        if path.resolve() in (protected or set()):
+            continue
         try:
             mtime = datetime.fromtimestamp(path.stat().st_mtime, timezone.utc).date()
         except FileNotFoundError:
@@ -887,12 +950,12 @@ def _delete_old_files(paths: Iterable[Path], cutoff: date) -> None:
             path.unlink(missing_ok=True)
 
 
-def _delete_old_date_dirs(paths: Iterable[Path], cutoff: date) -> None:
+def _delete_old_date_dirs(paths: Iterable[Path], cutoff: date, protected: set[Path] | None = None) -> None:
     for path in paths:
         if not path.is_dir():
             continue
         dir_date = _parse_date(path.name)
-        if dir_date and dir_date < cutoff:
+        if dir_date and dir_date < cutoff and not any(p.is_relative_to(path.resolve()) for p in (protected or set())):
             shutil.rmtree(path, ignore_errors=True)
 
 

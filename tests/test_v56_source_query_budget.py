@@ -1,3 +1,4 @@
+from pathlib import Path
 from datetime import datetime, timezone
 
 import httpx
@@ -21,7 +22,7 @@ class _Client:
 
 
 def test_crossref_limits_queries_per_domain(monkeypatch):
-    config = load_config("/Users/wuzixie/Daily_Agent")
+    config = load_config(str(Path(__file__).resolve().parents[1]))
     config.sources["crossref"] = {
         "enabled": True,
         "recent_days": 7,

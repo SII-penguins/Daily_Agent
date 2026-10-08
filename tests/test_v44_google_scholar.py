@@ -1,3 +1,4 @@
+from pathlib import Path
 from datetime import date, datetime, timezone
 import time
 
@@ -28,7 +29,7 @@ class _Client:
 
 
 def test_google_scholar_serpapi_fetch_normalizes_result(monkeypatch):
-    config = load_config("/Users/wuzixie/Daily_Agent")
+    config = load_config(str(Path(__file__).resolve().parents[1]))
     config.sources["google_scholar"] = {
         "enabled": True,
         "provider": "serpapi",
@@ -103,7 +104,7 @@ def test_google_scholar_serpapi_fetch_normalizes_result(monkeypatch):
 
 
 def test_google_scholar_serpapi_enriches_cite_endpoint_links_and_formats(monkeypatch):
-    config = load_config("/Users/wuzixie/Daily_Agent")
+    config = load_config(str(Path(__file__).resolve().parents[1]))
     config.sources["google_scholar"] = {
         "enabled": True,
         "provider": "serpapi",
@@ -175,7 +176,7 @@ def test_google_scholar_serpapi_enriches_cite_endpoint_links_and_formats(monkeyp
 
 
 def test_google_scholar_cite_enrichment_stops_at_run_budget(monkeypatch):
-    config = load_config("/Users/wuzixie/Daily_Agent")
+    config = load_config(str(Path(__file__).resolve().parents[1]))
     source_config = {
         "cite_enrichment_enabled": True,
         "cite_enrichment_max_results_per_run": 10,
@@ -219,7 +220,7 @@ def test_google_scholar_cite_enrichment_stops_at_run_budget(monkeypatch):
 
 
 def test_google_scholar_cite_enrichment_reuses_persistent_cache(tmp_path, monkeypatch):
-    config = load_config("/Users/wuzixie/Daily_Agent")
+    config = load_config(str(Path(__file__).resolve().parents[1]))
     object.__setattr__(config, "root", tmp_path)
     config.sources["google_scholar"] = {
         "enabled": True,
@@ -311,7 +312,7 @@ def test_google_scholar_cite_enrichment_reuses_persistent_cache(tmp_path, monkey
 
 
 def test_google_scholar_serpapi_sorts_by_date_and_paginates(monkeypatch):
-    config = load_config("/Users/wuzixie/Daily_Agent")
+    config = load_config(str(Path(__file__).resolve().parents[1]))
     config.sources["google_scholar"] = {
         "enabled": True,
         "provider": "serpapi",
@@ -415,7 +416,7 @@ def test_google_scholar_dedup_merges_with_cross_source_doi_and_renders_link():
 
 
 def test_source_check_skips_google_scholar_without_serpapi_or_scholarly(tmp_path, monkeypatch):
-    config = load_config("/Users/wuzixie/Daily_Agent")
+    config = load_config(str(Path(__file__).resolve().parents[1]))
     object.__setattr__(config, "root", tmp_path)
     config.sources["google_scholar"] = {
         "enabled": True,
@@ -449,7 +450,7 @@ def test_source_check_skips_google_scholar_without_serpapi_or_scholarly(tmp_path
 
 
 def test_google_scholar_does_not_run_scholarly_fallback_unless_runtime_enabled(monkeypatch):
-    config = load_config("/Users/wuzixie/Daily_Agent")
+    config = load_config(str(Path(__file__).resolve().parents[1]))
     config.sources["google_scholar"] = {
         "enabled": True,
         "provider": "serpapi",
@@ -470,7 +471,7 @@ def test_google_scholar_does_not_run_scholarly_fallback_unless_runtime_enabled(m
 
 
 def test_google_scholar_can_run_scholarly_when_runtime_enabled(monkeypatch):
-    config = load_config("/Users/wuzixie/Daily_Agent")
+    config = load_config(str(Path(__file__).resolve().parents[1]))
     config.sources["google_scholar"] = {
         "enabled": True,
         "provider": "serpapi",
@@ -488,7 +489,7 @@ def test_google_scholar_can_run_scholarly_when_runtime_enabled(monkeypatch):
 
 
 def test_google_scholar_scholarly_runtime_budget_returns_empty_when_fallback_hangs(monkeypatch):
-    config = load_config("/Users/wuzixie/Daily_Agent")
+    config = load_config(str(Path(__file__).resolve().parents[1]))
     config.sources["google_scholar"] = {
         "enabled": True,
         "provider": "serpapi",
@@ -515,7 +516,7 @@ def test_google_scholar_scholarly_runtime_budget_returns_empty_when_fallback_han
 
 
 def test_google_scholar_can_run_scholarly_when_supervised_env_override_is_enabled(monkeypatch):
-    config = load_config("/Users/wuzixie/Daily_Agent")
+    config = load_config(str(Path(__file__).resolve().parents[1]))
     config.sources["google_scholar"] = {
         "enabled": True,
         "provider": "serpapi",
@@ -534,7 +535,7 @@ def test_google_scholar_can_run_scholarly_when_supervised_env_override_is_enable
 
 
 def test_pipeline_fetches_google_scholar_and_records_health(tmp_path, monkeypatch):
-    config = load_config("/Users/wuzixie/Daily_Agent")
+    config = load_config(str(Path(__file__).resolve().parents[1]))
     object.__setattr__(config, "root", tmp_path)
     config.quota["max_items"] = 1
     config.quota["paper_target"] = 1

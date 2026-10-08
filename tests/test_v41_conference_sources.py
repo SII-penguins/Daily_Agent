@@ -1,3 +1,4 @@
+from pathlib import Path
 from datetime import date, datetime, timezone
 
 import httpx
@@ -28,7 +29,7 @@ class _Client:
 
 
 def test_openreview_fetch_normalizes_iclr_note(monkeypatch):
-    config = load_config("/Users/wuzixie/Daily_Agent")
+    config = load_config(str(Path(__file__).resolve().parents[1]))
     config.sources["openreview"] = {
         "enabled": True,
         "max_results_per_venue": 2,
@@ -71,7 +72,7 @@ def test_openreview_fetch_normalizes_iclr_note(monkeypatch):
 
 
 def test_pmlr_fetch_normalizes_icml_volume(monkeypatch):
-    config = load_config("/Users/wuzixie/Daily_Agent")
+    config = load_config(str(Path(__file__).resolve().parents[1]))
     config.sources["pmlr"] = {"enabled": True, "volumes": [{"venue": "ICML 2025", "url": "https://proceedings.mlr.press/v267/"}]}
 
     html = """
@@ -100,7 +101,7 @@ def test_pmlr_fetch_normalizes_icml_volume(monkeypatch):
 
 
 def test_neurips_fetch_normalizes_proceedings_page(monkeypatch):
-    config = load_config("/Users/wuzixie/Daily_Agent")
+    config = load_config(str(Path(__file__).resolve().parents[1]))
     config.sources["neurips"] = {"enabled": True, "years": [2025], "max_results_per_year": 2}
 
     html = """
@@ -172,7 +173,7 @@ def test_conference_dedup_and_markdown_links():
 
 
 def test_pipeline_fetches_conference_sources_and_records_health(tmp_path, monkeypatch):
-    config = load_config("/Users/wuzixie/Daily_Agent")
+    config = load_config(str(Path(__file__).resolve().parents[1]))
     object.__setattr__(config, "root", tmp_path)
     config.quota["max_items"] = 1
     config.quota["paper_target"] = 1

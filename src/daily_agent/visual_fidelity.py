@@ -15,6 +15,7 @@ import time
 from daily_agent.paper_document import atomic_json, load_json, digest, build_document, attach_document, evidence_settings
 
 VERSION = 2
+PROTOCOL_SHA256 = hashlib.sha256(Path(__file__).read_bytes()).hexdigest()
 
 
 class FidelityBudgetExhausted(TimeoutError):
@@ -166,10 +167,10 @@ def repair_visuals(records, config, invoke=None):
                 image = Path(page.get('image_path') or '')
                 actual = hashlib.sha256(image.read_bytes()).hexdigest()
                 if actual != page.get('image_hash'): raise ValueError('image hash mismatch')
-                key = digest([VERSION, page['page'], actual, page['text'], evidence_settings(cfg), config.sources.get('llm_writer', {})])
+                key = digest([PROTOCOL_SHA256, VERSION, page['page'], actual, page['text'], evidence_settings(cfg), config.sources.get('llm_writer', {})])
                 path = folder / (key + '.json')
                 cached = load_json(path)
-                legacy_key = digest([VERSION, page['page'], actual, page['text'], cfg, config.sources.get('llm_writer', {})])
+                legacy_key = digest([PROTOCOL_SHA256, VERSION, page['page'], actual, page['text'], cfg, config.sources.get('llm_writer', {})])
                 if cached is None:
                     legacy = load_json(folder / (legacy_key + '.json'))
                     if isinstance(legacy, dict) and legacy.get('fingerprint') == legacy_key:

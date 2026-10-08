@@ -60,6 +60,13 @@ def _render_papers(items: list[ApprovedItem], ranks: dict[str, int], run_date: d
         rank = ranks.get(item.key)
         mode = "重点解读" if item.key in featured else "简讯"
         lines.extend([f"### {rank}. {_prefix_label(item)}{item.title}", "", f"{mode} · {_paper_time(material)}", ""])
+        from daily_agent.scientific_analysis import analysis_paragraphs, GAP
+        analysis = analysis_paragraphs(item)
+        for key, value in analysis:
+            label = {'insight': '最有价值的科学启发', 'explanation': '问题、瓶颈与必要复杂性', 'argument': '论证推进、关键证据与未解问题'}[key]
+            lines.extend([f'**{label}：**{value}', ''])
+        if not analysis:
+            lines.extend([GAP, ''])
         for paragraph in paper_paragraphs(item, item.key in featured):
             label = f"**{paragraph.label}：**" if paragraph.label else ""
             lines.extend([label + paragraph.text, ""])

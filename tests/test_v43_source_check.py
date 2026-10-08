@@ -1,3 +1,4 @@
+from pathlib import Path
 from datetime import date, datetime, timezone
 import time
 
@@ -8,7 +9,7 @@ from daily_agent.source_check import SourceCheckResult, render_source_check, run
 
 
 def test_source_check_reports_counts_failures_and_skips(tmp_path, monkeypatch):
-    config = load_config("/Users/wuzixie/Daily_Agent")
+    config = load_config(str(Path(__file__).resolve().parents[1]))
     object.__setattr__(config, "root", tmp_path)
     config.sources["openalex"] = {"enabled": True}
     config.sources["crossref"] = {"enabled": True}
@@ -48,7 +49,7 @@ def test_source_check_reports_counts_failures_and_skips(tmp_path, monkeypatch):
 
 
 def test_source_check_uses_probe_limits_instead_of_full_recall_limits(tmp_path, monkeypatch):
-    config = load_config("/Users/wuzixie/Daily_Agent")
+    config = load_config(str(Path(__file__).resolve().parents[1]))
     object.__setattr__(config, "root", tmp_path)
     config.sources["arxiv"] = {"enabled": True, "max_results_per_query": 50, "max_queries_per_domain": 6, "request_delay_seconds": 3}
     config.sources["github"] = {"enabled": True, "max_results_per_query": 50, "max_queries_per_domain": 20}
@@ -104,7 +105,7 @@ def test_source_check_uses_probe_limits_instead_of_full_recall_limits(tmp_path, 
 
 
 def test_source_check_times_out_supervised_scholar_fallback_without_blocking_other_sources(tmp_path, monkeypatch):
-    config = load_config("/Users/wuzixie/Daily_Agent")
+    config = load_config(str(Path(__file__).resolve().parents[1]))
     object.__setattr__(config, "root", tmp_path)
     config.sources["google_scholar"] = {
         "enabled": True,
@@ -151,7 +152,7 @@ def test_source_check_cli_prints_summary(tmp_path, monkeypatch, capsys):
         SourceCheckResult(key="openalex", name="OpenAlex", enabled=True, ok=True, item_count=2, samples=["A", "B"], credential_status="not required"),
         SourceCheckResult(key="ieee", name="IEEE", enabled=True, ok=True, skipped=True, item_count=0, credential_status="missing IEEE_XPLORE_API_KEY"),
     ]
-    monkeypatch.setattr("daily_agent.cli.load_config", lambda root=None: load_config("/Users/wuzixie/Daily_Agent"))
+    monkeypatch.setattr("daily_agent.cli.load_config", lambda root=None: load_config(str(Path(__file__).resolve().parents[1])))
     monkeypatch.setattr("daily_agent.cli.run_source_check", lambda config, target_dt, window_days=7, sample_limit=3: rows)
 
     assert main(["source", "check", "--root", str(tmp_path), "--date", "2026-05-27", "--window-days", "7"]) == 0

@@ -1,4 +1,5 @@
 from __future__ import annotations
+from pathlib import Path
 
 import json
 import subprocess
@@ -43,7 +44,7 @@ def _llm_repo_payload(material: MaterialRecord) -> list[dict]:
 
 
 def test_llm_writer_uses_configured_batch_size_and_timeout(monkeypatch):
-    config = load_config("/Users/wuzixie/Daily_Agent")
+    config = load_config(str(Path(__file__).resolve().parents[1]))
     config.sources["llm_writer"] = {"batch_size": 1, "timeout_seconds": 12, "run_budget_seconds": 120}
     material = _repo_material(1)
     captured: dict[str, object] = {}
@@ -64,7 +65,7 @@ def test_llm_writer_uses_configured_batch_size_and_timeout(monkeypatch):
 
 
 def test_llm_writer_stops_calling_backend_after_run_budget(monkeypatch):
-    config = load_config("/Users/wuzixie/Daily_Agent")
+    config = load_config(str(Path(__file__).resolve().parents[1]))
     config.sources["llm_writer"] = {"batch_size": 1, "timeout_seconds": 60, "run_budget_seconds": 30}
     materials = [_repo_material(1), _repo_material(2), _repo_material(3)]
     calls = {"count": 0}
@@ -89,7 +90,7 @@ def test_llm_writer_stops_calling_backend_after_run_budget(monkeypatch):
 
 
 def test_llm_writer_timeout_falls_back_to_rule_writer(monkeypatch):
-    config = load_config("/Users/wuzixie/Daily_Agent")
+    config = load_config(str(Path(__file__).resolve().parents[1]))
     config.sources["llm_writer"] = {"batch_size": 1, "timeout_seconds": 1, "run_budget_seconds": 30}
     material = _repo_material(1)
 
@@ -104,7 +105,7 @@ def test_llm_writer_timeout_falls_back_to_rule_writer(monkeypatch):
 
 
 def test_llm_writer_stops_after_first_backend_failure(monkeypatch):
-    config = load_config("/Users/wuzixie/Daily_Agent")
+    config = load_config(str(Path(__file__).resolve().parents[1]))
     config.sources["llm_writer"] = {"batch_size": 1, "timeout_seconds": 1, "run_budget_seconds": 30}
     materials = [_repo_material(1), _repo_material(2), _repo_material(3)]
     calls = {"count": 0}
@@ -122,7 +123,7 @@ def test_llm_writer_stops_after_first_backend_failure(monkeypatch):
 
 
 def test_llm_writer_supports_codex_backend_and_caps_excerpt(monkeypatch):
-    config = load_config("/Users/wuzixie/Daily_Agent")
+    config = load_config(str(Path(__file__).resolve().parents[1]))
     config.sources["llm_writer"] = {
         "provider": "codex",
         "batch_size": 1,

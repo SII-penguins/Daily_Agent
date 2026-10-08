@@ -1,3 +1,4 @@
+from pathlib import Path
 import json
 import os
 from datetime import date, datetime, timezone
@@ -136,7 +137,7 @@ def test_render_daily_html_empty_sections():
 
 
 def test_write_weekly_html_report_upserts_newest_first(tmp_path):
-    config = load_config("/Users/wuzixie/Daily_Agent")
+    config = load_config(str(Path(__file__).resolve().parents[1]))
     object.__setattr__(config, "root", tmp_path)
 
     first = write_weekly_html_report(config, date(2026, 5, 18), "<h1>first</h1>")
@@ -152,7 +153,7 @@ def test_write_weekly_html_report_upserts_newest_first(tmp_path):
 
 
 def test_cleanup_retention_removes_old_html_reports(tmp_path):
-    config = load_config("/Users/wuzixie/Daily_Agent")
+    config = load_config(str(Path(__file__).resolve().parents[1]))
     object.__setattr__(config, "root", tmp_path)
     config.delivery["retention"]["weekly_html_keep_days"] = 1
     old = config.reports_dir / "daily-agent-2025-W01.html"
@@ -167,7 +168,7 @@ def test_cleanup_retention_removes_old_html_reports(tmp_path):
 
 
 def test_pipeline_writes_html_and_health_tracks_it(tmp_path, monkeypatch):
-    config = load_config("/Users/wuzixie/Daily_Agent")
+    config = load_config(str(Path(__file__).resolve().parents[1]))
     object.__setattr__(config, "root", tmp_path)
     material = MaterialRecord(
         key="github:owner/repo",
@@ -197,7 +198,7 @@ def test_pipeline_writes_html_and_health_tracks_it(tmp_path, monkeypatch):
 
 
 def test_cli_prints_html_report_path(tmp_path, monkeypatch, capsys):
-    config = load_config("/Users/wuzixie/Daily_Agent")
+    config = load_config(str(Path(__file__).resolve().parents[1]))
     object.__setattr__(config, "root", tmp_path)
     material = MaterialRecord(key="github:owner/repo", source="github", item_type="repo", title="owner/repo", url="https://github.com/owner/repo", repo_description="Agent toolkit", score=99)
     write_material_library(config, {material.key: material})

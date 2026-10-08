@@ -1,3 +1,4 @@
+from pathlib import Path
 from datetime import date
 
 import httpx
@@ -29,7 +30,7 @@ def test_oa_resolver_adds_openalex_pdf_and_evidence(tmp_path, monkeypatch):
     from daily_agent.connectors import oa_resolver
     from daily_agent.connectors.oa_resolver import enrich_open_access_links
 
-    config = load_config("/Users/wuzixie/Daily_Agent")
+    config = load_config(str(Path(__file__).resolve().parents[1]))
     object.__setattr__(config, "root", tmp_path)
     config.sources["oa_resolver"] = {"enabled": True, "max_papers_per_run": 5, "timeout_seconds": 30}
     material = MaterialRecord(
@@ -77,7 +78,7 @@ def test_oa_resolver_adds_landing_page_for_html_fulltext_fallback(tmp_path, monk
     from daily_agent.connectors.oa_resolver import enrich_open_access_links
     from daily_agent.connectors.paper_text import _candidate_html_urls
 
-    config = load_config("/Users/wuzixie/Daily_Agent")
+    config = load_config(str(Path(__file__).resolve().parents[1]))
     object.__setattr__(config, "root", tmp_path)
     config.sources["oa_resolver"] = {"enabled": True, "max_papers_per_run": 5, "timeout_seconds": 30}
     material = MaterialRecord(
@@ -114,7 +115,7 @@ def test_oa_resolver_adds_landing_page_for_html_fulltext_fallback(tmp_path, monk
 def test_pipeline_resolves_oa_links_before_fulltext_enrichment(tmp_path, monkeypatch):
     from daily_agent import pipeline
 
-    config = load_config("/Users/wuzixie/Daily_Agent")
+    config = load_config(str(Path(__file__).resolve().parents[1]))
     object.__setattr__(config, "root", tmp_path)
     material = MaterialRecord(
         key="doi:10.1234/pipeline-oa",
@@ -190,7 +191,7 @@ def test_pipeline_resolves_oa_links_before_fulltext_enrichment(tmp_path, monkeyp
 def test_quality_check_requires_oa_resolver_full_profile(tmp_path):
     from daily_agent.quality import run_quality_check
 
-    config = load_config("/Users/wuzixie/Daily_Agent")
+    config = load_config(str(Path(__file__).resolve().parents[1]))
     object.__setattr__(config, "root", tmp_path)
     config.sources["oa_resolver"] = {
         "enabled": False,

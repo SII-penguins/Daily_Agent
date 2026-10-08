@@ -1,3 +1,4 @@
+from pathlib import Path
 from datetime import date
 import json
 from shlex import quote
@@ -10,7 +11,7 @@ from daily_agent.scheduling import ScheduleStageResult, build_schedule_jobs, bui
 
 
 def test_build_schedule_jobs_uses_delivery_schedule_times(tmp_path):
-    config = load_config("/Users/wuzixie/Daily_Agent")
+    config = load_config(str(Path(__file__).resolve().parents[1]))
     object.__setattr__(config, "root", tmp_path)
     config.delivery["schedule"]["production_time"] = "03:17"
     config.delivery["schedule"]["review_time"] = "07:21"
@@ -27,7 +28,7 @@ def test_build_schedule_jobs_uses_delivery_schedule_times(tmp_path):
 
 
 def test_cc_connect_preview_does_not_install_schedule(tmp_path):
-    config = load_config("/Users/wuzixie/Daily_Agent")
+    config = load_config(str(Path(__file__).resolve().parents[1]))
     object.__setattr__(config, "root", tmp_path)
 
     preview = build_schedule_preview(config, backend="cc-connect")
@@ -44,7 +45,7 @@ def test_cc_connect_preview_does_not_install_schedule(tmp_path):
 
 
 def test_launchd_preview_contains_plist_without_bootstrap(tmp_path):
-    config = load_config("/Users/wuzixie/Daily_Agent")
+    config = load_config(str(Path(__file__).resolve().parents[1]))
     object.__setattr__(config, "root", tmp_path)
 
     preview = build_schedule_preview(config, backend="launchd")
@@ -73,7 +74,7 @@ def test_schedule_preview_cli_prints_preview(tmp_path, capsys):
 
 
 def test_schedule_preview_rejects_bad_time(tmp_path, capsys):
-    config = load_config("/Users/wuzixie/Daily_Agent")
+    config = load_config(str(Path(__file__).resolve().parents[1]))
     object.__setattr__(config, "root", tmp_path)
     config.delivery["schedule"]["production_time"] = "25:00"
 

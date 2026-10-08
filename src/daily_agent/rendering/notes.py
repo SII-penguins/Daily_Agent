@@ -5,6 +5,7 @@ from pathlib import Path
 import hashlib
 import shutil
 from daily_agent.paper_document import digest
+from daily_agent.paper_visual_assets import prepare_report_visuals, visual_assets_html, visual_assets_markdown
 from daily_agent.source_screenshots import prepare_screenshots, screenshot_html, screenshot_markdown
 
 LABELS = {'problem':'解决问题','method':'方法','why_it_works':'为什么有效','novelty_or_difference':'新意/差异',
@@ -111,7 +112,10 @@ def write_reading_notes(config, items, run_date, dry_run=False):
     folder = config.reports_dir / 'notes' / (run_date.isoformat()+('-dry-run' if dry_run else ''))
     for item in items:
         if item.item_type != 'paper': continue
-        prepare_screenshots(item.material, config.reports_dir, config.sources.get('report_writing', {}))
+        visual_cfg = config.sources.get('report_writing', {})
+        prepare_report_visuals(item.material, config.reports_dir, visual_cfg, root=config.root)
+        if not item.material.reading.get('paper_visual_assets'):
+            prepare_screenshots(item.material, config.reports_dir, visual_cfg)
         folder.mkdir(parents=True,exist_ok=True)
         name = digest([item.key,item.material.paper_document.get('content_hash')])[:20]
         relative = f'notes/{folder.name}/{name}'
@@ -121,6 +125,13 @@ def write_reading_notes(config, items, run_date, dry_run=False):
         lines = [f'# {item.title}', '', f'阅读状态：{reading_label(material)}', '',
                  f'置信度：{item.final_fields.get("confidence","low")}', '', f'证据缺口：{gaps(material)}', '',
                  f'原文：{material.url}', '', '## 完整阅读笔记', '']
+        from daily_agent.scientific_analysis import analysis_paragraphs, GAP
+        analysis = analysis_paragraphs(item)
+        lines.extend(['## 科学问题与论证深读', ''])
+        for key, value in analysis:
+            label = {'insight': '最有价值的科学启发', 'explanation': '问题、瓶颈与必要复杂性', 'argument': '论证推进、关键证据与未解问题'}[key]
+            lines.extend([f'### {label}', '', value, ''])
+        if not analysis: lines.extend([GAP, ''])
         for key,label in LABELS.items():
             value = item.final_fields.get(key,'not_stated')
             if isinstance(value,list): value='；'.join(value)
@@ -164,7 +175,10 @@ def write_reading_notes(config, items, run_date, dry_run=False):
                           note['summary'] if note else '未完成阅读', ''])
             if note:
                 lines.extend(['> '+q.replace('\n','\n> ') for q in note['quotes']]); lines.append('')
-        screenshots = screenshot_markdown(material, prefix='../../')
+        selected_visuals = visual_assets_markdown(material, prefix='../../')
+        if selected_visuals:
+            lines.extend(['## 原论文精选图表与核心公式', '', selected_visuals, ''])
+        screenshots = '' if material.reading.get('paper_visual_assets') else screenshot_markdown(material, prefix='../../')
         if screenshots:
             lines.extend(['## 原文图表与公式（完整原页）', '', screenshots, ''])
         markdown='\n'.join(lines)
@@ -172,7 +186,9 @@ def write_reading_notes(config, items, run_date, dry_run=False):
         # Escape all source/model text; preserve the same information as Markdown.
         blocks = []
         for line in lines:
-            if screenshots and line == screenshots:
+            if selected_visuals and line == selected_visuals:
+                blocks.append(visual_assets_html(material))
+            elif screenshots and line == screenshots:
                 blocks.append(screenshot_html(material))
             elif line in page_links:
                 label, href = page_links[line]

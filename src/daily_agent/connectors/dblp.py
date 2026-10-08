@@ -8,6 +8,7 @@ import httpx
 from daily_agent.config import AppConfig, DomainConfig
 from daily_agent.connectors.queries import scholarly_queries
 from daily_agent.models import DigestItem
+from daily_agent.connectors.source_failures import failure_record, finish_collection
 
 DBLP_PUBLICATION_SEARCH_URL = "https://dblp.org/search/publ/api"
 
@@ -22,6 +23,8 @@ def fetch_dblp(config: AppConfig, target_date: datetime | None = None, window_da
     timeout = float(source_config.get("timeout_seconds", 30))
     max_queries_per_domain = int(source_config.get("max_queries_per_domain", 0) or 0)
     items: list[DigestItem] = []
+    failures, errors = [], []
+    successful_requests = 0
     seen_queries: set[str] = set()
     with httpx.Client(timeout=timeout, follow_redirects=True, headers={"User-Agent": "Daily-Agent/0.1"}) as client:
         for domain in config.domains:
@@ -36,15 +39,19 @@ def fetch_dblp(config: AppConfig, target_date: datetime | None = None, window_da
                     response = client.get(DBLP_PUBLICATION_SEARCH_URL, params={"q": query, "format": "json", "h": max_results, "f": 0})
                     response.raise_for_status()
                     payload = response.json()
-                except (httpx.HTTPError, ValueError):
-                    # DBLP occasionally returns an HTML gateway page with 200;
-                    # skip that query and keep the remaining domains usable.
+                    if not isinstance(payload, dict): raise ValueError("Expected source JSON object")
+                    successful_requests += 1
+                except (httpx.HTTPError, ValueError) as exc:
+                    errors.append(exc)
+                    failures.append(failure_record(query, exc))
+                    if getattr(getattr(exc, "response", None), "status_code", None) in {401, 403, 429}:
+                        return finish_collection("DBLP", items, failures, errors, successful_requests)
                     continue
                 for hit in _hits(payload):
                     item = _hit_to_item(hit, domain)
                     if item and _year(item) >= min_year:
                         items.append(item)
-    return _dedupe(items)
+    return finish_collection("DBLP", _dedupe(items), failures, errors, successful_requests)
 
 
 def _queries(domain: DomainConfig) -> list[str]:

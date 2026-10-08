@@ -1,4 +1,5 @@
 from __future__ import annotations
+from pathlib import Path
 
 from datetime import date
 
@@ -38,7 +39,7 @@ def _good_fields(index: int = 0) -> dict:
 
 
 def test_editor_rejects_pdf_extraction_noise_fragments():
-    config = load_config("/Users/wuzixie/Daily_Agent")
+    config = load_config(str(Path(__file__).resolve().parents[1]))
     draft = EditorialDraft(
         key="doi:10.1038/example",
         item_type="paper",
@@ -60,7 +61,7 @@ def test_editor_rejects_pdf_extraction_noise_fragments():
 
 
 def test_editor_rejects_section_header_residue_in_core_fields():
-    config = load_config("/Users/wuzixie/Daily_Agent")
+    config = load_config(str(Path(__file__).resolve().parents[1]))
     draft = EditorialDraft(
         key="arxiv:2607.03283",
         item_type="paper",
@@ -82,7 +83,7 @@ def test_editor_rejects_section_header_residue_in_core_fields():
 
 
 def test_rule_writer_paraphrases_embodied_operator_novelty():
-    config = load_config("/Users/wuzixie/Daily_Agent")
+    config = load_config(str(Path(__file__).resolve().parents[1]))
     record = MaterialRecord(
         key="arxiv:2607.03283",
         source="arxiv",
@@ -111,7 +112,7 @@ def test_rule_writer_paraphrases_embodied_operator_novelty():
 
 
 def test_rule_writer_does_not_apply_embodied_operator_novelty_to_quantum_mapping():
-    config = load_config("/Users/wuzixie/Daily_Agent")
+    config = load_config(str(Path(__file__).resolve().parents[1]))
     record = MaterialRecord(
         key="arxiv:2607.02616",
         source="arxiv",
@@ -142,7 +143,7 @@ def test_rule_writer_does_not_apply_embodied_operator_novelty_to_quantum_mapping
 
 
 def test_approval_respects_max_items_even_when_more_drafts_pass():
-    config = load_config("/Users/wuzixie/Daily_Agent")
+    config = load_config(str(Path(__file__).resolve().parents[1]))
     config.quota["max_items"] = 10
     materials = [_paper_material(f"arxiv:2607.{index:05d}", score=100 - index) for index in range(12)]
     drafts = [
@@ -166,7 +167,7 @@ def test_approval_respects_max_items_even_when_more_drafts_pass():
 def test_storage_writes_standalone_daily_reports_separate_from_weekly_archive(tmp_path):
     from daily_agent.storage import write_daily_html_report, write_daily_report, write_weekly_report
 
-    config = load_config("/Users/wuzixie/Daily_Agent")
+    config = load_config(str(Path(__file__).resolve().parents[1]))
     object.__setattr__(config, "root", tmp_path)
 
     daily_path = write_daily_report(config, date(2026, 7, 9), "# Daily Agent 日报｜2026-07-09\n\nToday\n")

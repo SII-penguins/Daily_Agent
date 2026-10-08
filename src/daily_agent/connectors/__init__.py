@@ -8,6 +8,7 @@ from .github import enrich_github_update_signals, fetch_github
 from .google_scholar import fetch_google_scholar, google_scholar_skip_reason, scholarly_available
 from .ieee import fetch_ieee
 from .neurips import fetch_neurips
+from .nature import fetch_nature
 from .oa_resolver import enrich_open_access_links
 from .openalex import fetch_openalex
 from .openreview import fetch_openreview
@@ -29,6 +30,7 @@ __all__ = [
     "fetch_openreview",
     "fetch_pmlr",
     "fetch_neurips",
+    "fetch_nature",
     "google_scholar_skip_reason",
     "scholarly_available",
     "enrich_citation_contexts",

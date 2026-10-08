@@ -29,6 +29,7 @@ SOURCE_NAMES = {
     "openreview",
     "pmlr",
     "neurips",
+    "nature",
 }
 
 

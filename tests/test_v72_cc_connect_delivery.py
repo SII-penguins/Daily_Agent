@@ -47,7 +47,7 @@ def test_cc_connect_sender_targets_configured_project_and_session(tmp_path, monk
 def test_cc_connect_delivery_uses_target_from_daily_agent_config(tmp_path, monkeypatch):
     from daily_agent.delivery.feishu import deliver_weekly_report
 
-    config = load_config("/Users/wuzixie/Daily_Agent")
+    config = load_config(str(Path(__file__).resolve().parents[1]))
     config.delivery["delivery"]["cc_connect"] = {
         "enabled": True,
         "send_file": True,
@@ -127,7 +127,7 @@ def test_cli_returns_nonzero_when_external_delivery_fails(tmp_path, monkeypatch)
 def test_cc_connect_delivery_publishes_feishu_doc_and_sends_clickable_url(tmp_path, monkeypatch):
     from daily_agent.delivery.feishu import deliver_weekly_report
 
-    config = load_config("/Users/wuzixie/Daily_Agent")
+    config = load_config(str(Path(__file__).resolve().parents[1]))
     config.delivery["delivery"]["cc_connect"]["publish_feishu_doc"] = True
     report = tmp_path / "daily.md"
     report.write_text("# Daily", encoding="utf-8")
@@ -166,7 +166,7 @@ def test_cc_connect_delivery_publishes_feishu_doc_and_sends_clickable_url(tmp_pa
 def test_cc_connect_delivery_falls_back_to_markdown_attachment_when_doc_publish_fails(tmp_path, monkeypatch):
     from daily_agent.delivery.feishu import deliver_weekly_report
 
-    config = load_config("/Users/wuzixie/Daily_Agent")
+    config = load_config(str(Path(__file__).resolve().parents[1]))
     config.delivery["delivery"]["cc_connect"]["publish_feishu_doc"] = True
     report = tmp_path / "daily.md"
     report.write_text("# Daily", encoding="utf-8")

@@ -1,4 +1,5 @@
 from __future__ import annotations
+from pathlib import Path
 
 from datetime import date, datetime, timezone
 
@@ -9,7 +10,7 @@ from daily_agent.scoring.rules import score_items, select_items
 
 
 def test_topic_relevance_gate_rejects_source_tag_only_quantum_match():
-    config = load_config("/Users/wuzixie/Daily_Agent")
+    config = load_config(str(Path(__file__).resolve().parents[1]))
     weak = DigestItem(
         id="W21161329",
         source="openalex",
@@ -36,7 +37,7 @@ def test_topic_relevance_gate_rejects_source_tag_only_quantum_match():
 
 
 def test_topic_relevance_gate_keeps_quantum_compilation_paper():
-    config = load_config("/Users/wuzixie/Daily_Agent")
+    config = load_config(str(Path(__file__).resolve().parents[1]))
     strong = DigestItem(
         id="2607.03275",
         source="arxiv",
@@ -63,7 +64,7 @@ def test_topic_relevance_gate_keeps_quantum_compilation_paper():
 
 
 def test_build_shortlist_filters_polluted_library_records():
-    config = load_config("/Users/wuzixie/Daily_Agent")
+    config = load_config(str(Path(__file__).resolve().parents[1]))
     config.quota["paper_target"] = 2
     config.quota["github_target"] = 0
     config.quota["paper_review_multiplier"] = 1

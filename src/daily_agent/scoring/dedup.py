@@ -159,6 +159,8 @@ def _ensure_multisource_raw(item: DigestItem) -> None:
             "publication_types": item.raw.get("publication_types"),
             "publication_status": item.raw.get("publication_status"),
             "journal_ref": item.raw.get("journal_ref"),
+            "primary_verification": item.raw.get("primary_verification"),
+            "primary_landing_verified": item.raw.get("primary_landing_verified"),
         },
     )
 

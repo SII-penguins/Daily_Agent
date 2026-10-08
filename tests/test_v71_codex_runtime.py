@@ -1,4 +1,5 @@
 from __future__ import annotations
+from pathlib import Path
 
 import json
 
@@ -11,7 +12,7 @@ from daily_agent.models import DigestItem
 def test_legacy_item_summarizer_uses_configured_codex_runtime(monkeypatch):
     from daily_agent.scoring.llm import summarize_items
 
-    config = load_config("/Users/wuzixie/Daily_Agent")
+    config = load_config(str(Path(__file__).resolve().parents[1]))
     item = DigestItem(
         id="2607.00001",
         source="arxiv",
@@ -66,7 +67,7 @@ def test_cli_help_names_codex_as_internal_writer(capsys):
 def test_quality_check_rejects_claude_as_internal_writer(monkeypatch):
     from daily_agent.quality import run_quality_check
 
-    config = load_config("/Users/wuzixie/Daily_Agent")
+    config = load_config(str(Path(__file__).resolve().parents[1]))
     config.sources["llm_writer"] = {"provider": "claude", "command": "claude"}
     monkeypatch.setattr("daily_agent.quality._which", lambda name: f"/usr/bin/{name}")
 

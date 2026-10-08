@@ -112,7 +112,7 @@ def inspect_orphan(identity: dict, expected_root: Path | None = None) -> str:
     if expected_root is not None:
         root = re.escape(str(expected_root))
         command = current["description"]
-        if (not re.search(r"(?:^|\s)-m\s+daily_agent\.cli(?=$|\s)", command)
+        if (not re.search(r"(?:^|\s)-m\s+daily_agent\.(?:cli|cloud_workflow|cloud_pilot)(?=$|\s)", command)
                 or not re.search(rf"(?:^|\s)--root(?:=|\s+)(?:{root}|\"{root}\"|'{root}')(?=$|\s)", command)):
             raise CleanupPending("Orphan does not belong to this workflow; operator review required")
     return "verified"
@@ -157,17 +157,19 @@ def run_process(command: list[str], root: Path, timeout: float, *, on_tick=None,
             on_start(identity)
         next_heartbeat = time.monotonic()
         while True:
-            result = process.poll()
-            if result is not None:
-                return result
+            # Callbacks (including checkpoint fsync) and identity inspection can
+            # consume the remaining budget. Never turn a late exit into success.
             now = time.monotonic()
             if now >= deadline:
                 timed_out = True
                 return 124
+            result = process.poll()
+            if result is not None:
+                return result
             if on_tick and now >= next_heartbeat:
                 on_tick()
                 next_heartbeat = now + heartbeat_seconds
-            time.sleep(min(.2, max(.001, deadline - now)))
+            time.sleep(min(.2, max(.001, deadline - time.monotonic())))
     finally:
         # Also clean up on SIGTERM, Ctrl-C, callback/write failure and unexpected exceptions.
         cleanup_error = None

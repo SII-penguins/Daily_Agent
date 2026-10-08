@@ -1,4 +1,5 @@
 from __future__ import annotations
+from pathlib import Path
 
 from datetime import datetime, timezone
 
@@ -27,7 +28,7 @@ class _Client:
 def test_dblp_fetch_normalizes_publication_search_json(monkeypatch):
     from daily_agent.connectors.dblp import fetch_dblp
 
-    config = load_config("/Users/wuzixie/Daily_Agent")
+    config = load_config(str(Path(__file__).resolve().parents[1]))
     config.sources["dblp"] = {"enabled": True, "max_results_per_query": 2, "recent_years": 2}
 
     def handler(url, **kwargs):
@@ -107,7 +108,7 @@ def test_dblp_dedup_merges_by_doi_and_alias():
 
 
 def test_source_check_includes_dblp(monkeypatch, tmp_path):
-    config = load_config("/Users/wuzixie/Daily_Agent")
+    config = load_config(str(Path(__file__).resolve().parents[1]))
     object.__setattr__(config, "root", tmp_path)
     config.sources["dblp"] = {"enabled": True}
 

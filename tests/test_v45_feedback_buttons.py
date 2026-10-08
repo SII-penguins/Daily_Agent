@@ -1,3 +1,4 @@
+from pathlib import Path
 from datetime import date
 from threading import Thread
 from urllib.parse import urlencode
@@ -41,7 +42,7 @@ def _approved_paper():
 
 
 def _config(tmp_path):
-    config = load_config("/Users/wuzixie/Daily_Agent")
+    config = load_config(str(Path(__file__).resolve().parents[1]))
     object.__setattr__(config, "root", tmp_path)
     return config
 

@@ -10,6 +10,7 @@ from daily_agent.config import AppConfig, DomainConfig
 from daily_agent.connectors.publication_types import allowed_publication_types, publication_type_allowed
 from daily_agent.connectors.queries import scholarly_queries
 from daily_agent.models import DigestItem
+from daily_agent.connectors.source_failures import failure_record, finish_collection
 
 OPENALEX_WORKS_URL = "https://api.openalex.org/works"
 
@@ -25,6 +26,8 @@ def fetch_openalex(config: AppConfig, target_date: datetime | None = None, windo
     max_queries_per_domain = int(source_config.get("max_queries_per_domain", 0) or 0)
     allowed_types = allowed_publication_types(source_config)
     items: list[DigestItem] = []
+    failures, errors = [], []
+    successful_requests = 0
     seen_queries: set[str] = set()
     headers = {"User-Agent": "Daily-Agent/0.1"}
     mailto = str(source_config.get("mailto") or "").strip()
@@ -42,13 +45,20 @@ def fetch_openalex(config: AppConfig, target_date: datetime | None = None, windo
                 try:
                     response = client.get(OPENALEX_WORKS_URL, params=_params(query, target, days, max_results))
                     response.raise_for_status()
-                except httpx.HTTPError:
+                    payload = response.json()
+                    if not isinstance(payload, dict): raise ValueError("Expected source JSON object")
+                    successful_requests += 1
+                except (httpx.HTTPError, ValueError) as exc:
+                    errors.append(exc)
+                    failures.append(failure_record(query, exc))
+                    if getattr(getattr(exc, "response", None), "status_code", None) in {401, 403, 429}:
+                        return finish_collection("OpenAlex", items, failures, errors, successful_requests)
                     continue
-                for work in response.json().get("results", []) or []:
+                for work in payload.get("results", []) or []:
                     if not publication_type_allowed(work.get("type"), allowed_types):
                         continue
                     items.append(_work_to_item(work, domain))
-    return _dedupe(items)
+    return finish_collection("OpenAlex", _dedupe(items), failures, errors, successful_requests)
 
 
 def _queries(domain: DomainConfig) -> list[str]:
@@ -92,6 +102,7 @@ def _work_to_item(work: dict[str, Any], domain: DomainConfig) -> DigestItem:
         quota_group=domain.quota_group,
         raw={
             "domain": domain.name,
+            "authorships": [{"name": a.get("author", {}).get("display_name", ""), "orcid": a.get("author", {}).get("orcid"), "institutions": [i.get("display_name", "") for i in a.get("institutions", []) if i.get("display_name")]} for a in work.get("authorships", []) or []],
             "openalex_id": openalex_id,
             "venue": source.get("display_name"),
             "cited_by_count": work.get("cited_by_count"),

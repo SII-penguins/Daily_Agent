@@ -1,3 +1,4 @@
+from pathlib import Path
 from datetime import date
 import json
 
@@ -40,7 +41,7 @@ def _approved_paper(**overrides):
 def test_cache_selected_pdfs_saves_first_valid_pdf_and_records_local_links(tmp_path, monkeypatch):
     from daily_agent.connectors.pdf_cache import cache_selected_pdfs
 
-    config = load_config("/Users/wuzixie/Daily_Agent")
+    config = load_config(str(Path(__file__).resolve().parents[1]))
     object.__setattr__(config, "root", tmp_path)
     config.sources["pdf_cache"] = {
         "enabled": True,
@@ -77,7 +78,7 @@ def test_selected_json_and_reports_include_local_pdf_links(tmp_path):
     from daily_agent.models import RunStatus
     from daily_agent.storage import write_selected
 
-    config = load_config("/Users/wuzixie/Daily_Agent")
+    config = load_config(str(Path(__file__).resolve().parents[1]))
     object.__setattr__(config, "root", tmp_path)
     paper = _approved_paper()
     paper.material.raw["local_pdf_path"] = str(tmp_path / "data" / "pdfs" / "2026-05-18" / "01-paper.pdf")
@@ -96,7 +97,7 @@ def test_selected_json_and_reports_include_local_pdf_links(tmp_path):
 def test_pipeline_caches_pdfs_before_rendering_and_selected_json(tmp_path, monkeypatch):
     from daily_agent import pipeline
 
-    config = load_config("/Users/wuzixie/Daily_Agent")
+    config = load_config(str(Path(__file__).resolve().parents[1]))
     object.__setattr__(config, "root", tmp_path)
     paper = _approved_paper(title="Quantum circuit optimization PDF Paper")
 
@@ -141,7 +142,7 @@ def test_pipeline_caches_pdfs_before_rendering_and_selected_json(tmp_path, monke
 def test_cleanup_retention_removes_old_pdf_cache_directories(tmp_path):
     from daily_agent.storage import cleanup_retention
 
-    config = load_config("/Users/wuzixie/Daily_Agent")
+    config = load_config(str(Path(__file__).resolve().parents[1]))
     object.__setattr__(config, "root", tmp_path)
     config.delivery["retention"]["selected_keep_weeks"] = 1
     config.sources["pdf_cache"] = {"enabled": True, "output_dir": "data/pdfs"}

@@ -1,11 +1,7 @@
 arxiv:
   enabled: true
-  recent_days: 7
-  fallback_windows_days:
-  - 30
-  - 90
-  - 180
-  - 365
+  recent_days: 92
+  fallback_windows_days: []
   max_results_per_query: 100
   max_queries_per_domain: 8
   request_delay_seconds: 3
@@ -27,7 +23,8 @@ github:
   - rust
 llm_writer:
   provider: codex
-  command: /Users/wuzixie/bin/codex-rethink
+  # Resolve Codex from PATH; override with your own executable or wrapper if needed.
+  command: codex
   load_user_config: true
   batch_size: 2
   timeout_seconds: 600
@@ -36,10 +33,10 @@ llm_writer:
   reasoning_effort: low
 openalex:
   enabled: true
-  mailto: ""
+  mailto: ''
   rate_limit_retries: 2
   rate_limit_backoff_seconds: 2
-  recent_days: 7
+  recent_days: 92
   max_results_per_query: 100
   max_queries_per_domain: 8
   timeout_seconds: 60
@@ -50,7 +47,7 @@ openalex:
   - proceedings-article
 semantic_scholar:
   enabled: true
-  recent_days: 7
+  recent_days: 92
   max_results_per_query: 100
   max_queries_per_domain: 8
   timeout_seconds: 60
@@ -84,7 +81,7 @@ google_scholar:
 crossref:
   enabled: true
   preferred_queries_per_domain: 1
-  preferred_recent_days: 30
+  preferred_recent_days: 92
   preferred_journals:
   - name: Nature
     issn: 1476-4687
@@ -96,15 +93,13 @@ crossref:
     issn: 2041-1723
   - name: Nature Computational Science
     issn: 2662-8457
-  - name: Nature Machine Intelligence
-    issn: 2522-5839
   - name: Nature Electronics
     issn: 2520-1131
   - name: Nature Reviews Physics
     issn: 2522-5820
   - name: npj Quantum Information
     issn: 2056-6387
-  recent_days: 7
+  recent_days: 92
   max_results_per_query: 100
   max_queries_per_domain: 8
   timeout_seconds: 60
@@ -135,7 +130,7 @@ ieee:
 openreview:
   enabled: true
   accepted_only: true
-  recent_days: 30
+  recent_days: 92
   max_results_per_venue: 100
   timeout_seconds: 60
   venues:
@@ -146,10 +141,12 @@ openreview:
 pmlr:
   enabled: true
   prioritize_relevant: true
-  recent_days: 365
+  recent_days: 92
   max_results_per_volume: 100
   timeout_seconds: 60
   volumes:
+  - venue: ICML 2026
+    url: https://proceedings.mlr.press/v306/
   - venue: ICML 2025
     url: https://proceedings.mlr.press/v267/
   - venue: ICML 2024
@@ -160,14 +157,12 @@ neurips:
   - Conference
   - Datasets_and_Benchmarks_Track
   prioritize_relevant: true
-  recent_days: 365
+  recent_days: 92
   max_results_per_year: 100
   max_detail_pages_per_year: 100
   timeout_seconds: 60
   years:
-  - 2026
   - 2025
-  - 2024
 paper_text:
   ocr_enabled: true
   ocr_command: tesseract
@@ -222,7 +217,7 @@ citation_context:
   timeout_seconds: 60
 citation_discovery:
   enabled: true
-  recent_days: 30
+  recent_days: 92
   max_seed_papers: 20
   max_results_per_seed: 5
   timeout_seconds: 60
@@ -252,6 +247,11 @@ selection:
   min_topic_relevance_score: 6
   off_topic_score_penalty: -120
   debug_include_rejected: false
+  balance_quantum_directions: true
+  deferred_revisit_bonus_per_day: 0.5
+  deferred_revisit_bonus_cap: 6
+  qas_qnas_soft_target: 2
+  qas_qnas_soft_cap: 3
 reading:
   concurrent_reads: 3
   visual_enabled: true
@@ -273,6 +273,7 @@ report_writing:
   source_screenshots_enabled: true
   screenshot_scale: 2
   screenshot_preview_pages: 2
+  paper_visual_assets_enabled: true
 publication_priority:
   published_bonus: 6
   preferred_venue_bonus: 14
@@ -282,3 +283,28 @@ publication_priority:
   - \b(?:ICLR|ICML|NeurIPS|NIPS)\b
   - ^Nature(?:\s|$)
   - ^npj\s
+nature:
+  enabled: true
+  recent_days: 92
+  max_articles_per_feed: 20
+  max_detail_pages: 24
+  timeout_seconds: 15
+  feeds:
+  - name: Nature
+    url: https://www.nature.com/nature.rss
+  - name: Nature Machine Intelligence
+    url: https://www.nature.com/natmachintell.rss
+  - name: Nature Physics
+    url: https://www.nature.com/nphys.rss
+  - name: Nature Communications
+    url: https://www.nature.com/ncomms.rss
+  - name: Nature Computational Science
+    url: https://www.nature.com/natcomputsci.rss
+  - name: Nature Electronics
+    url: https://www.nature.com/natelectron.rss
+  - name: Nature Reviews Physics
+    url: https://www.nature.com/natrevphys.rss
+  - name: npj Quantum Information
+    url: https://www.nature.com/npjqi.rss
+discovery:
+  lookback_calendar_months: 3

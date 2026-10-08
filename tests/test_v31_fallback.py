@@ -1,3 +1,4 @@
+from pathlib import Path
 from datetime import date, datetime, timezone
 from urllib.parse import unquote_plus
 
@@ -30,7 +31,8 @@ def _stub_other_pipeline_sources(monkeypatch):
 
 
 def test_arxiv_fetch_uses_submitted_date_window_and_marks_historical(tmp_path, monkeypatch):
-    config = load_config("/Users/wuzixie/Daily_Agent")
+    config = load_config(str(Path(__file__).resolve().parents[1]))
+    config.sources["arxiv"]["recent_days"] = 7
     config.sources["arxiv"]["request_delay_seconds"] = 0
     captured = {}
     feed = """
@@ -71,7 +73,7 @@ def test_arxiv_fetch_uses_submitted_date_window_and_marks_historical(tmp_path, m
 
 
 def test_arxiv_fetch_retries_429_with_retry_after(tmp_path, monkeypatch):
-    config = load_config("/Users/wuzixie/Daily_Agent")
+    config = load_config(str(Path(__file__).resolve().parents[1]))
     object.__setattr__(config, "domains", [
         DomainConfig(
             name="quantum_ai",
@@ -131,7 +133,7 @@ def test_arxiv_fetch_retries_429_with_retry_after(tmp_path, monkeypatch):
 
 
 def test_github_search_uses_pushed_window(monkeypatch):
-    config = load_config("/Users/wuzixie/Daily_Agent")
+    config = load_config(str(Path(__file__).resolve().parents[1]))
     config.sources["github"]["trending_enabled"] = False
     captured = {}
 
@@ -206,12 +208,14 @@ def test_github_update_signal_enrichment_only_checks_history_matches(monkeypatch
 
 
 def test_pipeline_expands_fallback_window_when_shortlist_is_insufficient(tmp_path, monkeypatch):
-    config = load_config("/Users/wuzixie/Daily_Agent")
+    config = load_config(str(Path(__file__).resolve().parents[1]))
     object.__setattr__(config, "root", tmp_path)
     config.quota["max_items"] = 2
     config.quota["paper_target"] = 2
     config.quota["github_target"] = 0
     config.sources["selection"]["top_candidates_for_llm"] = 2
+    config.sources["discovery"] = {}  # Explicit legacy fallback policy
+    config.sources["arxiv"]["recent_days"] = 7
     config.sources["arxiv"]["fallback_windows_days"] = [30]
     calls = []
 
@@ -264,7 +268,7 @@ def test_pipeline_expands_fallback_window_when_shortlist_is_insufficient(tmp_pat
 
 
 def test_pipeline_uses_paper_review_buffer_to_keep_seven_approved_papers(tmp_path, monkeypatch):
-    config = load_config("/Users/wuzixie/Daily_Agent")
+    config = load_config(str(Path(__file__).resolve().parents[1]))
     object.__setattr__(config, "root", tmp_path)
     config.quota["max_items"] = 10
     config.quota["paper_target"] = 7
@@ -313,7 +317,7 @@ def test_pipeline_uses_paper_review_buffer_to_keep_seven_approved_papers(tmp_pat
 
 
 def test_pipeline_enriches_github_update_signals_before_history_scoring(tmp_path, monkeypatch):
-    config = load_config("/Users/wuzixie/Daily_Agent")
+    config = load_config(str(Path(__file__).resolve().parents[1]))
     object.__setattr__(config, "root", tmp_path)
     config.quota["max_items"] = 1
     config.sources["arxiv"]["fallback_windows_days"] = []
@@ -367,7 +371,7 @@ def test_pipeline_enriches_github_update_signals_before_history_scoring(tmp_path
 
 
 def test_pipeline_expansion_respects_recent_publication_suppression(tmp_path, monkeypatch):
-    config = load_config("/Users/wuzixie/Daily_Agent")
+    config = load_config(str(Path(__file__).resolve().parents[1]))
     object.__setattr__(config, "root", tmp_path)
     config.quota["max_items"] = 1
     config.sources["selection"]["top_candidates_for_llm"] = 1

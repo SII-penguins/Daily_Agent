@@ -1,4 +1,5 @@
 from __future__ import annotations
+from pathlib import Path
 
 from datetime import datetime, timezone
 
@@ -20,7 +21,7 @@ def test_github_connector_uses_configured_timeout(monkeypatch):
         def __exit__(self, exc_type, exc, tb):
             return False
 
-    config = load_config("/Users/wuzixie/Daily_Agent")
+    config = load_config(str(Path(__file__).resolve().parents[1]))
     config.sources["github"]["timeout_seconds"] = 7
 
     monkeypatch.setattr(github.httpx, "Client", FakeClient)

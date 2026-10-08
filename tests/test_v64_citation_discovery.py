@@ -1,3 +1,4 @@
+from pathlib import Path
 from datetime import date, datetime, timezone
 import json
 
@@ -47,7 +48,7 @@ def test_fetch_citation_discovery_finds_recent_openalex_citing_papers(tmp_path, 
     from daily_agent.connectors import citation_discovery
     from daily_agent.connectors.citation_discovery import fetch_citation_discovery
 
-    config = load_config("/Users/wuzixie/Daily_Agent")
+    config = load_config(str(Path(__file__).resolve().parents[1]))
     object.__setattr__(config, "root", tmp_path)
     config.sources["citation_discovery"] = {
         "enabled": True,
@@ -113,7 +114,7 @@ def test_fetch_citation_discovery_finds_recent_openalex_citing_papers(tmp_path, 
 def test_pipeline_fetches_citation_discovery_from_material_library(tmp_path, monkeypatch):
     from daily_agent import pipeline
 
-    config = load_config("/Users/wuzixie/Daily_Agent")
+    config = load_config(str(Path(__file__).resolve().parents[1]))
     object.__setattr__(config, "root", tmp_path)
     seed = _seed_record()
     citing_material = MaterialRecord(
@@ -121,6 +122,7 @@ def test_pipeline_fetches_citation_discovery_from_material_library(tmp_path, mon
         source="openalex",
         item_type="paper",
         title="Citing Quantum Compiler Agents",
+        source_updated_at="2026-07-09T00:00:00Z",
         url="https://paper.test/citing",
         doi="10.9999/citing",
         abstract="This paper studies quantum compiler agents. We propose citation-guided routing. It works by grounding discovery in prior papers. Experiments improve depth by 17%. Limitations include OpenAlex coverage.",
@@ -174,16 +176,16 @@ def test_pipeline_fetches_citation_discovery_from_material_library(tmp_path, mon
     payload = json.loads(result.selected_path.read_text(encoding="utf-8"))
     statuses = {source.name: source for source in result.status.sources}
 
-    assert "Citation Discovery/7d" in statuses
-    assert statuses["Citation Discovery/7d"].ok is True
-    assert statuses["Citation Discovery/7d"].item_count == 1
+    assert "Citation Discovery/91d" in statuses
+    assert statuses["Citation Discovery/91d"].ok is True
+    assert statuses["Citation Discovery/91d"].item_count == 1
     assert payload["selected"][0]["key"] == "doi:10.9999/citing"
 
 
 def test_quality_check_requires_citation_discovery_full_profile(tmp_path):
     from daily_agent.quality import run_quality_check
 
-    config = load_config("/Users/wuzixie/Daily_Agent")
+    config = load_config(str(Path(__file__).resolve().parents[1]))
     object.__setattr__(config, "root", tmp_path)
     config.sources["citation_discovery"] = {
         "enabled": False,
@@ -204,7 +206,7 @@ def test_quality_check_requires_citation_discovery_full_profile(tmp_path):
 def test_scoring_adds_citation_discovery_signal(tmp_path):
     from daily_agent.scoring.rules import score_items
 
-    config = load_config("/Users/wuzixie/Daily_Agent")
+    config = load_config(str(Path(__file__).resolve().parents[1]))
     object.__setattr__(config, "root", tmp_path)
     item = _seed_record().to_digest_item()
     item.id = "W-CITING"

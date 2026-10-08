@@ -1,3 +1,4 @@
+from pathlib import Path
 from datetime import datetime, timezone
 
 import httpx
@@ -21,7 +22,7 @@ class _Client:
 
 
 def test_neurips_limits_detail_page_fetches(monkeypatch):
-    config = load_config("/Users/wuzixie/Daily_Agent")
+    config = load_config(str(Path(__file__).resolve().parents[1]))
     config.sources["neurips"] = {
         "enabled": True,
         "years": [2025],
@@ -56,7 +57,7 @@ def test_neurips_limits_detail_page_fetches(monkeypatch):
 
 
 def test_neurips_track_filter_precedes_budget(monkeypatch):
-    config=load_config('/Users/wuzixie/Daily_Agent')
+    config=load_config(str(Path(__file__).resolve().parents[1]))
     config.sources['neurips']={'enabled':True,'years':[2025],'max_results_per_year':1,'allowed_tracks':['Conference']}
     def handler(url,**kwargs):
         html=('<a href="/paper_files/paper/2025/hash/a-Abstract-Creative_AI_Track.html">Quantum art</a>'

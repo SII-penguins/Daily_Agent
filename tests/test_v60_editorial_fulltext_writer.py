@@ -1,4 +1,5 @@
 from __future__ import annotations
+from pathlib import Path
 
 from daily_agent.config import load_config
 from daily_agent.editorial import approve_publication, draft_report_items, review_draft
@@ -6,7 +7,7 @@ from daily_agent.models import MaterialRecord
 
 
 def test_rule_writer_uses_fulltext_sections_for_quantum_compilation_summary():
-    config = load_config("/Users/wuzixie/Daily_Agent")
+    config = load_config(str(Path(__file__).resolve().parents[1]))
     material = MaterialRecord(
         key="arxiv:2607.03275",
         source="arxiv",
@@ -63,7 +64,7 @@ def test_rule_writer_uses_fulltext_sections_for_quantum_compilation_summary():
 
 
 def test_rule_writer_handles_real_fom_spacing_and_fragmented_limitations():
-    config = load_config("/Users/wuzixie/Daily_Agent")
+    config = load_config(str(Path(__file__).resolve().parents[1]))
     material = MaterialRecord(
         key="arxiv:2607.03275",
         source="arxiv",
@@ -113,7 +114,7 @@ def test_rule_writer_handles_real_fom_spacing_and_fragmented_limitations():
 
 
 def test_rule_writer_prefers_numeric_result_sentence_over_abstract_preamble():
-    config = load_config("/Users/wuzixie/Daily_Agent")
+    config = load_config(str(Path(__file__).resolve().parents[1]))
     material = MaterialRecord(
         key="arxiv:2607.02865",
         source="arxiv",
@@ -163,7 +164,7 @@ def test_rule_writer_prefers_numeric_result_sentence_over_abstract_preamble():
 
 
 def test_rule_writer_summarizes_quantum_compiler_pass_tuning_without_copying_result_sentence():
-    config = load_config("/Users/wuzixie/Daily_Agent")
+    config = load_config(str(Path(__file__).resolve().parents[1]))
     material = MaterialRecord(
         key="arxiv:2607.04586",
         source="arxiv",
@@ -216,7 +217,7 @@ def test_rule_writer_summarizes_quantum_compiler_pass_tuning_without_copying_res
 
 
 def test_rule_writer_does_not_misclassify_vla_world_model_as_qec():
-    config = load_config("/Users/wuzixie/Daily_Agent")
+    config = load_config(str(Path(__file__).resolve().parents[1]))
     material = MaterialRecord(
         key="arxiv:2607.02865",
         source="arxiv",
@@ -266,7 +267,7 @@ def test_rule_writer_does_not_misclassify_vla_world_model_as_qec():
 
 
 def test_rule_writer_paraphrases_qnn_negative_result():
-    config = load_config("/Users/wuzixie/Daily_Agent")
+    config = load_config(str(Path(__file__).resolve().parents[1]))
     material = MaterialRecord(
         key="arxiv:2607.04915",
         source="arxiv",
@@ -310,7 +311,7 @@ def test_rule_writer_paraphrases_qnn_negative_result():
 
 
 def test_rule_writer_uses_opine_world_evaluation_not_formula_definition():
-    config = load_config("/Users/wuzixie/Daily_Agent")
+    config = load_config(str(Path(__file__).resolve().parents[1]))
     material = MaterialRecord(
         key="arxiv:2607.01531",
         source="arxiv",
@@ -357,7 +358,7 @@ def test_rule_writer_uses_opine_world_evaluation_not_formula_definition():
 
 
 def test_rule_writer_does_not_apply_qnn_template_to_hamqasbench():
-    config = load_config("/Users/wuzixie/Daily_Agent")
+    config = load_config(str(Path(__file__).resolve().parents[1]))
     material = MaterialRecord(
         key="arxiv:2607.04845",
         source="arxiv",

@@ -1,3 +1,4 @@
+from pathlib import Path
 from datetime import date, datetime, timezone
 
 from daily_agent.config import load_config
@@ -8,7 +9,7 @@ from daily_agent.scoring.rules import score_items
 
 
 def test_top_conference_venue_adds_scoring_signal():
-    config = load_config("/Users/wuzixie/Daily_Agent")
+    config = load_config(str(Path(__file__).resolve().parents[1]))
     item = DigestItem(
         id="pmlr-v267-paper",
         source="pmlr",

@@ -1,3 +1,4 @@
+from pathlib import Path
 from datetime import date, datetime, timezone
 
 import httpx
@@ -31,7 +32,7 @@ class _Client:
 
 
 def test_openalex_fetch_normalizes_work(monkeypatch):
-    config = load_config("/Users/wuzixie/Daily_Agent")
+    config = load_config(str(Path(__file__).resolve().parents[1]))
     config.sources["openalex"] = {"enabled": True, "max_results_per_query": 2}
 
     def handler(url, **kwargs):
@@ -76,7 +77,7 @@ def test_openalex_fetch_normalizes_work(monkeypatch):
 
 
 def test_openalex_fetch_filters_publication_types(monkeypatch):
-    config = load_config("/Users/wuzixie/Daily_Agent")
+    config = load_config(str(Path(__file__).resolve().parents[1]))
     config.sources["openalex"] = {
         "enabled": True,
         "max_results_per_query": 3,
@@ -106,7 +107,7 @@ def test_openalex_fetch_filters_publication_types(monkeypatch):
 
 
 def test_semantic_scholar_fetch_normalizes_paper(monkeypatch):
-    config = load_config("/Users/wuzixie/Daily_Agent")
+    config = load_config(str(Path(__file__).resolve().parents[1]))
     config.sources["semantic_scholar"] = {"enabled": True, "max_results_per_query": 2}
 
     def handler(url, **kwargs):
@@ -148,7 +149,7 @@ def test_semantic_scholar_fetch_normalizes_paper(monkeypatch):
 
 
 def test_semantic_scholar_fetch_filters_publication_types(monkeypatch):
-    config = load_config("/Users/wuzixie/Daily_Agent")
+    config = load_config(str(Path(__file__).resolve().parents[1]))
     config.sources["semantic_scholar"] = {
         "enabled": True,
         "max_results_per_query": 3,
@@ -189,7 +190,7 @@ def test_semantic_scholar_fetch_filters_publication_types(monkeypatch):
 
 
 def test_crossref_fetch_normalizes_work(monkeypatch):
-    config = load_config("/Users/wuzixie/Daily_Agent")
+    config = load_config(str(Path(__file__).resolve().parents[1]))
     config.sources["crossref"] = {"enabled": True, "max_results_per_query": 2}
 
     def handler(url, **kwargs):
@@ -227,7 +228,7 @@ def test_crossref_fetch_normalizes_work(monkeypatch):
 
 
 def test_crossref_fetch_filters_publication_types(monkeypatch):
-    config = load_config("/Users/wuzixie/Daily_Agent")
+    config = load_config(str(Path(__file__).resolve().parents[1]))
     config.sources["crossref"] = {
         "enabled": True,
         "max_results_per_query": 3,
@@ -259,7 +260,7 @@ def test_crossref_fetch_filters_publication_types(monkeypatch):
 
 
 def test_ieee_fetch_skips_without_key(monkeypatch):
-    config = load_config("/Users/wuzixie/Daily_Agent")
+    config = load_config(str(Path(__file__).resolve().parents[1]))
     config.sources["ieee"] = {"enabled": True, "api_key_env": "IEEE_XPLORE_API_KEY"}
     monkeypatch.delenv("IEEE_XPLORE_API_KEY", raising=False)
     monkeypatch.setenv("DAILY_AGENT_DISABLE_EXTERNAL_SECRETS", "1")
@@ -268,7 +269,7 @@ def test_ieee_fetch_skips_without_key(monkeypatch):
 
 
 def test_ieee_fetch_normalizes_metadata_with_key(monkeypatch):
-    config = load_config("/Users/wuzixie/Daily_Agent")
+    config = load_config(str(Path(__file__).resolve().parents[1]))
     config.sources["ieee"] = {"enabled": True, "api_key_env": "IEEE_XPLORE_API_KEY", "max_results_per_query": 2}
     monkeypatch.setenv("IEEE_XPLORE_API_KEY", "key")
 
@@ -342,7 +343,7 @@ def test_multisource_dedup_merges_doi_aliases_and_evidence():
 
 
 def test_multisource_scoring_adds_impact_and_evidence_signal():
-    config = load_config("/Users/wuzixie/Daily_Agent")
+    config = load_config(str(Path(__file__).resolve().parents[1]))
     item = DigestItem(
         id="W123",
         source="openalex",
@@ -398,7 +399,7 @@ def test_markdown_renders_multisource_paper_links():
 
 
 def test_rule_writer_uses_multisource_evidence_when_primary_abstract_is_missing():
-    config = load_config("/Users/wuzixie/Daily_Agent")
+    config = load_config(str(Path(__file__).resolve().parents[1]))
     material = MaterialRecord(
         key="doi:10.1234/qc.1",
         source="openalex",
@@ -427,7 +428,7 @@ def test_rule_writer_uses_multisource_evidence_when_primary_abstract_is_missing(
 
 
 def test_pipeline_fetches_multisource_and_records_health(tmp_path, monkeypatch):
-    config = load_config("/Users/wuzixie/Daily_Agent")
+    config = load_config(str(Path(__file__).resolve().parents[1]))
     object.__setattr__(config, "root", tmp_path)
     monkeypatch.delenv("IEEE_XPLORE_API_KEY", raising=False)
     monkeypatch.setenv("DAILY_AGENT_DISABLE_EXTERNAL_SECRETS", "1")
@@ -475,7 +476,7 @@ def test_pipeline_fetches_multisource_and_records_health(tmp_path, monkeypatch):
     ieee_status = next(source for source in result.status.sources if source.name.startswith("IEEE/"))
     assert ieee_status.skipped
     assert ieee_status.error == "missing IEEE_XPLORE_API_KEY"
-    assert "IEEE/7d 跳过（missing IEEE_XPLORE_API_KEY）" in result.daily_markdown
+    assert "IEEE/89d 跳过（missing IEEE_XPLORE_API_KEY）" in result.daily_markdown
     assert health["current"]["summary"]["source_coverage_count"] == 1
     assert health["current"]["summary"]["approved_source_diversity"] == 1
     assert any(source["name"].startswith("IEEE/") and source["skipped"] for source in health["current"]["signals"]["sources"])

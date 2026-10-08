@@ -72,6 +72,13 @@ def _render_papers(items: list[ApprovedItem], ranks: dict[str, int], run_date: d
         lines.extend(['<article class="report-item paper">',
                       f"<h3>{rank}. {_text(_prefix_label(item))}{_text(item.title)}</h3>",
                       f'<p class="paper-meta">{mode} · {_text(_paper_time(material))}</p>'])
+        from daily_agent.scientific_analysis import analysis_paragraphs, GAP
+        analysis = analysis_paragraphs(item)
+        for key, value in analysis:
+            label = {'insight': '最有价值的科学启发', 'explanation': '问题、瓶颈与必要复杂性', 'argument': '论证推进、关键证据与未解问题'}[key]
+            lines.append(f'<p class="scientific-analysis"><strong>{_text(label)}：</strong>{_text(value)}</p>')
+        if not analysis:
+            lines.append(f'<p class="analysis-gap">{_text(GAP)}</p>')
         for paragraph in paper_paragraphs(item, item.key in featured):
             label = f"<strong>{_text(paragraph.label)}：</strong>" if paragraph.label else ""
             lines.append(f'<p class="paper-paragraph">{label}{_text(paragraph.text)}</p>')

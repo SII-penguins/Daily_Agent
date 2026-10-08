@@ -1,3 +1,4 @@
+from pathlib import Path
 import csv
 from datetime import date, datetime, timezone
 import os
@@ -33,7 +34,7 @@ def _approved_paper(**overrides):
 def test_write_bibtex_export_writes_selected_papers_only(tmp_path):
     from daily_agent.storage import write_bibtex_export
 
-    config = load_config("/Users/wuzixie/Daily_Agent")
+    config = load_config(str(Path(__file__).resolve().parents[1]))
     object.__setattr__(config, "root", tmp_path)
     paper = _approved_paper()
     repo_material = MaterialRecord(key="github:owner/repo", source="github", item_type="repo", title="owner/repo", url="https://github.com/owner/repo")
@@ -56,7 +57,7 @@ def test_write_bibtex_export_writes_selected_papers_only(tmp_path):
 def test_write_ris_export_writes_selected_papers_only(tmp_path):
     from daily_agent.storage import write_ris_export
 
-    config = load_config("/Users/wuzixie/Daily_Agent")
+    config = load_config(str(Path(__file__).resolve().parents[1]))
     object.__setattr__(config, "root", tmp_path)
     paper = _approved_paper()
     repo_material = MaterialRecord(key="github:owner/repo", source="github", item_type="repo", title="owner/repo", url="https://github.com/owner/repo")
@@ -81,7 +82,7 @@ def test_write_ris_export_writes_selected_papers_only(tmp_path):
 def test_write_endnote_xml_export_writes_selected_papers_only(tmp_path):
     from daily_agent.storage import write_endnote_xml_export
 
-    config = load_config("/Users/wuzixie/Daily_Agent")
+    config = load_config(str(Path(__file__).resolve().parents[1]))
     object.__setattr__(config, "root", tmp_path)
     paper = _approved_paper()
     repo_material = MaterialRecord(key="github:owner/repo", source="github", item_type="repo", title="owner/repo", url="https://github.com/owner/repo")
@@ -105,7 +106,7 @@ def test_write_endnote_xml_export_writes_selected_papers_only(tmp_path):
 def test_write_csv_export_writes_reading_queue_for_all_selected_items(tmp_path):
     from daily_agent.storage import write_csv_export
 
-    config = load_config("/Users/wuzixie/Daily_Agent")
+    config = load_config(str(Path(__file__).resolve().parents[1]))
     object.__setattr__(config, "root", tmp_path)
     paper = _approved_paper()
     paper.material.pdf_url = "https://paper.test/qc.pdf"
@@ -143,7 +144,7 @@ def test_write_csv_export_writes_reading_queue_for_all_selected_items(tmp_path):
 def test_pipeline_writes_bibtex_sidecar(tmp_path, monkeypatch):
     from daily_agent import pipeline
 
-    config = load_config("/Users/wuzixie/Daily_Agent")
+    config = load_config(str(Path(__file__).resolve().parents[1]))
     object.__setattr__(config, "root", tmp_path)
     paper = _approved_paper(title="Daily Agent Paper", doi="10.1234/daily.1", key="doi:10.1234/daily.1")
 
@@ -190,7 +191,7 @@ def test_pipeline_writes_bibtex_sidecar(tmp_path, monkeypatch):
 def test_cleanup_retention_removes_old_bibtex_exports(tmp_path):
     from daily_agent.storage import cleanup_retention
 
-    config = load_config("/Users/wuzixie/Daily_Agent")
+    config = load_config(str(Path(__file__).resolve().parents[1]))
     object.__setattr__(config, "root", tmp_path)
     config.delivery["retention"]["selected_keep_weeks"] = 1
     old = config.selected_dir / "selected-2026-05-01.bib"
@@ -207,7 +208,7 @@ def test_cleanup_retention_removes_old_bibtex_exports(tmp_path):
 def test_cleanup_retention_removes_old_ris_exports(tmp_path):
     from daily_agent.storage import cleanup_retention
 
-    config = load_config("/Users/wuzixie/Daily_Agent")
+    config = load_config(str(Path(__file__).resolve().parents[1]))
     object.__setattr__(config, "root", tmp_path)
     config.delivery["retention"]["selected_keep_weeks"] = 1
     old = config.selected_dir / "selected-2026-05-01.ris"
@@ -224,7 +225,7 @@ def test_cleanup_retention_removes_old_ris_exports(tmp_path):
 def test_cleanup_retention_removes_old_csv_exports(tmp_path):
     from daily_agent.storage import cleanup_retention
 
-    config = load_config("/Users/wuzixie/Daily_Agent")
+    config = load_config(str(Path(__file__).resolve().parents[1]))
     object.__setattr__(config, "root", tmp_path)
     config.delivery["retention"]["selected_keep_weeks"] = 1
     old = config.selected_dir / "selected-2026-05-01.csv"
@@ -241,7 +242,7 @@ def test_cleanup_retention_removes_old_csv_exports(tmp_path):
 def test_cleanup_retention_removes_old_endnote_xml_exports(tmp_path):
     from daily_agent.storage import cleanup_retention
 
-    config = load_config("/Users/wuzixie/Daily_Agent")
+    config = load_config(str(Path(__file__).resolve().parents[1]))
     object.__setattr__(config, "root", tmp_path)
     config.delivery["retention"]["selected_keep_weeks"] = 1
     old = config.selected_dir / "selected-2026-05-01.xml"

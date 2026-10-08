@@ -2,10 +2,14 @@
 from __future__ import annotations
 
 import json
+import hashlib
 import re
 import time
 from pathlib import Path
 from daily_agent.paper_document import digest, atomic_json, load_json, evidence_settings
+
+# Conservative stage-local invalidation; never tied to selection policy.
+PROTOCOL_SHA256 = hashlib.sha256(Path(__file__).read_bytes()).hexdigest()
 
 CORE = ('method_steps', 'possible_use_or_impact', 'problem', 'method', 'why_it_works', 'novelty_or_difference', 'key_result', 'technical_route', 'limitations')
 KINDS = {'experiment', 'simulation', 'theory', 'prediction', 'not_stated'}
@@ -60,9 +64,9 @@ def read_papers(records, config, invoke=None):
         doc = record.paper_document
         chunks = doc.get('chunks', [])
         notes, failures = [], []
-        fingerprint = digest([doc.get('identity'), doc.get('content_hash'), doc.get('schema_version'), digest(chunks), evidence_settings(cfg),
+        fingerprint = digest([PROTOCOL_SHA256, doc.get('identity'), doc.get('content_hash'), doc.get('schema_version'), digest(chunks), evidence_settings(cfg),
                               config.sources.get('llm_writer', {})])
-        legacy_fingerprint = digest([doc.get('identity'), doc.get('content_hash'), doc.get('schema_version'), digest(chunks), cfg,
+        legacy_fingerprint = digest([PROTOCOL_SHA256, doc.get('identity'), doc.get('content_hash'), doc.get('schema_version'), digest(chunks), cfg,
                                      config.sources.get('llm_writer', {})])
         folder = config.root / 'data' / 'reading' / fingerprint
         def read_chunk(index_chunk):

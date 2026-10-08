@@ -9,6 +9,7 @@ import httpx
 
 from daily_agent.config import AppConfig, DomainConfig
 from daily_agent.models import DigestItem, MaterialRecord, SelectedRecord
+from daily_agent.connectors.source_failures import failure_record, finish_collection
 from daily_agent.secrets import credential_value
 
 GITHUB_API = "https://api.github.com"
@@ -26,12 +27,26 @@ def fetch_github(config: AppConfig, target_date: datetime | None = None, window_
     max_queries_per_domain = int(source_config.get("max_queries_per_domain", 0) or 0)
     timeout_seconds = float(source_config.get("timeout_seconds", 30))
     items: list[DigestItem] = []
+    failures, errors = [], []
+    successes = 0
     with httpx.Client(timeout=timeout_seconds, follow_redirects=True, headers=_headers()) as client:
+        jobs = []
         if source_config.get("search_enabled", True):
-            items.extend(_fetch_search(client, config, target, max_results, search_window_days, max_queries_per_domain))
+            jobs.append(lambda: _fetch_search(client, config, target, max_results, search_window_days, max_queries_per_domain))
         if source_config.get("trending_enabled", True):
-            items.extend(_fetch_trending(client, config, target, max_results))
-    return items
+            jobs.append(lambda: _fetch_trending(client, config, target, max_results))
+        for job in jobs:
+            try:
+                items.extend(job())
+                successes += 1
+            except (httpx.HTTPError, ValueError, RuntimeError) as exc:
+                errors.append(exc)
+                items.extend(getattr(exc, "partial_items", []))
+                failures.extend(getattr(exc, "failures", [failure_record("GitHub discovery", exc)]))
+                successes += bool(getattr(exc, "partial_success", False))
+                if any(row.get("status_code") in {401, 403, 429} for row in failures):
+                    break
+    return finish_collection("GitHub", items, failures, errors, successes)
 
 
 def _headers() -> dict[str, str]:
@@ -51,6 +66,8 @@ def _fetch_search(
     max_queries_per_domain: int,
 ) -> list[DigestItem]:
     items: list[DigestItem] = []
+    failures, errors = [], []
+    successful_requests = 0
     seen_queries: set[str] = set()
     for domain in config.domains:
         for query in _search_queries(domain, max_queries_per_domain):
@@ -65,17 +82,20 @@ def _fetch_search(
                     params={"q": search_query, "sort": "updated", "order": "desc", "per_page": max_results},
                 )
                 response.raise_for_status()
-            except httpx.HTTPStatusError as exc:
-                if exc.response.status_code in {403, 429}:
-                    return items
+                payload = response.json()
+                if not isinstance(payload, dict): raise ValueError("Expected source JSON object")
+                successful_requests += 1
+            except (httpx.HTTPError, ValueError) as exc:
+                errors.append(exc)
+                failures.append(failure_record(search_query, exc))
+                if getattr(getattr(exc, "response", None), "status_code", None) in {401, 403, 429}:
+                    return finish_collection("GitHub search", items, failures, errors, successful_requests)
                 continue
-            except httpx.HTTPError:
-                continue
-            for repo in response.json().get("items", []):
+            for repo in payload.get("items", []):
                 item = _repo_to_item(repo, domain, "search")
                 _mark_activity_window(item, config, target)
                 items.append(item)
-    return items
+    return finish_collection("GitHub search", items, failures, errors, successful_requests)
 
 
 def _search_queries(domain: DomainConfig, max_queries: int = 0) -> list[str]:
@@ -119,31 +139,40 @@ def _fetch_trending(
     max_results: int,
 ) -> list[DigestItem]:
     items: list[DigestItem] = []
+    failures, errors = [], []
+    successful_requests = 0
     languages = config.sources.get("github", {}).get("trending_languages", [""])
     for language in languages:
         url = f"{TRENDING_URL}/{language}" if language else TRENDING_URL
         try:
             response = client.get(url, params={"since": "daily"}, headers={"User-Agent": "Daily-Agent/0.1"})
             response.raise_for_status()
-        except httpx.HTTPError:
+            successful_requests += 1
+        except httpx.HTTPError as exc:
+            errors.append(exc)
+            failures.append(failure_record(url, exc))
+            if getattr(getattr(exc, "response", None), "status_code", None) in {401, 403, 429}:
+                return finish_collection("GitHub trending", items, failures, errors, successful_requests)
             continue
         repos = _parse_trending_repos(response.text)[:max_results]
         for full_name in repos:
             try:
                 repo_response = client.get(f"{GITHUB_API}/repos/{full_name}")
-                if repo_response.status_code == 404:
-                    continue
-                if repo_response.status_code in {403, 429}:
-                    return items
                 repo_response.raise_for_status()
-            except httpx.HTTPError:
+                repo_json = repo_response.json()
+                if not isinstance(repo_json, dict): raise ValueError("Expected source JSON object")
+                successful_requests += 1
+            except (httpx.HTTPError, ValueError) as exc:
+                errors.append(exc)
+                failures.append(failure_record(f"{GITHUB_API}/repos/{full_name}", exc))
+                if getattr(getattr(exc, "response", None), "status_code", None) in {401, 403, 429}:
+                    return finish_collection("GitHub trending", items, failures, errors, successful_requests)
                 continue
-            repo_json = repo_response.json()
             domain = _best_domain_for_repo(repo_json, config.domains)
             item = _repo_to_item(repo_json, domain, "trending")
             _mark_activity_window(item, config, target)
             items.append(item)
-    return items
+    return finish_collection("GitHub trending", items, failures, errors, successful_requests)
 
 
 def _repo_to_item(repo: dict[str, Any], domain: DomainConfig, source_tag: str) -> DigestItem:

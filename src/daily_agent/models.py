@@ -4,7 +4,7 @@ from dataclasses import asdict, dataclass, field
 from datetime import datetime, timezone
 from typing import Any, Literal
 
-SourceName = Literal["arxiv", "github", "openalex", "semantic_scholar", "google_scholar", "crossref", "core", "dblp", "ieee", "openreview", "pmlr", "neurips"]
+SourceName = Literal["arxiv", "github", "openalex", "semantic_scholar", "google_scholar", "crossref", "core", "dblp", "ieee", "openreview", "pmlr", "neurips", "nature"]
 ItemType = Literal["paper", "repo"]
 UpdateLabel = Literal["version_update", "major_update"] | None
 QualityStatus = Literal["candidate", "library", "rejected", "published", "archived"]
@@ -62,6 +62,8 @@ def _evidence_from_item(item: "DigestItem") -> dict[str, Any]:
                 "publication_types": item.raw.get("publication_types"),
                 "publication_status": item.raw.get("publication_status"),
                 "journal_ref": item.raw.get("journal_ref"),
+                "primary_verification": item.raw.get("primary_verification"),
+                "primary_landing_verified": item.raw.get("primary_landing_verified"),
                 "citation_count": item.raw.get("citation_count") or item.raw.get("cited_by_count"),
             }
         }

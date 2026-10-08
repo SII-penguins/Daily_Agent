@@ -1,3 +1,4 @@
+from pathlib import Path
 import json
 from datetime import date
 
@@ -62,7 +63,7 @@ def _paths(tmp_path):
 
 
 def _health(tmp_path, approved=None, drafts=None, reviews=None, status=None, previous=None, use_llm=False):
-    config = load_config("/Users/wuzixie/Daily_Agent")
+    config = load_config(str(Path(__file__).resolve().parents[1]))
     object.__setattr__(config, "root", tmp_path)
     report, html, selected, editorial = _paths(tmp_path)
     return evaluate_run_health(
@@ -111,7 +112,7 @@ def test_health_feishu_fallback_is_sanitized(tmp_path):
 
 
 def test_health_missing_artifacts_failed_without_paths(tmp_path):
-    config = load_config("/Users/wuzixie/Daily_Agent")
+    config = load_config(str(Path(__file__).resolve().parents[1]))
     object.__setattr__(config, "root", tmp_path)
     report = tmp_path / "missing-report.md"
     html = tmp_path / "missing-report.html"
@@ -159,7 +160,7 @@ def test_health_records_quality_profile_without_local_paths(tmp_path, monkeypatc
     profile = QualityProfile(
         overall="degraded",
         checks=[
-            QualityCheck("python_runtime", "Python runtime", "full", True, "Python at /Users/wuzixie/anaconda3/bin/python3"),
+            QualityCheck("python_runtime", "Python runtime", "full", True, "Python at /Users/example/anaconda3/bin/python3"),
             QualityCheck("ieee", "IEEE Xplore", "missing", False, "missing IEEE_XPLORE_API_KEY"),
             QualityCheck("github", "GitHub", "fallback", True, "missing GITHUB_TOKEN"),
         ],
@@ -242,7 +243,7 @@ def test_health_counts_consecutive_problem_runs(tmp_path):
 
 
 def test_pipeline_dry_run_writes_health_json(tmp_path, monkeypatch):
-    config = load_config("/Users/wuzixie/Daily_Agent")
+    config = load_config(str(Path(__file__).resolve().parents[1]))
     object.__setattr__(config, "root", tmp_path)
     material = _material()
     write_material_library(config, {material.key: material})

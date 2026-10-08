@@ -1,3 +1,4 @@
+from pathlib import Path
 from datetime import date
 from types import SimpleNamespace
 
@@ -42,7 +43,7 @@ def test_feedback_event_from_dict_accepts_v1_rows():
 
 
 def test_set_feedback_event_status_marks_event(tmp_path):
-    config = load_config("/Users/wuzixie/Daily_Agent")
+    config = load_config(str(Path(__file__).resolve().parents[1]))
     object.__setattr__(config, "root", tmp_path)
     event = FeedbackEvent(
         event_id="fb_1",
@@ -63,7 +64,7 @@ def test_set_feedback_event_status_marks_event(tmp_path):
 
 
 def test_upsert_feedback_event_preserves_revoked_status(tmp_path):
-    config = load_config("/Users/wuzixie/Daily_Agent")
+    config = load_config(str(Path(__file__).resolve().parents[1]))
     object.__setattr__(config, "root", tmp_path)
     event = FeedbackEvent(
         event_id="fb_1",
@@ -87,7 +88,7 @@ def test_upsert_feedback_event_preserves_revoked_status(tmp_path):
 
 
 def test_upsert_feedback_event_deduplicates_external_id(tmp_path):
-    config = load_config("/Users/wuzixie/Daily_Agent")
+    config = load_config(str(Path(__file__).resolve().parents[1]))
     object.__setattr__(config, "root", tmp_path)
     first = FeedbackEvent(
         event_id="fb_1",
@@ -245,7 +246,7 @@ def test_run_cli_blocks_formal_external_delivery_when_quality_is_degraded(monkey
         overall="degraded",
         checks=[QualityCheck(key="ieee", name="IEEE Xplore", status="missing", ok=False, detail="missing IEEE_XPLORE_API_KEY")],
     )
-    monkeypatch.setattr("daily_agent.cli.load_config", lambda root=None: load_config("/Users/wuzixie/Daily_Agent"))
+    monkeypatch.setattr("daily_agent.cli.load_config", lambda root=None: load_config(str(Path(__file__).resolve().parents[1])))
     monkeypatch.setattr("daily_agent.cli.run_quality_check", lambda config: profile)
     monkeypatch.setattr("daily_agent.cli.run_pipeline", fake_run_pipeline)
 
@@ -270,7 +271,7 @@ def test_run_cli_require_full_blocks_degraded_dry_run(monkeypatch, capsys):
         overall="degraded",
         checks=[QualityCheck(key="core", name="CORE", status="missing", ok=False, detail="missing CORE_API_KEY")],
     )
-    monkeypatch.setattr("daily_agent.cli.load_config", lambda root=None: load_config("/Users/wuzixie/Daily_Agent"))
+    monkeypatch.setattr("daily_agent.cli.load_config", lambda root=None: load_config(str(Path(__file__).resolve().parents[1])))
     monkeypatch.setattr("daily_agent.cli.run_quality_check", lambda config: profile)
     monkeypatch.setattr("daily_agent.cli.run_pipeline", fake_run_pipeline)
 
@@ -291,7 +292,7 @@ def test_run_cli_require_full_overrides_allow_degraded(monkeypatch):
         overall="degraded",
         checks=[QualityCheck(key="ieee", name="IEEE Xplore", status="missing", ok=False, detail="missing IEEE_XPLORE_API_KEY")],
     )
-    monkeypatch.setattr("daily_agent.cli.load_config", lambda root=None: load_config("/Users/wuzixie/Daily_Agent"))
+    monkeypatch.setattr("daily_agent.cli.load_config", lambda root=None: load_config(str(Path(__file__).resolve().parents[1])))
     monkeypatch.setattr("daily_agent.cli.run_quality_check", lambda config: profile)
     monkeypatch.setattr("daily_agent.cli.run_pipeline", fake_run_pipeline)
 
@@ -324,7 +325,7 @@ def test_run_cli_allow_degraded_bypasses_formal_delivery_preflight(monkeypatch):
         overall="degraded",
         checks=[QualityCheck(key="ieee", name="IEEE Xplore", status="missing", ok=False, detail="missing IEEE_XPLORE_API_KEY")],
     )
-    monkeypatch.setattr("daily_agent.cli.load_config", lambda root=None: load_config("/Users/wuzixie/Daily_Agent"))
+    monkeypatch.setattr("daily_agent.cli.load_config", lambda root=None: load_config(str(Path(__file__).resolve().parents[1])))
     monkeypatch.setattr("daily_agent.cli.run_quality_check", lambda config: profile)
     monkeypatch.setattr("daily_agent.cli.run_pipeline", fake_run_pipeline)
 
@@ -375,7 +376,7 @@ def test_run_cli_prints_quality_blockers_from_health(monkeypatch, capsys):
 
 
 def test_feishu_disabled_falls_back_to_local(tmp_path):
-    config = load_config("/Users/wuzixie/Daily_Agent")
+    config = load_config(str(Path(__file__).resolve().parents[1]))
     object.__setattr__(config, "root", tmp_path)
     config.delivery["delivery"]["feishu"]["enabled"] = False
     config.delivery["delivery"]["feishu"]["fallback_to_cc_connect"] = False
@@ -389,7 +390,7 @@ def test_feishu_disabled_falls_back_to_local(tmp_path):
 
 
 def test_write_published_index_resolves_latest_rank(tmp_path):
-    config = load_config("/Users/wuzixie/Daily_Agent")
+    config = load_config(str(Path(__file__).resolve().parents[1]))
     object.__setattr__(config, "root", tmp_path)
     material = MaterialRecord(
         key="github:owner/repo",
@@ -418,7 +419,7 @@ def test_write_published_index_resolves_latest_rank(tmp_path):
 
 
 def test_feedback_text_creates_multiple_events(tmp_path, monkeypatch):
-    config = load_config("/Users/wuzixie/Daily_Agent")
+    config = load_config(str(Path(__file__).resolve().parents[1]))
     object.__setattr__(config, "root", tmp_path)
     monkeypatch.setattr("daily_agent.storage.date", type("FakeDate", (), {"today": staticmethod(lambda: date(2026, 5, 17))}))
     monkeypatch.setattr("daily_agent.cli.date", type("FakeDate", (), {"today": staticmethod(lambda: date(2026, 5, 17))}))
@@ -437,7 +438,7 @@ def test_feedback_text_creates_multiple_events(tmp_path, monkeypatch):
 
 
 def test_feedback_text_rejects_missing_signal(tmp_path):
-    config = load_config("/Users/wuzixie/Daily_Agent")
+    config = load_config(str(Path(__file__).resolve().parents[1]))
     object.__setattr__(config, "root", tmp_path)
     material = MaterialRecord(key="github:owner/repo", source="github", item_type="repo", title="owner/repo", url="https://github.com/owner/repo")
     approved = ApprovedItem(key=material.key, item_type="repo", title=material.title, source="github", url=material.url, final_fields={}, material=material)
@@ -450,7 +451,7 @@ def test_feedback_text_rejects_missing_signal(tmp_path):
 
 
 def test_resolve_published_item_supports_today(tmp_path, monkeypatch):
-    config = load_config("/Users/wuzixie/Daily_Agent")
+    config = load_config(str(Path(__file__).resolve().parents[1]))
     object.__setattr__(config, "root", tmp_path)
     monkeypatch.setattr("daily_agent.storage.date", type("FakeDate", (), {"today": staticmethod(lambda: date(2026, 5, 17))}))
     material = MaterialRecord(key="github:owner/repo", source="github", item_type="repo", title="owner/repo", url="https://github.com/owner/repo")
@@ -464,7 +465,7 @@ def test_resolve_published_item_supports_today(tmp_path, monkeypatch):
 
 
 def test_inactive_feedback_events_do_not_affect_scoring(tmp_path):
-    config = load_config("/Users/wuzixie/Daily_Agent")
+    config = load_config(str(Path(__file__).resolve().parents[1]))
     object.__setattr__(config, "root", tmp_path)
     event = FeedbackEvent(
         event_id="fb_test",
@@ -495,7 +496,7 @@ def test_inactive_feedback_events_do_not_affect_scoring(tmp_path):
 
 
 def test_feedback_events_affect_scoring(tmp_path):
-    config = load_config("/Users/wuzixie/Daily_Agent")
+    config = load_config(str(Path(__file__).resolve().parents[1]))
     object.__setattr__(config, "root", tmp_path)
     event = FeedbackEvent(
         event_id="fb_test",
@@ -526,7 +527,7 @@ def test_feedback_events_affect_scoring(tmp_path):
 
 
 def test_feishu_delivery_uses_docx_children_requests(tmp_path, monkeypatch):
-    config = load_config("/Users/wuzixie/Daily_Agent")
+    config = load_config(str(Path(__file__).resolve().parents[1]))
     object.__setattr__(config, "root", tmp_path)
     config.delivery["delivery"]["feishu"]["enabled"] = True
     config.delivery["delivery"]["feishu"]["fallback_to_cc_connect"] = False
@@ -566,7 +567,7 @@ def test_feishu_delivery_uses_docx_children_requests(tmp_path, monkeypatch):
 
 
 def test_feishu_rerun_deletes_previous_managed_range(tmp_path, monkeypatch):
-    config = load_config("/Users/wuzixie/Daily_Agent")
+    config = load_config(str(Path(__file__).resolve().parents[1]))
     object.__setattr__(config, "root", tmp_path)
     config.delivery["delivery"]["feishu"]["enabled"] = True
     config.delivery["delivery"]["feishu"]["fallback_to_cc_connect"] = False
@@ -624,7 +625,7 @@ def test_feishu_rerun_deletes_previous_managed_range(tmp_path, monkeypatch):
 
 
 def test_feishu_token_failure_falls_back_without_state_write(tmp_path, monkeypatch):
-    config = load_config("/Users/wuzixie/Daily_Agent")
+    config = load_config(str(Path(__file__).resolve().parents[1]))
     object.__setattr__(config, "root", tmp_path)
     config.delivery["delivery"]["feishu"]["enabled"] = True
     config.delivery["delivery"]["feishu"]["fallback_to_cc_connect"] = True
@@ -652,7 +653,7 @@ def test_feishu_token_failure_falls_back_without_state_write(tmp_path, monkeypat
 
 
 def test_feishu_block_write_failure_keeps_previous_state_and_falls_back(tmp_path, monkeypatch):
-    config = load_config("/Users/wuzixie/Daily_Agent")
+    config = load_config(str(Path(__file__).resolve().parents[1]))
     object.__setattr__(config, "root", tmp_path)
     config.delivery["delivery"]["feishu"]["enabled"] = True
     config.delivery["delivery"]["feishu"]["fallback_to_cc_connect"] = True
@@ -704,7 +705,7 @@ def test_feishu_block_write_failure_keeps_previous_state_and_falls_back(tmp_path
 
 
 def test_feishu_delete_failure_cleans_inserted_replacement_and_preserves_state(tmp_path, monkeypatch):
-    config = load_config("/Users/wuzixie/Daily_Agent")
+    config = load_config(str(Path(__file__).resolve().parents[1]))
     object.__setattr__(config, "root", tmp_path)
     config.delivery["delivery"]["feishu"]["enabled"] = True
     config.delivery["delivery"]["feishu"]["fallback_to_cc_connect"] = True
@@ -760,7 +761,7 @@ def test_feishu_delete_failure_cleans_inserted_replacement_and_preserves_state(t
 def test_feishu_feedback_sync_dry_run_parses_replies(tmp_path, monkeypatch):
     from daily_agent.feedback.feishu_comments import sync_feishu_feedback
 
-    config = load_config("/Users/wuzixie/Daily_Agent")
+    config = load_config(str(Path(__file__).resolve().parents[1]))
     object.__setattr__(config, "root", tmp_path)
     monkeypatch.setattr("daily_agent.storage.date", type("FakeDate", (), {"today": staticmethod(lambda: date(2026, 5, 17))}))
     material = MaterialRecord(key="github:owner/repo", source="github", item_type="repo", title="owner/repo", url="https://github.com/owner/repo")
@@ -804,7 +805,7 @@ def test_feishu_feedback_sync_dry_run_parses_replies(tmp_path, monkeypatch):
 def test_feishu_feedback_sync_deduplicates_inline_and_paginated_replies(tmp_path, monkeypatch):
     from daily_agent.feedback.feishu_comments import sync_feishu_feedback
 
-    config = load_config("/Users/wuzixie/Daily_Agent")
+    config = load_config(str(Path(__file__).resolve().parents[1]))
     object.__setattr__(config, "root", tmp_path)
     material = MaterialRecord(key="github:owner/repo", source="github", item_type="repo", title="owner/repo", url="https://github.com/owner/repo")
     approved = ApprovedItem(key=material.key, item_type="repo", title=material.title, source="github", url=material.url, final_fields={}, material=material)
@@ -862,7 +863,7 @@ def test_feishu_feedback_sync_deduplicates_inline_and_paginated_replies(tmp_path
 def test_feishu_feedback_sync_can_exclude_replies(tmp_path, monkeypatch):
     from daily_agent.feedback.feishu_comments import sync_feishu_feedback
 
-    config = load_config("/Users/wuzixie/Daily_Agent")
+    config = load_config(str(Path(__file__).resolve().parents[1]))
     object.__setattr__(config, "root", tmp_path)
     config.feedback["feishu_comments"]["include_replies"] = False
     material = MaterialRecord(key="github:owner/repo", source="github", item_type="repo", title="owner/repo", url="https://github.com/owner/repo")
@@ -938,7 +939,7 @@ def test_feishu_feedback_sync_handles_suggestion_response(tmp_path, monkeypatch)
 
 
 def test_feedback_profile_aggregates_active_signals(tmp_path):
-    config = load_config("/Users/wuzixie/Daily_Agent")
+    config = load_config(str(Path(__file__).resolve().parents[1]))
     object.__setattr__(config, "root", tmp_path)
     material = MaterialRecord(key="arxiv:paper", source="arxiv", item_type="paper", title="QNN Paper", url="https://arxiv.org/abs/1", tags=["qnn", "quantum_circuit"], score_breakdown={"feedback": -10.0})
     from daily_agent.storage import write_material_library
@@ -987,7 +988,7 @@ def test_feedback_profile_aggregates_active_signals(tmp_path):
 
 
 def test_feedback_profile_cli_is_read_only(tmp_path, capsys):
-    config = load_config("/Users/wuzixie/Daily_Agent")
+    config = load_config(str(Path(__file__).resolve().parents[1]))
     object.__setattr__(config, "root", tmp_path)
     append_feedback_event(
         config,
@@ -1036,7 +1037,7 @@ def _seed_profile_feedback(config):
 
 
 def test_feedback_suggest_dry_run_does_not_write_state(tmp_path, capsys):
-    config = load_config("/Users/wuzixie/Daily_Agent")
+    config = load_config(str(Path(__file__).resolve().parents[1]))
     object.__setattr__(config, "root", tmp_path)
     _seed_profile_feedback(config)
 
@@ -1050,7 +1051,7 @@ def test_feedback_suggest_dry_run_does_not_write_state(tmp_path, capsys):
 
 
 def test_feedback_suggest_generates_pending_once(tmp_path):
-    config = load_config("/Users/wuzixie/Daily_Agent")
+    config = load_config(str(Path(__file__).resolve().parents[1]))
     object.__setattr__(config, "root", tmp_path)
     _seed_profile_feedback(config)
 
@@ -1064,7 +1065,7 @@ def test_feedback_suggest_generates_pending_once(tmp_path):
 
 
 def test_feedback_reject_suggestion_prevents_regeneration(tmp_path):
-    config = load_config("/Users/wuzixie/Daily_Agent")
+    config = load_config(str(Path(__file__).resolve().parents[1]))
     object.__setattr__(config, "root", tmp_path)
     _seed_profile_feedback(config)
     main(["feedback", "suggest", "--root", str(tmp_path)])
@@ -1146,7 +1147,7 @@ def test_feedback_respond_applies_and_rejects_suggestions(tmp_path):
 
 
 def test_feedback_cleanup_dry_run_and_explain_cli(tmp_path, capsys):
-    config = load_config("/Users/wuzixie/Daily_Agent")
+    config = load_config(str(Path(__file__).resolve().parents[1]))
     object.__setattr__(config, "root", tmp_path)
     material = MaterialRecord(key="github:owner/repo", source="github", item_type="repo", title="owner/repo", url="https://github.com/owner/repo", score_breakdown={"feedback": 4.0})
     approved = ApprovedItem(key=material.key, item_type="repo", title=material.title, source="github", url=material.url, final_fields={}, material=material)
@@ -1174,7 +1175,7 @@ def test_feedback_cleanup_dry_run_and_explain_cli(tmp_path, capsys):
 
 
 def test_feedback_status_cli_commands(tmp_path):
-    config = load_config("/Users/wuzixie/Daily_Agent")
+    config = load_config(str(Path(__file__).resolve().parents[1]))
     object.__setattr__(config, "root", tmp_path)
     append_feedback_event(
         config,

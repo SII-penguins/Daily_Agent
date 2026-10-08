@@ -242,6 +242,11 @@ def enforce_full_profile(root: str | Path, write: bool = False) -> FullProfileRe
     if yaml is None:
         raise RuntimeError("PyYAML is required to enforce the full-quality profile")
     root_path = Path(root)
+    delivery_path = root_path / "config" / "delivery.yaml"
+    if write and delivery_path.exists() and yaml is not None:
+        current_delivery = yaml.safe_load(delivery_path.read_text()) or {}
+        if current_delivery.get("cloud", {}).get("profile"):
+            raise ValueError("Explicit cloud profile cannot be overwritten by full-profile enforcement; use cloud_workflow and --no-enforce-full checks")
     changes: list[str] = []
     files = [
         (root_path / "config" / "sources.yaml", "config/sources.yaml", FULL_SOURCES_PROFILE),

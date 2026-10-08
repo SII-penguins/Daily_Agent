@@ -1,3 +1,4 @@
+from pathlib import Path
 from datetime import date
 
 from daily_agent.config import load_config
@@ -24,7 +25,7 @@ def _stub_pipeline_fetchers(monkeypatch):
 
 
 def test_draft_report_items_defaults_to_llm(monkeypatch):
-    config = load_config("/Users/wuzixie/Daily_Agent")
+    config = load_config(str(Path(__file__).resolve().parents[1]))
     material = MaterialRecord(
         key="paper:test",
         source="arxiv",
@@ -58,7 +59,7 @@ def test_draft_report_items_defaults_to_llm(monkeypatch):
 def test_run_pipeline_defaults_to_llm_writer(tmp_path, monkeypatch):
     from daily_agent import pipeline
 
-    config = load_config("/Users/wuzixie/Daily_Agent")
+    config = load_config(str(Path(__file__).resolve().parents[1]))
     object.__setattr__(config, "root", tmp_path)
     seen = {}
 

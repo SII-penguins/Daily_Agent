@@ -1,3 +1,4 @@
+from pathlib import Path
 from datetime import date
 
 import httpx
@@ -30,7 +31,7 @@ def test_unpaywall_resolver_adds_pdf_and_evidence(tmp_path, monkeypatch):
     from daily_agent.connectors.paper_text import _candidate_pdf_urls
     from daily_agent.connectors.unpaywall import enrich_unpaywall_links
 
-    config = load_config("/Users/wuzixie/Daily_Agent")
+    config = load_config(str(Path(__file__).resolve().parents[1]))
     object.__setattr__(config, "root", tmp_path)
     config.sources["unpaywall"] = {
         "enabled": True,
@@ -86,7 +87,7 @@ def test_unpaywall_resolver_adds_landing_page_for_html_fulltext_fallback(tmp_pat
     from daily_agent.connectors.paper_text import _candidate_html_urls
     from daily_agent.connectors.unpaywall import enrich_unpaywall_links
 
-    config = load_config("/Users/wuzixie/Daily_Agent")
+    config = load_config(str(Path(__file__).resolve().parents[1]))
     object.__setattr__(config, "root", tmp_path)
     config.sources["unpaywall"] = {
         "enabled": True,
@@ -130,7 +131,7 @@ def test_unpaywall_resolver_reuses_persistent_cache_without_email_or_network(tmp
     from daily_agent.connectors import unpaywall
     from daily_agent.connectors.unpaywall import enrich_unpaywall_links
 
-    config = load_config("/Users/wuzixie/Daily_Agent")
+    config = load_config(str(Path(__file__).resolve().parents[1]))
     object.__setattr__(config, "root", tmp_path)
     config.sources["unpaywall"] = {
         "enabled": True,
@@ -199,7 +200,7 @@ def test_unpaywall_resolver_reuses_persistent_cache_without_email_or_network(tmp
 def test_pipeline_resolves_unpaywall_after_openalex_before_fulltext(tmp_path, monkeypatch):
     from daily_agent import pipeline
 
-    config = load_config("/Users/wuzixie/Daily_Agent")
+    config = load_config(str(Path(__file__).resolve().parents[1]))
     object.__setattr__(config, "root", tmp_path)
     material = MaterialRecord(
         key="doi:10.1234/pipeline-upw",
@@ -272,7 +273,7 @@ def test_pipeline_resolves_unpaywall_after_openalex_before_fulltext(tmp_path, mo
 def test_quality_check_requires_unpaywall_full_profile(tmp_path, monkeypatch):
     from daily_agent.quality import run_quality_check
 
-    config = load_config("/Users/wuzixie/Daily_Agent")
+    config = load_config(str(Path(__file__).resolve().parents[1]))
     object.__setattr__(config, "root", tmp_path)
     config.sources["unpaywall"] = {
         "enabled": False,
