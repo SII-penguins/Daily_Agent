@@ -21,6 +21,54 @@ def test_numbers_preserve_quantities_across_standard_thousands_separators():
     assert not numbers('1001 QPUs') <= numbers('1,000 QPUs')
 
 
+def test_numbers_parse_latex_mean_sd_and_explicit_percentage_points():
+    from daily_agent.reading import numbers
+    quote = r'Accuracy $91.25\pm0.74\%$; F1 $91.24\pm0.74\%$; baseline $87.55\pm2.38\%$.'
+    assert numbers(quote) == {'91.25', '91.25%', '91.24', '91.24%',
+                              '0.74%', '87.55', '87.55%', '2.38%'}
+    assert numbers(r'$91.25 \pm {0.74} \%$') == numbers('91.25 ± 0.74％')
+    assert numbers('准确率91.25% vs 87.55%') <= numbers(quote)
+    assert numbers('差3.70个百分点') == numbers(r'Improvement of 3.70\%')
+    assert not numbers('差3.70个百分点') <= numbers(quote)  # no inferred arithmetic
+    assert not numbers('3.70') <= numbers('3.70%')  # no general unit stripping
+    assert not numbers('91.26%') <= numbers(quote)
+    assert not numbers('0.75%') <= numbers(quote)
+    assert not numbers('74% or 38% or 74 or 38') & numbers(quote)
+    assert not numbers(r'x0.74 or \unknown0.74')  # no decimal fragments
+    assert numbers(r'1\pm2') == {'1', '2'}  # no digit concatenation
+    assert numbers('1{2}') == {'1', '2'}  # braces cannot concatenate digits
+    assert not numbers('91.25%') <= numbers('91.25')  # unitless is not percent
+
+
+def test_latex_numbers_do_not_bypass_draft_evidence_checks():
+    r = paper()
+    quote = r'Accuracy $91.25\pm0.74\%$, baseline $87.55\pm2.38\%$, improvement 3.70\%.'
+    r.paper_document = {'chunks': [{'id': 'c1', 'text': quote}]}
+    r.reading = {'read_chunk_ids': ['c1']}
+    r.paper_text_status = {'sufficient_for_deep_summary': True}
+    def make(value, cited=quote):
+        fields = {'problem': '研究问题', 'method': '研究方法', 'key_result': value, 'confidence': 'medium'}
+        claims = [{'field': f, 'chunk_id': 'c1', 'quote': cited,
+                   'conditions': 'five seeds; baseline', 'evidence_kind': 'simulation'}
+                  for f in ('problem', 'method', 'key_result')]
+        return EditorialDraft(r.key, 'paper', r.title, fields, claim_evidence=claims)
+    d = make('准确率91.25% vs 87.55%，差3.70个百分点')
+    verify_draft(d, r)
+    assert d.verification['status'] == 'located'
+    assert d.verification['semantic_support'] == 'not_independently_verified'
+    for value in ('准确率91.26%', '标准差74%', '差3.71个百分点'):
+        d = make(value)
+        verify_draft(d, r)
+        assert d.draft_fields['key_result'] == 'not_stated'
+    d = make('准确率99%', quote.replace('91.25', '99'))
+    verify_draft(d, r)
+    assert d.draft_fields['key_result'] == 'not_stated'  # fabricated quote
+    d = make('准确率91.25%')
+    d.claim_evidence[-1]['conditions'] = 'not_stated'
+    verify_draft(d, r)
+    assert d.draft_fields['key_result'] == 'not_stated'
+
+
 def config(tmp_path):
     cfg=load_config(Path(__file__).resolve().parents[1]); object.__setattr__(cfg,'root',tmp_path)
     cfg.sources['reading']={'run_budget_seconds':60,'max_chunks_per_paper':80}

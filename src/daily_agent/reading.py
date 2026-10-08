@@ -47,11 +47,27 @@ def compact(value: str) -> str:
 
 
 def numbers(value: str) -> set[str]:
+    # Normalize only known numeric typography, never arbitrary TeX commands:
+    # deleting a command could concatenate unrelated digits or hide a number.
+    value = re.sub(r'\\pm(?![a-zA-Z])', '±', value)
+    value = value.replace(r'\%', '%').replace('％', '%')
+    value = re.sub(r'\{\s*(\d+(?:\.\d+)?)\s*\}', r' \1 ', value)
+    value = re.sub(r'(\d)\s*(?:%|个百分点)', r'\1%', value)
     # A standard thousands separator is typography, not a changed quantity.
     # Do not collapse arbitrary comma-separated lists (e.g. 1,2 or 12,34).
     value = re.sub(r'(?<![\d.,])\d{1,3}(?:,\d{3})+(?:\.\d+)?(?![\d,])',
                    lambda match: match.group().replace(',', ''), value)
-    return set(re.findall(r'(?<![a-zA-Z])\d+(?:\.\d+)?(?:%|％)?', value.replace(' %','%').replace('％','%')))
+    # Do not resume inside an identifier's decimal (e.g. x0.74 -> 74).
+    numeric = r'(?<![a-zA-Z\d.])\d+(?:\.\d+)?%?'
+    result = set(re.findall(numeric, value))
+    # In 91.25±0.74%, the final percent applies to both terms. Retain the
+    # literal bare mean for prose with a separately stated unit; add only its
+    # explicitly shared unit, not bare aliases for arbitrary percentages.
+    for match in re.finditer(r'(?<![a-zA-Z\d.])(\d+(?:\.\d+)?)\s*±\s*\d+(?:\.\d+)?%', value):
+        result.add(match.group(1) + '%')
+    # This is lexical support only. No differences/ratios are inferred; the
+    # independent semantic review still checks units, baselines and meaning.
+    return result
 
 
 def read_papers(records, config, invoke=None):
