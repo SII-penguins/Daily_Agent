@@ -260,3 +260,17 @@ def test_pipeline_dry_run_writes_health_json(tmp_path, monkeypatch):
     assert str(tmp_path) not in payload
     assert "/Users/" not in payload
     assert "反馈" not in payload
+
+
+def test_full_reading_count_excludes_abstracts_and_partial_documents(tmp_path):
+    items = []
+    for kind, complete in [('full_text', True), ('abstract_only', True),
+                           ('partial_text', True), ('full_text', False)]:
+        item = _approved(f'paper:{len(items)}')
+        item.item_type = item.material.item_type = 'paper'
+        item.material.paper_document = {'document_kind': kind}
+        item.material.reading = {'complete': complete}
+        items.append(item)
+    summary = _health(tmp_path, approved=items)['current']['summary']
+    assert summary['paper_chunks_read_complete_count'] == 3
+    assert summary['paper_reading_complete_count'] == 1

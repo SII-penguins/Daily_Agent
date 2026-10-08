@@ -5,10 +5,37 @@ import json
 import re
 import time
 from pathlib import Path
-from daily_agent.paper_document import digest, atomic_json, load_json
+from daily_agent.paper_document import digest, atomic_json, load_json, evidence_settings
 
 CORE = ('method_steps', 'possible_use_or_impact', 'problem', 'method', 'why_it_works', 'novelty_or_difference', 'key_result', 'technical_route', 'limitations')
 KINDS = {'experiment', 'simulation', 'theory', 'prediction', 'not_stated'}
+
+
+def audit_reading(rows):
+    """Shared acceptance contract for both offline audit and live validation."""
+    papers = []
+    for row in rows:
+        r = row.get('material', row)
+        if r.get('item_type') != 'paper':
+            continue
+        doc, reading = r.get('paper_document', {}), r.get('reading', {})
+        verification = reading.get('verification', {})
+        required = sum(bool(p.get('visual_required')) for p in doc.get('pages', []))
+        visual = reading.get('visual', {})
+        text = doc.get('document_kind') == 'full_text' and reading.get('complete') is True
+        fidelity = (not required and doc.get('source_type') != 'pdf') or (
+            visual.get('strict_fidelity') is True and visual.get('fidelity', {}).get('passed') is True)
+        claims = verification.get('status') == 'located' and verification.get('semantic_support') == 'model_checked'
+        papers.append({'key':r['key'], 'title':r['title'], 'document_kind':doc.get('document_kind'),
+                       'extracted_chunks_read':reading.get('complete') is True,
+                       'full_text_read':bool(text), 'required_visual_pages':required,
+                       'visual_fidelity_passed':bool(fidelity), 'claims_passed':claims,
+                       'quality_passed':bool(text and fidelity and claims),
+                       'issues':verification.get('issues', [])})
+    return {'papers':papers, 'paper_count':len(papers),
+            'full_text_read_count':sum(p['full_text_read'] for p in papers),
+            'quality_passed_count':sum(p['quality_passed'] for p in papers),
+            'all_passed':bool(papers) and all(p['quality_passed'] for p in papers)}
 
 
 def compact(value: str) -> str:
@@ -33,13 +60,20 @@ def read_papers(records, config, invoke=None):
         doc = record.paper_document
         chunks = doc.get('chunks', [])
         notes, failures = [], []
-        fingerprint = digest([doc.get('identity'), doc.get('content_hash'), doc.get('schema_version'), digest(chunks), cfg,
+        fingerprint = digest([doc.get('identity'), doc.get('content_hash'), doc.get('schema_version'), digest(chunks), evidence_settings(cfg),
                               config.sources.get('llm_writer', {})])
+        legacy_fingerprint = digest([doc.get('identity'), doc.get('content_hash'), doc.get('schema_version'), digest(chunks), cfg,
+                                     config.sources.get('llm_writer', {})])
         folder = config.root / 'data' / 'reading' / fingerprint
         def read_chunk(index_chunk):
             index, chunk = index_chunk
             cache = folder / (chunk['id']+'.json')
             note = load_json(cache)
+            if not valid_note(note, chunk, cfg):
+                legacy = load_json(config.root / 'data' / 'reading' / legacy_fingerprint / (chunk['id']+'.json'))
+                if valid_note(legacy, chunk, cfg):
+                    note = legacy
+                    atomic_json(cache, note)
             if valid_note(note, chunk, cfg):
                 return note, None
             if invoke is None or not cfg.get('enabled', True):

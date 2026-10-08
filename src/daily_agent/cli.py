@@ -2,9 +2,11 @@ from __future__ import annotations
 
 import argparse
 import contextlib
+import json
 from datetime import date, datetime, timezone
 import os
 from pathlib import Path
+from zoneinfo import ZoneInfo
 
 from daily_agent.config import load_config
 from daily_agent.connectors.google_scholar import SCHOLARLY_RUNTIME_ENV
@@ -17,7 +19,9 @@ from daily_agent.full_profile import enforce_full_profile, render_full_profile_r
 from daily_agent.pipeline import run_pipeline
 from daily_agent.preview import DEFAULT_REPORT_PORT, serve_preview, start_preview_server
 from daily_agent.quality import render_quality_check, run_quality_check
-from daily_agent.scheduling import build_schedule_preview, run_scheduled_stage
+from daily_agent.scheduling import build_schedule_preview, inspect_schedule_state, repair_schedule_state, run_scheduled_stage
+from daily_agent.workflow_state import StateCorrupt, WorkflowBusy
+from daily_agent.scheduling import StageFailure, resolve_delivery_outcome
 from daily_agent.secrets import render_external_secrets_template, render_missing_external_secrets_template, render_secrets_status, write_external_secrets_template, write_missing_external_secrets_template
 from daily_agent.source_check import render_source_check, run_source_check
 from daily_agent.storage import append_feedback_event, load_feedback_events, load_feedback_suggestions, load_material_library, resolve_published_item, set_feedback_event_status
@@ -52,6 +56,19 @@ def main(argv: list[str] | None = None) -> int:
     schedule_run_stage.add_argument("--root", default=str(Path(__file__).resolve().parents[2]))
     schedule_run_stage.add_argument("--stage", choices=["overnight", "review", "delivery"], required=True)
     schedule_run_stage.add_argument("--date", default="today", help="YYYY-MM-DD or today")
+    schedule_status = schedule_subparsers.add_parser("status", help="Inspect stage heartbeat and hand-off artifacts")
+    schedule_status.add_argument("--root", default=str(Path(__file__).resolve().parents[2]))
+    schedule_status.add_argument("--date", default="today")
+    schedule_repair = schedule_subparsers.add_parser("repair", help="Reset failed or stale stages for recovery")
+    schedule_repair.add_argument("--root", default=str(Path(__file__).resolve().parents[2]))
+    schedule_repair.add_argument("--date", default="today")
+    schedule_repair.add_argument("--stage", choices=["overnight", "review", "delivery"], default=None)
+    schedule_repair.add_argument("--reset-budget", action="store_true", help="Explicitly reopen a failed circuit after investigating its cause")
+    schedule_resolve = schedule_subparsers.add_parser("resolve-delivery", help="Record an operator-confirmed remote result; never sends anything")
+    schedule_resolve.add_argument("--root", default=str(Path(__file__).resolve().parents[2]))
+    schedule_resolve.add_argument("--date", default="today")
+    schedule_resolve.add_argument("--outcome", choices=["sent", "not-sent"], required=True)
+    schedule_resolve.add_argument("--note", required=True, help="Evidence used to determine the remote result")
 
     source_parser = subparsers.add_parser("source", help="Inspect source connectivity")
     source_subparsers = source_parser.add_subparsers(dest="source_command")
@@ -62,6 +79,7 @@ def main(argv: list[str] | None = None) -> int:
     source_check.add_argument("--sample-limit", type=int, default=3)
     source_check.add_argument("--supervised-scholar-fallback", action="store_true", help="Temporarily enable the scholarly Google Scholar fallback for this supervised check")
     source_check.add_argument("--no-enforce-full", action="store_true", help="Inspect the current config without first repairing the full-quality profile")
+    source_check.add_argument("--require-available", action="store_true", help="Fail if no enabled, non-skipped source probe succeeded")
 
     preview_parser = subparsers.add_parser("preview", help="Serve generated reports and feedback buttons")
     preview_subparsers = preview_parser.add_subparsers(dest="preview_command")
@@ -174,8 +192,18 @@ def main(argv: list[str] | None = None) -> int:
     args = parser.parse_args(argv)
     if args.command == "deliver-ready":
         from daily_agent.scheduling import deliver_ready_report
-        day = date.today() if args.date == "today" else date.fromisoformat(args.date)
-        deliver_ready_report(load_config(args.root), day)
+        day = _report_date(args.date, args.root)
+        try:
+            deliver_ready_report(load_config(args.root), day)
+        except WorkflowBusy as exc:
+            print(f"Delivery deferred: {exc}")
+            return 75
+        except FileNotFoundError as exc:
+            print(f"Delivery not ready: {exc}")
+            return 4
+        except (StageFailure, StateCorrupt) as exc:
+            print(f"Delivery blocked: {exc}")
+            return 3 if getattr(exc, "kind", None) == "delivery_uncertain" else 2
         return 0
     if args.command == "run":
         return _run(args)
@@ -184,6 +212,19 @@ def main(argv: list[str] | None = None) -> int:
             return _schedule_preview(args)
         if args.schedule_command == "run-stage":
             return _schedule_run_stage(args)
+        if args.schedule_command == "status":
+            return _schedule_status(args)
+        if args.schedule_command == "repair":
+            return _schedule_repair(args)
+        if args.schedule_command == "resolve-delivery":
+            day = _report_date(args.date, args.root)
+            try:
+                result = resolve_delivery_outcome(load_config(args.root), day, args.outcome, args.note)
+                print(json.dumps(result, ensure_ascii=False, indent=2))
+                return 0
+            except (RuntimeError, ValueError, OSError) as exc:
+                print(f"Delivery reconciliation blocked: {exc}")
+                return 2
     if args.command == "source":
         if args.source_command == "check":
             return _source_check(args)
@@ -234,6 +275,13 @@ def main(argv: list[str] | None = None) -> int:
     return 1
 
 
+def _report_date(value: str, root: str) -> date:
+    if value != "today":
+        return date.fromisoformat(value)
+    zone = load_config(root).delivery.get("report", {}).get("timezone", "Asia/Shanghai")
+    return datetime.now(ZoneInfo(zone)).date()
+
+
 def _schedule_preview(args) -> int:
     config = load_config(args.root)
     try:
@@ -250,7 +298,7 @@ def _schedule_preview(args) -> int:
 
 
 def _schedule_run_stage(args) -> int:
-    run_date = date.today() if args.date == "today" else date.fromisoformat(args.date)
+    run_date = _report_date(args.date, args.root)
     try:
         result = run_scheduled_stage(args.root, args.stage, run_date)
     except (RuntimeError, ValueError) as exc:
@@ -265,15 +313,38 @@ def _schedule_run_stage(args) -> int:
     return 0
 
 
+def _schedule_status(args) -> int:
+    run_date = _report_date(args.date, args.root)
+    report = inspect_schedule_state(args.root, run_date)
+    print(json.dumps(report, ensure_ascii=False, indent=2))
+    return 0 if report["ok"] else 2
+
+
+def _schedule_repair(args) -> int:
+    run_date = _report_date(args.date, args.root)
+    try:
+        result = repair_schedule_state(args.root, run_date, args.stage, reset_budget=args.reset_budget)
+        print(json.dumps(result, ensure_ascii=False, indent=2))
+        return 2 if result["blocked"] else 0
+    except (RuntimeError, ValueError, OSError) as exc:
+        print(f"Schedule repair blocked: {exc}")
+        return 2
+
+
 def _source_check(args) -> int:
     with _supervised_scholar_runtime(bool(getattr(args, "supervised_scholar_fallback", False))):
         if not getattr(args, "no_enforce_full", False):
             _enforce_full_profile_for_runtime(args.root)
         config = load_config(args.root)
-        run_date = date.today() if args.date == "today" else date.fromisoformat(args.date)
+        run_date = _report_date(args.date, args.root)
         target_dt = datetime(run_date.year, run_date.month, run_date.day, tzinfo=timezone.utc)
         results = run_source_check(config, target_dt, window_days=args.window_days, sample_limit=args.sample_limit)
         print(render_source_check(results, run_date, args.window_days))
+        if getattr(args, "require_available", False):
+            active = [result for result in results if result.enabled and not result.skipped]
+            if not any(result.ok for result in active):
+                print("No enabled source passed its probe")
+                return 75 if active else 2
         return 0
 
 
@@ -360,11 +431,15 @@ def _enforce_full_profile_for_runtime(root: str) -> None:
 
 def _run(args) -> int:
     with _supervised_scholar_runtime(bool(getattr(args, "supervised_scholar_fallback", False))):
-        return _run_with_runtime(args)
+        try:
+            return _run_with_runtime(args)
+        except WorkflowBusy as exc:
+            print(f"Generation deferred: {exc}")
+            return 75
 
 
 def _run_with_runtime(args) -> int:
-    run_date = date.today() if args.date == "today" else date.fromisoformat(args.date)
+    run_date = _report_date(args.date, args.root)
     enforce_result = enforce_full_profile(args.root, write=True)
     if enforce_result.changed:
         print(render_full_profile_result(enforce_result))
@@ -431,6 +506,9 @@ def _run_with_runtime(args) -> int:
             print(f"- {error}")
     if not args.dry_run and args.send != "local" and result.status.delivery and not result.status.delivery.ok:
         return 3
+    if any(check.get("id") == "local_publication_pending" and check.get("status") == "fail"
+           for check in current_health.get("checks", [])):
+        return 5
     return 0
 
 

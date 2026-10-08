@@ -47,3 +47,7 @@ progress.txt
 
 # Local API acceptance credentials
 secret.md
+
+# Local connector attachments, research snapshots, and unrelated assets
+.cc-connect/
+sources/

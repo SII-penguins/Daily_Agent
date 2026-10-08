@@ -35,3 +35,29 @@ def test_abstract_chunk_completion_cannot_pass_corpus_acceptance():
     result = module.audit([row])
     assert result['papers'][0]['extracted_chunks_read']
     assert result['full_text_read_count'] == 0 and not result['all_passed']
+
+
+def test_live_validator_cannot_pass_abstract_even_if_claim_review_is_located(tmp_path, monkeypatch):
+    import shutil
+    from daily_agent.models import ApprovedItem
+    root = Path(__file__).resolve().parents[1]
+    spec = importlib.util.spec_from_file_location('validate_reading', root/'scripts/validate_reading.py')
+    module = importlib.util.module_from_spec(spec); spec.loader.exec_module(module)
+    shutil.copytree(root/'config', tmp_path/'config')
+    monkeypatch.setattr(module, 'ROOT', tmp_path)
+    snapshot = tmp_path/'input.json'; snapshot.write_text(json.dumps([paper().to_dict()]))
+    out = tmp_path/'tmp/acceptance'
+    monkeypatch.setattr('sys.argv', ['validate_reading', '--input', str(snapshot), '--output', str(out), '--live'])
+    monkeypatch.setattr(module.subprocess, 'run', lambda *a, **k: type('R', (), {'stdout':'{"ok":true}'})())
+    def draft_items(cfg, records, use_llm):
+        for record in records:
+            record.reading = {'complete':True, 'verification':{'status':'located', 'semantic_support':'model_checked'}}
+        return []
+    monkeypatch.setattr(module, 'draft_report_items', draft_items)
+    monkeypatch.setattr(module, 'review_draft', lambda *a, **k: [])
+    monkeypatch.setattr(module, 'approve_publication', lambda cfg, records, *a: [
+        ApprovedItem(r.key,r.item_type,r.title,r.source,r.url,{},r) for r in records])
+    assert module.main() == 1
+    result = json.loads((out/'acceptance.json').read_text())
+    assert result['extracted_chunks_read_complete']
+    assert not result['text_reading_complete'] and not result['passed']

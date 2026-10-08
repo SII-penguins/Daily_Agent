@@ -14,6 +14,7 @@ sys.path.insert(0,str(ROOT/'src'))
 from daily_agent.config import load_config
 from daily_agent.editorial import _llm_writer_command,_llm_writer_settings,_decode_model_json,draft_report_items,review_draft,approve_publication
 from daily_agent.models import MaterialRecord,RunStatus
+from daily_agent.reading import audit_reading
 from daily_agent.paper_document import extract_document,attach_document,build_document,atomic_json
 from daily_agent.rendering.notes import write_reading_notes
 from daily_agent.rendering.markdown import render_daily_markdown
@@ -89,14 +90,18 @@ def main():
     (cfg.reports_dir/'validation.md').write_text(render_daily_markdown(approved,today,status))
     (cfg.reports_dir/'validation.html').write_text(render_daily_html(approved,today,status))
     write_editorial_artifacts(cfg,today,records,drafts,reviews,approved)
+    audit = audit_reading([r.to_dict() for r in records])
+    failed_keys = {p['key'] for p in audit['papers'] if not p['quality_passed']}
     failures=[{'key':r.key,'read_complete':r.reading.get('complete',False),'visual':r.reading.get('visual',{}),
                'verification':r.reading.get('verification',{})} for r in records if r.item_type=='paper'
-               and (not r.reading.get('complete') or r.reading.get('verification',{}).get('status')!='located')]
+               and r.key in failed_keys]
     passed=args.live and counts==limits and not failures and len(approved)==len(records)
     papers=[r for r in records if r.item_type=='paper']
     atomic_json(output/'acceptance.json',{'live':args.live,'passed':passed,'selected':counts,'approved':len(approved),'failures':failures,
         'pipeline_completed':True,
-        'text_reading_complete':all(r.reading.get('complete') for r in papers),
+        'text_reading_complete':all(p['full_text_read'] for p in audit['papers']),
+        'extracted_chunks_read_complete':all(r.reading.get('complete') for r in papers),
+        'reading_audit':audit,
         'visual_reading_complete':all(not r.reading.get('visual',{}).get('required_pages') or r.reading['visual'].get('complete') for r in papers),
         'summary_semantics_checked':all(r.reading.get('verification',{}).get('semantic_support')=='model_checked' for r in papers),
         'scope':'Fixed local corpus end-to-end reading; no live source ingestion or remote delivery'})

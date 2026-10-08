@@ -12,6 +12,7 @@ import shutil
 from typing import Any, Iterable
 
 from daily_agent.config import AppConfig
+from daily_agent.workflow_state import StateCorrupt, atomic_json, read_json
 from daily_agent.paper_document import version_identity
 from daily_agent.models import ApprovedItem, DigestItem, EditorialDraft, EditorialReview, FeedbackEvent, MaterialRecord, RunStatus, SelectedRecord
 
@@ -43,16 +44,17 @@ def load_material_library(config: AppConfig) -> dict[str, MaterialRecord]:
     path = materials_dir(config) / MATERIAL_LIBRARY_NAME
     if not path.exists():
         return {}
-    try:
-        payload = json.loads(path.read_text(encoding="utf-8"))
-    except Exception:
-        return {}
+    payload = read_json(path)
+    if not isinstance(payload, dict) or not isinstance(payload.get("items"), dict):
+        raise StateCorrupt(f"Invalid material library: {path}")
     library: dict[str, MaterialRecord] = {}
     for key, raw in payload.get("items", {}).items():
         try:
             record = MaterialRecord.from_dict(raw)
-        except TypeError:
-            continue
+        except (TypeError, ValueError) as exc:
+            raise StateCorrupt(f"Invalid material record in {path}") from exc
+        if record.key != key:
+            raise StateCorrupt(f"Material identity mismatch in {path}")
         library[key] = record
     return library
 
@@ -65,7 +67,7 @@ def write_material_library(config: AppConfig, library: dict[str, MaterialRecord]
         "updated_at": _utc_now(),
         "items": {key: record.to_dict() for key, record in sorted(library.items())},
     }
-    path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
+    atomic_json(path, payload)
     return path
 
 
@@ -205,7 +207,7 @@ def write_selected(config: AppConfig, items: list[DigestItem | MaterialRecord | 
         "dry_run": dry_run,
         "selected": [record.to_dict() for record in records],
     }
-    path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
+    atomic_json(path, payload)
     if not dry_run:
         history = load_history(config, run_date)
         for record in records:
@@ -464,7 +466,6 @@ def write_health_report(config: AppConfig, report: dict[str, Any]) -> Path:
 
 
 def load_feishu_delivery_state(config: AppConfig) -> dict[str, Any]:
-    ensure_storage_dirs(config)
     return _load_json(_feishu_delivery_path(config), {"schema_version": 1, "weeks": {}})
 
 
@@ -744,12 +745,18 @@ def _ris_value(value: str) -> str:
 
 
 def _write_json(path: Path, payload) -> None:
-    path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
+    atomic_json(path, payload)
 
 
 def _load_json(path: Path, default):
     if not path.exists():
         return default.copy() if isinstance(default, dict) else default
+    if path.name in {"published_index.json", "feishu_delivery.json"}:
+        payload = read_json(path)
+        field = "dates" if path.name == "published_index.json" else "weeks"
+        if not isinstance(payload, dict) or not isinstance(payload.get(field), dict):
+            raise StateCorrupt(f"Invalid publication record: {path}")
+        return payload
     try:
         return json.loads(path.read_text(encoding="utf-8"))
     except Exception:
@@ -774,17 +781,39 @@ def _is_recent_repeat_without_update(record: MaterialRecord, run_date: date, rep
 
 def _iter_selected_records(paths: Iterable[Path]) -> Iterable[SelectedRecord]:
     for path in sorted(paths):
-        try:
-            payload = json.loads(path.read_text(encoding="utf-8"))
-        except Exception:
+        # Filename isolation is authoritative even when a preview flag is damaged.
+        if path.name.endswith(".dry-run.json"):
             continue
-        if payload.get("dry_run"):
-            continue
-        for raw in payload.get("selected", []):
-            try:
-                yield SelectedRecord.from_dict(raw)
-            except TypeError:
-                continue
+        payload = read_json(path)
+        if (not isinstance(payload, dict) or not isinstance(payload.get("selected"), list)
+                or ("dry_run" in payload and payload["dry_run"] is not False)
+                or ("date" in payload and path.name != f"selected-{payload['date']}.json")):
+            raise StateCorrupt(f"Invalid formal selection archive: {path}")
+        seen = set()
+        for raw in payload["selected"]:
+            record = _validated_selected_record(raw, path)
+            if record.key in seen:
+                raise StateCorrupt(f"Duplicate formal selection identity in {path}")
+            seen.add(record.key)
+            yield record
+
+
+def _validated_selected_record(raw, path: Path) -> SelectedRecord:
+    try:
+        if not isinstance(raw, dict):
+            raise ValueError("Not a selection record")
+        record = SelectedRecord.from_dict(raw)
+        if (any(not isinstance(value, str) or not value.strip()
+                for value in (record.key, record.source, record.title, record.url, record.selected_at))
+                or record.item_type not in {"paper", "repo"}
+                or (record.rank is not None and (type(record.rank) is not int or record.rank < 1))
+                or not isinstance(record.tags, list)
+                or any(not isinstance(tag, str) for tag in record.tags)):
+            raise ValueError("Invalid selection fields")
+        datetime.fromisoformat(record.selected_at.replace("Z", "+00:00"))
+        return record
+    except (TypeError, ValueError) as exc:
+        raise StateCorrupt(f"Invalid publication history record in {path}") from exc
 
 
 def _history_index_path(config: AppConfig) -> Path:
@@ -816,16 +845,16 @@ def _load_history_index(config: AppConfig, cutoff: date) -> dict[str, SelectedRe
     path = _history_index_path(config)
     if not path.exists():
         return {}
-    try:
-        payload = json.loads(path.read_text(encoding="utf-8"))
-    except Exception:
-        return {}
+    payload = read_json(path)
+    if not isinstance(payload, dict) or not isinstance(payload.get("records"), list):
+        raise StateCorrupt(f"Invalid publication history: {path}")
     records: dict[str, SelectedRecord] = {}
+    seen = set()
     for raw in payload.get("records", []):
-        try:
-            record = SelectedRecord.from_dict(raw)
-        except TypeError:
-            continue
+        record = _validated_selected_record(raw, path)
+        if record.key in seen:
+            raise StateCorrupt(f"Duplicate publication history identity in {path}")
+        seen.add(record.key)
         selected_at = _parse_date(record.selected_at)
         if selected_at and selected_at >= cutoff:
             records[record.key] = record
@@ -845,7 +874,7 @@ def _write_history_index(config: AppConfig, records: Iterable[SelectedRecord], t
         "repeat_suppression_days": int(config.sources.get("selection", {}).get("repeat_suppression_days", 30)),
         "records": [record.to_dict() for record in sorted(deduped.values(), key=lambda item: item.selected_at)],
     }
-    _history_index_path(config).write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
+    atomic_json(_history_index_path(config), payload)
 
 
 def _delete_old_files(paths: Iterable[Path], cutoff: date) -> None:

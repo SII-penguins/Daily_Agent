@@ -120,3 +120,19 @@ def test_failed_condition_coverage_preserves_all_conditions():
     review_result_presentation(item.final_fields['key_result'],item.material,
         lambda *_: {'supported':True,'conditions_complete':False,'issues':['missing cost']})
     assert '不计训练成本' in paper_paragraphs(item)[1].text
+
+
+def test_fidelity_failures_distinguish_budget_timeout_and_rejection():
+    from daily_agent.rendering.notes import card_gaps, gaps
+    item = paper()
+    item.material.reading['visual'] = {'required_pages': 4, 'fidelity': {'pages': [
+        {'page': 1, 'passed': True},
+        {'page': 2, 'passed': False, 'reason': 'FidelityBudgetExhausted'},
+        {'page': 3, 'passed': False, 'reason': 'TimeoutExpired'},
+        {'page': 4, 'passed': False, 'reason': '逐页重建/独立复核未通过'},
+    ]}}
+    for render in (card_gaps, gaps):
+        text = render(item.material)
+        assert '1 页核验预算耗尽' in text
+        assert '1 页模型调用超时' in text
+        assert '1 页转写或独立复核不通过' in text

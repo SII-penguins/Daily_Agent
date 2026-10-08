@@ -54,8 +54,10 @@ class ChatAPI:
         folder.mkdir(parents=True, exist_ok=True)
 
     def __call__(self, prompt, timeout=180, image_path=None):
-        image_bytes = Path(image_path).read_bytes() if image_path else None
-        image_hash = hashlib.sha256(image_bytes).hexdigest() if image_bytes is not None else None
+        image_paths = image_path if isinstance(image_path, list) else [image_path] if image_path else []
+        images = [Path(path).read_bytes() for path in image_paths]
+        hashes = [hashlib.sha256(value).hexdigest() for value in images]
+        image_hash = hashes[0] if len(hashes) == 1 else hashes if hashes else None
         identity = digest([self.url, self.model, prompt, image_hash]) if image_hash else digest([self.url, self.model, prompt])
         path = self.folder / (identity + '.json')
         if path.exists():
@@ -68,9 +70,11 @@ class ChatAPI:
         started = time.monotonic()
         # Never put the credential into CLI arguments, output, persisted config or exceptions.
         content = prompt
-        if image_bytes is not None:
-            content = [{'type': 'text', 'text': prompt}, {'type': 'image_url', 'image_url': {
-                'url': 'data:image/png;base64,' + base64.b64encode(image_bytes).decode(), 'detail': 'high'}}]
+        if images:
+            content = [{'type': 'text', 'text': prompt}] + [
+                {'type': 'image_url', 'image_url': {
+                    'url': 'data:image/png;base64,' + base64.b64encode(value).decode(), 'detail': 'high'}}
+                for value in images]
         body = {'model': self.model, 'messages': [{'role': 'user', 'content': content}],
                 'stream': self.stream, 'max_tokens': 12000}
         headers = {'Authorization': 'Bearer ' + self.key}

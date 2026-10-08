@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 import hashlib
+import math
 import re
+import shutil
 import tomllib
 import uuid
 from urllib.parse import unquote
@@ -19,6 +21,51 @@ from daily_agent.storage import load_feishu_delivery_state, write_feishu_deliver
 
 BASE_URL = "https://open.feishu.cn/open-apis"
 FEISHU_DOC_RENDER_VERSION = "5"
+
+
+def preflight_delivery(config: AppConfig, mode: str) -> None:
+    """Check local feasibility before the outbox records any possible remote side effect."""
+    delivery = config.delivery.get("delivery", {}) or {}
+    cc_config = delivery.get("cc_connect", {}) or {}
+    feishu_config = delivery.get("feishu", {}) or {}
+
+    def require_cc_connect():
+        if not cc_config.get("enabled", True):
+            raise ValueError("cc-connect delivery is disabled")
+        if not shutil.which("cc-connect"):
+            raise ValueError("cc-connect executable is missing")
+
+    def feishu_has_credentials():
+        external = _load_cc_connect_feishu_config()
+        return bool((_env_value(feishu_config, "app_id_env") or external.get("app_id"))
+                    and (_env_value(feishu_config, "app_secret_env") or external.get("app_secret")))
+
+    def require_feishu_local_state():
+        try:
+            timeout = float(feishu_config.get("request_timeout_seconds", 30))
+        except (TypeError, ValueError) as exc:
+            raise ValueError("Invalid Feishu request timeout") from exc
+        if not math.isfinite(timeout) or timeout <= 0:
+            raise ValueError("Invalid Feishu request timeout")
+        # Detect corrupt publication evidence before even requesting an access token.
+        load_feishu_delivery_state(config)
+
+    if mode in {"cc-connect", "cc_connect"}:
+        # This route always needs cc-connect, including cloud-document notification.
+        require_cc_connect()
+        if (cc_config.get("publish_feishu_doc", False) and feishu_config.get("enabled")
+                and feishu_has_credentials()):
+            require_feishu_local_state()
+        return
+    if mode == "feishu":
+        if feishu_config.get("enabled") and feishu_has_credentials():
+            require_feishu_local_state()
+            return  # Direct Feishu delivery does not require the fallback executable.
+        if feishu_config.get("fallback_to_cc_connect", True):
+            require_cc_connect()
+            return
+        raise ValueError("Feishu delivery is disabled or credentials are missing, and fallback is disabled")
+    raise ValueError("Unsupported external delivery mode")
 
 
 def deliver_weekly_report(

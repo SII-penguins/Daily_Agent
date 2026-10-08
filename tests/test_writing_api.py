@@ -87,3 +87,18 @@ def test_image_input_hash_invalidates_cache_without_persisting_image(tmp_path, m
     picture.write_bytes(b'image-two'); api('check', image_path=picture)
     assert len(seen) == 2 and seen[0][1]['image_url']['detail'] == 'high'
     assert all('base64,' not in p.read_text() for p in (tmp_path/'cache').glob('*.json'))
+
+
+def test_multiple_detail_images_are_sent_and_each_affects_cache(tmp_path, monkeypatch):
+    seen = []
+    def post(url, **kwargs):
+        seen.append(kwargs['json']['messages'][0]['content'])
+        return httpx.Response(200, json={'choices':[{'finish_reason':'stop','message':{'content':'{"ok":true}'}}]})
+    monkeypatch.setattr(writing.httpx, 'post', post)
+    page = tmp_path/'page.png'; page.write_bytes(b'page')
+    detail = tmp_path/'detail.png'; detail.write_bytes(b'detail')
+    api = writing.ChatAPI('https://example.org', 'test-secret', 'model', tmp_path/'cache', max_calls=2)
+    api('check', image_path=[page, detail]); api('check', image_path=[page, detail])
+    detail.write_bytes(b'changed detail'); api('check', image_path=[page, detail])
+    assert len(seen) == 2 and len(seen[0]) == 3
+    assert all('base64,' not in p.read_text() for p in (tmp_path/'cache').glob('*.json'))

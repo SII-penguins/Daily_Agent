@@ -4,7 +4,7 @@ import hashlib
 import json
 import time
 from pathlib import Path
-from daily_agent.paper_document import digest,load_json,atomic_json
+from daily_agent.paper_document import digest,load_json,atomic_json,evidence_settings
 
 
 def valid_visual(note,page):
@@ -28,9 +28,15 @@ def read_visuals(records,config,invoke=None):
             actual=hashlib.sha256(image.read_bytes()).hexdigest()
             if actual!=page.get('image_hash'):
                 return None, {'page':page['page'],'reason':'页面图像校验不匹配'}
-            fingerprint=digest([actual,page['page'],page['text'],cfg,config.sources.get('llm_writer',{}),2])
+            fingerprint=digest([actual,page['page'],page['text'],evidence_settings(cfg),config.sources.get('llm_writer',{}),2])
             cache=config.root/'data'/'reading'/'visual'/f'{fingerprint}.json'
             note=load_json(cache)
+            if not valid_visual(note,page):
+                legacy=digest([actual,page['page'],page['text'],cfg,config.sources.get('llm_writer',{}),2])
+                old=load_json(config.root/'data'/'reading'/'visual'/f'{legacy}.json')
+                if valid_visual(old,page):
+                    note=old
+                    atomic_json(cache,note)
             if not valid_visual(note,page):
                 if invoke is None or not cfg.get('visual_enabled',True):
                     return None, {'page':page['page'],'reason':'未启用视觉模型'}

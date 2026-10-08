@@ -1,11 +1,12 @@
 from datetime import date
+import json
 from shlex import quote
 import sys
 
 import daily_agent.cli as cli
 from daily_agent.cli import main
 from daily_agent.config import load_config
-from daily_agent.scheduling import ScheduleStageResult, build_schedule_jobs, build_schedule_preview, run_scheduled_stage
+from daily_agent.scheduling import ScheduleStageResult, build_schedule_jobs, build_schedule_preview, inspect_schedule_state, run_scheduled_stage
 
 
 def test_build_schedule_jobs_uses_delivery_schedule_times(tmp_path):
@@ -35,8 +36,9 @@ def test_cc_connect_preview_does_not_install_schedule(tmp_path):
     assert "Preview only" in preview.body
     assert "cc-connect cron add" in preview.body
     assert "--session-mode new-per-run" in preview.body
-    assert "--timeout-mins 60" in preview.body
-    assert "--timeout-mins 300" in preview.body
+    assert "--timeout-mins 132" in preview.body
+    assert "--timeout-mins 302" in preview.body
+    assert "--timeout-mins 12" in preview.body
     assert 'schedule run-stage' in preview.body
     assert '--stage delivery' in preview.body
 
@@ -126,6 +128,7 @@ def test_ready_delivery_uses_sealed_issue_and_is_idempotent(tmp_path, monkeypatc
     from daily_agent.models import MaterialRecord, ApprovedItem, DeliveryStatus
     cfg = load_config()
     object.__setattr__(cfg, 'root', tmp_path)
+    cfg.delivery['schedule']['recovery']['require_target_counts'] = False
     day = date(2026, 9, 30)
     cfg.reports_dir.mkdir(parents=True)
     report = cfg.reports_dir / 'daily-agent-2026-09-30.md'
@@ -140,8 +143,9 @@ def test_ready_delivery_uses_sealed_issue_and_is_idempotent(tmp_path, monkeypatc
     sent = []
     def send(path, mode, **kwargs):
         sent.append(kwargs['daily_markdown'])
-        return DeliveryStatus(ok=True)
+        return DeliveryStatus(requested_mode='cc-connect', final_mode='cc-connect', ok=True)
     monkeypatch.setattr('daily_agent.delivery.feishu.deliver_weekly_report', send)
+    monkeypatch.setattr('daily_agent.delivery.feishu.preflight_delivery', lambda *args: None)
     deliver_ready_report(cfg, day)
     deliver_ready_report(cfg, day)
     assert sent == ['Current issue']
@@ -156,3 +160,50 @@ def test_failed_ready_delivery_is_retryable(tmp_path, monkeypatch):
     cfg = load_config(); object.__setattr__(cfg, 'root', tmp_path)
     with pytest.raises(FileNotFoundError): deliver_ready_report(cfg, date(2026,10,1))
     assert not list(tmp_path.rglob('*.delivered.json'))
+
+
+def test_failed_stage_is_recorded_and_retried(tmp_path):
+    calls = []
+    def executor(command, root):
+        calls.append(command)
+        return 1 if len(calls) == 1 else 0
+
+    import pytest
+    with pytest.raises(RuntimeError):
+        run_scheduled_stage(tmp_path, "overnight", date(2026, 10, 8), executor=executor)
+    state = json.loads((tmp_path / "data/state/schedule-stages/2026-10-08.json").read_text())
+    assert state["stages"]["overnight"]["failed"] is True
+    # Unchanged code errors are permanent; only an explicit repair reopens the budget.
+    with pytest.raises(RuntimeError, match="circuit is open"):
+        run_scheduled_stage(tmp_path, "overnight", date(2026, 10, 8), executor=executor)
+    from daily_agent.scheduling import repair_schedule_state
+    repair_schedule_state(tmp_path, date(2026, 10, 8), reset_budget=True)
+    result = run_scheduled_stage(tmp_path, "overnight", date(2026, 10, 8), executor=executor)
+    assert result.completed_stages == ["overnight"]
+    assert len(calls) == 2
+
+
+def test_review_feedback_failure_is_advisory_but_quality_failure_blocks(tmp_path):
+    commands = []
+    def executor(command, root):
+        commands.append(command)
+        return 1 if "feedback" in command or "quality" in command else 0
+
+    import pytest
+    with pytest.raises(RuntimeError, match="review command failed"):
+        run_scheduled_stage(tmp_path, "review", date(2026, 10, 8), executor=executor)
+    assert len(commands) == 3
+    state = json.loads((tmp_path / "data/state/schedule-stages/2026-10-08.json").read_text())
+    assert state["stages"]["review"]["failed"] is True
+
+
+def test_corrupt_state_watchdog_is_read_only(tmp_path):
+    state_dir = tmp_path / "data/state/schedule-stages"
+    state_dir.mkdir(parents=True)
+    state_path = state_dir / "2026-10-08.json"
+    state_path.write_text("{broken")
+    report = inspect_schedule_state(tmp_path, date(2026, 10, 8))
+    assert report["ok"] is False
+    assert report['problems'][0]['kind'] == 'corrupt_state'
+    assert state_path.read_text() == '{broken'
+    assert not list(state_dir.glob("2026-10-08.json.corrupt.*"))

@@ -1,12 +1,13 @@
 from __future__ import annotations
 
 from io import BytesIO
+import hashlib
 from html.parser import HTMLParser
 import re
 import time
 import zlib
 from pathlib import Path
-from urllib.parse import urlparse
+from urllib.parse import urlparse, urljoin
 
 import httpx
 
@@ -67,18 +68,43 @@ def enrich_paper_texts(records: list[MaterialRecord], config: AppConfig) -> list
             identity = version_identity(record)
             path = cache_dir / (digest([identity, source_config, 4]) + ".json")
             cached = load_json(path)
-            if (valid_document(cached, identity) and time.time()-path.stat().st_mtime < ttl):
+            cache_valid = valid_document(cached, identity)
+            if (cache_valid and cached['document_kind'] == 'full_text'
+                    and time.time()-path.stat().st_mtime < ttl):
                 attach_document(record, cached)
                 continue
             # Existing unstructured snippets are never promoted to full text.
             fallback = build_document(record, [{"page": None, "text": record.paper_text_excerpt or record.abstract or ""}],
                                       record.url, "legacy" if record.paper_text_excerpt else "abstract", source_config)
+            if cache_valid:
+                # Retain genuine partial evidence during a failed retry, but do
+                # not let a week-long abstract cache prevent full-text recovery.
+                fallback = cached
             if count >= max_papers or _deadline_exceeded(deadline):
                 fallback["limitations"].append("本轮正文获取预算不足")
                 attach_document(record, fallback)
                 record.paper_text_status.update(status="skipped", reason="run_budget_exceeded")
                 continue
             count += 1
+            # Parser upgrades should reparse the verified local PDF before
+            # retrying a publisher that may now be unavailable or rate-limited.
+            local = cached if isinstance(cached, dict) and cached.get('identity') == identity else record.paper_document
+            pdf_value = local.get('source_pdf_path') if isinstance(local, dict) else None
+            if (pdf_value and local.get('identity') == identity and local.get('source_pdf_sha256')
+                    and not _deadline_exceeded(deadline)):
+                pdf = Path(pdf_value).resolve()
+                if pdf.is_relative_to(config.root.resolve()) and pdf.is_file() and pdf.stat().st_size <= max_bytes:
+                    content = pdf.read_bytes()
+                    if hashlib.sha256(content).hexdigest() == local['source_pdf_sha256']:
+                        doc = extract_document(content, record, local.get('source_url') or record.pdf_url or record.url,
+                            {**source_config, 'page_image_dir':str(cache_dir/'pages'/digest([identity, local['source_pdf_sha256']]))})
+                        doc['source_pdf_path'] = str(pdf)
+                        if doc['document_kind'] == 'full_text':
+                            attach_document(record, doc)
+                            atomic_json(path, doc)
+                            continue
+                        if doc.get('title_match') and doc['coverage']['char_count']:
+                            fallback = doc
             best = fallback
             urls = _candidate_pdf_urls(record)
             if html_fallback:
@@ -86,12 +112,16 @@ def enrich_paper_texts(records: list[MaterialRecord], config: AppConfig) -> list
                 if arxiv_id:
                     urls.append(f"https://arxiv.org/html/{arxiv_id}")
                 urls.extend(_candidate_html_urls(record))
-            for index, url in enumerate(dict.fromkeys(urls)):
+            urls = list(dict.fromkeys(urls))
+            for index, url in enumerate(urls):
                 if _url_budget_exceeded(index, max_urls_per_paper) or _deadline_exceeded(deadline):
                     break
                 content = _download_limited(client, url, max_bytes=max(max_bytes, max_html_bytes), deadline=deadline)
                 if not content:
                     continue
+                if html_fallback and not content.startswith(b'%PDF'):
+                    linked = [u for u in _landing_pdf_urls(content, url) if u not in urls]
+                    urls[index+1:index+1] = linked
                 try:
                     doc = extract_document(content, record, url, {**source_config, "page_image_dir": str(cache_dir / "pages" / digest([identity, __import__("hashlib").sha256(content).hexdigest()]))})
                 except Exception:
@@ -108,6 +138,10 @@ def enrich_paper_texts(records: list[MaterialRecord], config: AppConfig) -> list
                         pdf_path.parent.mkdir(parents=True, exist_ok=True)
                         pdf_path.write_bytes(content)
                         doc["source_pdf_path"] = str(pdf_path.resolve())
+                        if not isinstance(record.raw.get('pdf_urls'), list):
+                            record.raw['pdf_urls'] = []
+                        if url not in record.raw['pdf_urls']:
+                            record.raw['pdf_urls'].append(url)
                     best = doc
                 if best["document_kind"] == "full_text":
                     break
@@ -118,6 +152,34 @@ def enrich_paper_texts(records: list[MaterialRecord], config: AppConfig) -> list
             if best["source_type"] in {"pdf", "html"} and best["coverage"]["char_count"]:
                 atomic_json(path, best)
     return records
+
+
+def _landing_pdf_urls(content: bytes, url: str) -> list[str]:
+    """Follow explicit scholarly PDF metadata, within the existing URL budget."""
+    class Links(HTMLParser):
+        def __init__(self):
+            super().__init__()
+            self.urls = []
+
+        def handle_starttag(self, tag, attrs):
+            attrs = dict(attrs)
+            value = None
+            if tag == 'meta' and (attrs.get('name') or '').lower() == 'citation_pdf_url':
+                value = attrs.get('content')
+            elif (tag == 'link' and (attrs.get('type') or '').lower() == 'application/pdf'
+                  and 'alternate' in (attrs.get('rel') or '').lower().split()):
+                value = attrs.get('href')
+            if value:
+                target = urljoin(url, value)
+                if _is_http_url(target) and target not in self.urls:
+                    self.urls.append(target)
+
+    parser = Links()
+    try:
+        parser.feed(content.decode('utf-8', errors='replace'))
+    except (ValueError, TypeError):
+        return []
+    return parser.urls
 
 
 def _url_budget_exceeded(attempts: int, max_urls_per_paper: int) -> bool:
