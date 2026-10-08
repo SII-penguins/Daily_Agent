@@ -48,7 +48,7 @@ def load_json(path: Path):
 
 def section_kind(title: str) -> str:
     t = title.lower()
-    if re.search(r'method|approach|architecture|framework|algorithm|protocol|implementation', t): return 'method'
+    if re.search(r'method|approach|architecture|framework|algorithm|protocol|implementation|\brecipes?\b', t): return 'method'
     if re.search(r'result|experiment|evaluation|scaling|performance|benchmark', t): return 'results'
     if 'limitation' in t: return 'limitations'
     if 'discussion' in t: return 'discussion'

@@ -190,6 +190,10 @@ def main(argv: list[str] | None = None) -> int:
     feedback_serve.add_argument("--port", type=int, default=DEFAULT_FEEDBACK_PORT)
 
     args = parser.parse_args(argv)
+    if getattr(args, "root", None) and load_config(args.root).delivery.get("cloud", {}).get("profile"):
+        if args.command in {"run", "deliver-ready"} or args.command == "schedule" and args.schedule_command != "status":
+            print("Cloud profile requires python -m daily_agent.cloud_workflow; external receipt handoff must not be bypassed")
+            return 2
     if args.command == "deliver-ready":
         from daily_agent.scheduling import deliver_ready_report
         day = _report_date(args.date, args.root)

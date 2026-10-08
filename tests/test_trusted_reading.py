@@ -142,6 +142,7 @@ def test_unchanged_papers_stay_suppressed_and_sources_are_not_topics(tmp_path):
     cfg=config(tmp_path); r=paper(); r.published_dates=['2026-01-01']; r.raw['published_paper_identity']=version_identity(r)
     assert select_library_candidates(cfg,{r.key:r},date(2026,9,28))==[]
     r.url=r.url.replace('v1','v2'); r.pdf_url=r.pdf_url.replace('v1','v2'); r.update_label='version_update'
+    r.source_updated_at='2026-09-28T00:00:00Z'
     assert select_library_candidates(cfg,{r.key:r},date(2026,9,28))==[r]
     r.tags=['openalex','openalex']; r2=paper(); r2.key='other'; r2.tags=['openalex']
     items=[ApprovedItem(x.key,'paper',x.title,x.source,x.url,{},x) for x in [r,r2]]
@@ -156,7 +157,9 @@ def test_synthesis_budget_is_explicit(tmp_path):
 
 def test_editorial_end_to_end_uses_chunk_notes_and_reuses_verified_draft(tmp_path, monkeypatch):
     from daily_agent.editorial import draft_report_items, review_draft, approve_publication
-    cfg=config(tmp_path); r=paper(); attach_document(r,document(r)); calls=[]
+    # This fixture contains HTML-style text only, not verified PDF bytes/images.
+    cfg=config(tmp_path); r=paper(); doc=document(r); doc['source_type']='html'
+    attach_document(r,doc); calls=[]
     def fake_run(args,**kwargs):
         prompt=args[-1]; calls.append(prompt)
         if prompt.startswith('阅读论文的一个原文块'):

@@ -19,6 +19,7 @@ from daily_agent.connectors import (
     fetch_google_scholar,
     fetch_ieee,
     fetch_neurips,
+    fetch_nature,
     fetch_openalex,
     fetch_openreview,
     fetch_pmlr,
@@ -87,6 +88,8 @@ def run_source_check(
                     name=spec["name"],
                     enabled=True,
                     ok=False,
+                    item_count=len(getattr(exc, "partial_items", [])),
+                    samples=[item.title for item in getattr(exc, "partial_items", [])[:sample_limit]],
                     credential_status=credential_status,
                     error=str(exc),
                 )
@@ -224,6 +227,10 @@ def _probe_config(config: AppConfig, sample_limit: int) -> AppConfig:
         sources["neurips"]["max_results_per_year"] = per_query
         sources["neurips"]["max_detail_pages_per_year"] = 1
         sources["neurips"]["years"] = (sources["neurips"].get("years") or [])[:1]
+    if isinstance(sources.get("nature"), dict):
+        sources["nature"]["max_articles_per_feed"] = per_query
+        sources["nature"]["max_detail_pages"] = 1
+        sources["nature"]["feeds"] = (sources["nature"].get("feeds") or [])[:1]
     return replace(config, sources=sources)
 
 
@@ -241,4 +248,5 @@ def _source_specs() -> list[dict[str, str | Callable[[AppConfig, datetime, int],
         {"key": "openreview", "name": "OpenReview", "fetcher": fetch_openreview},
         {"key": "pmlr", "name": "PMLR", "fetcher": fetch_pmlr},
         {"key": "neurips", "name": "NeurIPS", "fetcher": fetch_neurips},
+        {"key": "nature", "name": "Nature", "fetcher": fetch_nature},
     ]

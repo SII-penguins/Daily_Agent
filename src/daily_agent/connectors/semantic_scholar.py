@@ -9,6 +9,7 @@ from daily_agent.config import AppConfig, DomainConfig
 from daily_agent.connectors.publication_types import allowed_publication_types, publication_type_allowed
 from daily_agent.connectors.queries import scholarly_queries
 from daily_agent.models import DigestItem
+from daily_agent.connectors.source_failures import failure_record, finish_collection
 from daily_agent.secrets import credential_value
 
 SEMANTIC_SCHOLAR_SEARCH_URL = "https://api.semanticscholar.org/graph/v1/paper/search"
@@ -27,6 +28,8 @@ def fetch_semantic_scholar(config: AppConfig, target_date: datetime | None = Non
     allowed_types = allowed_publication_types(source_config)
     cutoff = (target - timedelta(days=days)).date().isoformat()
     items: list[DigestItem] = []
+    failures, errors = [], []
+    successful_requests = 0
     seen_queries: set[str] = set()
     with httpx.Client(timeout=timeout, follow_redirects=True, headers=_headers(source_config)) as client:
         for domain in config.domains:
@@ -40,15 +43,22 @@ def fetch_semantic_scholar(config: AppConfig, target_date: datetime | None = Non
                 try:
                     response = client.get(SEMANTIC_SCHOLAR_SEARCH_URL, params={"query": query, "limit": max_results, "fields": FIELDS})
                     response.raise_for_status()
-                except httpx.HTTPError:
+                    payload = response.json()
+                    if not isinstance(payload, dict): raise ValueError("Expected source JSON object")
+                    successful_requests += 1
+                except (httpx.HTTPError, ValueError) as exc:
+                    errors.append(exc)
+                    failures.append(failure_record(query, exc))
+                    if getattr(getattr(exc, "response", None), "status_code", None) in {401, 403, 429}:
+                        return finish_collection("Semantic Scholar", items, failures, errors, successful_requests)
                     continue
-                for paper in response.json().get("data", []) or []:
+                for paper in payload.get("data", []) or []:
                     if not publication_type_allowed(paper.get("publicationTypes"), allowed_types):
                         continue
                     item = _paper_to_item(paper, domain)
                     if not item.published_at or item.published_at >= cutoff:
                         items.append(item)
-    return items
+    return finish_collection("Semantic Scholar", items, failures, errors, successful_requests)
 
 
 def _headers(source_config: dict[str, Any]) -> dict[str, str]:

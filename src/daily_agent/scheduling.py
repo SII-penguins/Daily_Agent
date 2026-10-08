@@ -239,6 +239,34 @@ def _calendar_deadline(root: Path, run_date: date, stage: str) -> datetime:
     return deadline.astimezone(timezone.utc)
 
 
+def _reclaim_other_day_attempts(root: Path, current_path: Path) -> None:
+    """The root-wide lease must also fence retained children from older issues.
+
+    Bound inspection without silently dropping older evidence. An overfull or
+    unreadable registry requires operator review rather than starting new work.
+    Caller owns schedule.lock; identity verification remains in the reclaimer.
+    """
+    records = []
+    for path in current_path.parent.glob("*.json"):
+        if len(records) >= 3660:
+            raise StateCorrupt("Too many retained schedule records; review/archive inactive records before starting work")
+        records.append(path)
+    # Validate every record first, before taking any process-cleanup action.
+    retained = []
+    for path in sorted(records):
+        if path == current_path:
+            continue
+        try:
+            day = date.fromisoformat(path.stem)
+        except ValueError as exc:
+            raise StateCorrupt(f"Unexpected schedule record: {path}") from exc
+        state = _load_stage_state(path, day)
+        retained.append((path, state))
+    for path, state in retained:
+        for name, entry in state["stages"].items():
+            _reclaim_interrupted_attempt(state, path, name, entry, root)
+
+
 def _stage_is_completed(state: dict[str, Any], stage: str, root: Path, run_date: date,
                         *, verify_artifacts: bool = True) -> bool:
     entry = state.get("stages", {}).get(stage, {})
@@ -272,6 +300,7 @@ def run_scheduled_stage(root: str | Path, stage: str, run_date: date | None = No
     revision = _revision(root)
     with exclusive_lock(_stage_lock(root)):
         state = _load_stage_state(path, day)
+        _reclaim_other_day_attempts(root, path)
         # The same-day lease covers all stages. Retained work from another stage
         # cannot be bypassed by selecting delivery or a different revision.
         for name, previous in state["stages"].items():

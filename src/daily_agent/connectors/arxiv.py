@@ -11,6 +11,7 @@ import httpx
 
 from daily_agent.config import AppConfig, DomainConfig
 from daily_agent.models import DigestItem
+from daily_agent.connectors.source_failures import failure_record, finish_collection
 
 ARXIV_API_URL = "https://export.arxiv.org/api/query"
 _ARXIV_ID_RE = re.compile(r"/abs/([^/?#]+)")
@@ -31,7 +32,8 @@ def fetch_arxiv(config: AppConfig, target_date: datetime | None = None, window_d
 
     items: list[DigestItem] = []
     seen_queries: set[str] = set()
-    last_error: Exception | None = None
+    failures, errors = [], []
+    successful_requests = 0
     rate_limited = False
     for domain in config.domains:
         queries = _domain_queries(domain)
@@ -43,20 +45,21 @@ def fetch_arxiv(config: AppConfig, target_date: datetime | None = None, window_d
             seen_queries.add(query)
             try:
                 items.extend(_fetch_query(query, domain, target, recent_days, query_window_days, max_results, source_config))
+                successful_requests += 1
             except httpx.HTTPStatusError as exc:
-                last_error = exc
-                if exc.response.status_code == 429:
+                errors.append(exc)
+                failures.append(failure_record(query, exc))
+                if exc.response.status_code in {401, 403, 429}:
                     rate_limited = True
                     break
             except (httpx.HTTPError, ET.ParseError) as exc:
-                last_error = exc
+                errors.append(exc)
+                failures.append(failure_record(query, exc))
             if delay > 0:
                 time.sleep(delay)
         if rate_limited:
             break
-    if not items and last_error:
-        raise last_error
-    return items
+    return finish_collection("arXiv", items, failures, errors, successful_requests)
 
 
 def _domain_queries(domain: DomainConfig) -> list[str]:
@@ -127,9 +130,11 @@ def _get_with_retry(url: str, source_config: dict) -> httpx.Response:
                         return response
                     last_response = response
                     if attempt >= max_retries:
-                        break
+                        response.raise_for_status()
                     time.sleep(_retry_after_seconds(response, attempt, backoff_seconds, max_backoff_seconds))
             except httpx.HTTPError as exc:
+                if getattr(getattr(exc, "response", None), "status_code", None) in {401, 403, 429}:
+                    raise  # Never switch hosts to evade access denial or rate limits.
                 last_error = exc
                 continue
     if last_response is not None:

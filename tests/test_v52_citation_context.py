@@ -209,6 +209,7 @@ def test_pipeline_enriches_citation_context_before_rule_writer(tmp_path, monkeyp
         source="openalex",
         item_type="paper",
         title="Citation-aware Quantum Compilation",
+        source_updated_at="2026-07-07T00:00:00Z",
         url="https://doi.org/10.1234/context",
         doi="10.1234/context",
         abstract=(

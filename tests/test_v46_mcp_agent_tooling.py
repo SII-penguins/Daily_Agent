@@ -11,7 +11,7 @@ def test_pyproject_exposes_daily_agent_mcp_script_and_optional_dependency():
     payload = tomllib.loads((ROOT / "pyproject.toml").read_text(encoding="utf-8"))
 
     assert payload["project"]["scripts"]["daily-agent-mcp"] == "daily_agent.mcp_server:main"
-    assert "mcp[cli]>=1.0.0" in payload["project"]["optional-dependencies"]["mcp"]
+    assert "mcp[cli]>=1.0.0,<2" in payload["project"]["optional-dependencies"]["mcp"]
 
 
 def test_setup_checklist_prompts_agent_to_customize_core_preferences():
@@ -25,16 +25,22 @@ def test_setup_checklist_prompts_agent_to_customize_core_preferences():
         assert source in text
 
 
-def test_readme_uses_simple_mcp_add_flow_for_codex_and_claude_code():
+def test_readme_links_to_simple_mcp_add_flow_for_codex_and_claude_code():
     readme = (ROOT / "README.md").read_text(encoding="utf-8")
     chinese = (ROOT / "README.zh-CN.md").read_text(encoding="utf-8")
 
-    assert "codex mcp add daily-agent -- daily-agent-mcp" in readme
-    assert "claude mcp add daily-agent -- daily-agent-mcp" in readme
-    assert "daily-agent-mcp" in readme
-    assert "codex mcp add daily-agent -- daily-agent-mcp" in chinese
-    assert "claude mcp add daily-agent -- daily-agent-mcp" in chinese
-    assert "正常使用时，不需要手动先运行 `daily-agent-mcp`" in chinese
+    # Project guides must keep the detailed local setup reachable in each language.
+    assert "](docs/local-guide.md)" in readme
+    assert "](docs/local-guide.zh-CN.md)" in chinese
+    local_guide = (ROOT / "docs/local-guide.md").read_text(encoding="utf-8")
+    chinese_guide = (ROOT / "docs/local-guide.zh-CN.md").read_text(encoding="utf-8")
+
+    assert "codex mcp add daily-agent -- daily-agent-mcp" in local_guide
+    assert "claude mcp add daily-agent -- daily-agent-mcp" in local_guide
+    assert "daily-agent-mcp" in local_guide
+    assert "codex mcp add daily-agent -- daily-agent-mcp" in chinese_guide
+    assert "claude mcp add daily-agent -- daily-agent-mcp" in chinese_guide
+    assert "正常使用时，不需要手动先运行 `daily-agent-mcp`" in chinese_guide
 
 
 def test_mcp_secrets_template_invokes_quality_template_cli(monkeypatch):

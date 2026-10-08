@@ -72,6 +72,8 @@ def build_shortlist(config: AppConfig, library: dict[str, MaterialRecord], run_d
             continue
         records.append(record)
     records.sort(key=lambda item: item.score, reverse=True)
+    from daily_agent.scoring.topics import balanced_quantum_order
+    records = balanced_quantum_order(records, config)
 
     selected: list[MaterialRecord] = []
     selected_keys: set[str] = set()
@@ -111,9 +113,17 @@ def _paper_review_target(config: AppConfig) -> int:
 
 
 def draft_report_items(config: AppConfig, shortlist: list[MaterialRecord], use_llm: bool = True) -> list[EditorialDraft]:
+    from daily_agent.deferred_review_cache import draft_report_items as cached_draft_report_items
+    return cached_draft_report_items(config, shortlist, use_llm, _draft_report_items_uncached)
+
+
+def _draft_report_items_uncached(config: AppConfig, shortlist: list[MaterialRecord], use_llm: bool = True) -> list[EditorialDraft]:
     from daily_agent.reading import CORE, read_papers, verify_draft, semantic_review
     settings = _llm_writer_settings(config)
     def invoke(prompt, timeout, image_path=None):
+        if settings['provider'] == 'parent_queue':
+            from daily_agent.parent_writer import request
+            return request(settings['workdir'], prompt, timeout, image_path)
         command = _llm_writer_command(settings, prompt)
         if image_path:
             images = image_path if isinstance(image_path, list) else [image_path]
@@ -144,20 +154,7 @@ def draft_report_items(config: AppConfig, shortlist: list[MaterialRecord], use_l
             record.paper_text_status['sufficient_for_deep_summary'] = False
     from daily_agent.paper_document import load_json, atomic_json
     cached_drafts = {}
-    for record in structured:
-        fingerprint = record.reading.get("fingerprint")
-        if use_llm and record.reading.get("complete") and not record.reading.get("visual", {}).get("required_pages") and fingerprint:
-            value = load_json(config.root / "data" / "reading" / fingerprint / "draft-v3.json")
-            if isinstance(value, dict) and value.get("key") == record.key:
-                try:
-                    candidate = EditorialDraft.from_dict(value)
-                    _validated_draft_fields(candidate.draft_fields, "paper")
-                    if (isinstance(candidate.verification, dict)
-                            and candidate.verification.get("semantic_support") == "model_checked"
-                            and isinstance(candidate.claim_evidence, list)):
-                        cached_drafts[record.key] = candidate
-                except (TypeError, ValueError):
-                    pass
+    # Cross-day draft reuse is handled by the integrity-checked outer cache.
     pending = [r for r in shortlist if r.key not in cached_drafts]
     drafts = []
     if use_llm and pending:
@@ -267,6 +264,29 @@ def approve_publication(
 
 def _limit_approved_items(config: AppConfig, approved: list[ApprovedItem]) -> list[ApprovedItem]:
     max_items = max(0, int(config.quota.get("max_items", 10)))
+    if config.sources.get("selection", {}).get("balance_quantum_directions", False):
+        from daily_agent.scoring.topics import balanced_quantum_order
+        by_key = {item.key: item for item in approved}
+        ordered = [by_key[record.key] for record in balanced_quantum_order([item.material for item in approved], config)]
+        selected, seen = [], set()
+        targets = {"paper": int(config.quota.get("paper_target", 8)), "repo": int(config.quota.get("github_target", 2)),
+                   "quantum": int(config.quota.get("quantum_target", 6)), "exploratory": int(config.quota.get("exploratory_target", 4))}
+        counts = dict.fromkeys(targets, 0)
+        from daily_agent.scoring.topics import qas_qnas_subtopic
+        qas_count = 0
+        qas_cap = int(config.sources.get("selection", {}).get("qas_qnas_soft_cap", 3))
+        for strict in (True, False):
+            for item in ordered:
+                group = "quantum" if item.material.quota_group == "quantum" else "exploratory"
+                if item.key in seen or len(selected) >= max_items:
+                    continue
+                qas = item.item_type == "paper" and bool(qas_qnas_subtopic(item.material))
+                if strict and ((qas and qas_count >= qas_cap) or counts[item.item_type] >= targets[item.item_type] or counts[group] >= targets[group]):
+                    continue
+                selected.append(item); seen.add(item.key)
+                counts[item.item_type] += 1; counts[group] += 1
+                qas_count += int(qas)
+        return selected
     if len(approved) <= max_items:
         return approved
     paper_target = max(0, int(config.quota.get("paper_target", 8)))
@@ -575,8 +595,8 @@ def _draft_with_llm(shortlist: list[MaterialRecord]) -> list[EditorialDraft]:
 def _llm_writer_settings(config: AppConfig) -> dict[str, Any]:
     source_config = config.sources.get("llm_writer", {}) or {}
     provider = str(source_config.get("provider") or _DEFAULT_LLM_WRITER_SETTINGS["provider"]).strip().lower()
-    if provider != "codex":
-        raise ValueError(f"Daily Agent internal writing requires provider=codex, got {provider or '<empty>'}")
+    if provider not in {"codex", "parent_queue"}:
+        raise ValueError(f"Daily Agent writing requires codex or explicit parent_queue, got {provider or '<empty>'}")
     return {
         "provider": provider,
         "command": str(source_config.get("command") or provider),
@@ -602,13 +622,18 @@ def _draft_with_llm_batch(shortlist: list[MaterialRecord], timeout_seconds: floa
                    + json.dumps(feedback, ensure_ascii=False))
     result = None
     try:
-        result = subprocess.run(
-            _llm_writer_command(settings, prompt),
-            check=True,
-            capture_output=True,
-            text=True,
-            timeout=timeout_seconds,
-        )
+        if settings['provider'] == 'parent_queue':
+            from daily_agent.parent_writer import request
+            from types import SimpleNamespace
+            result = SimpleNamespace(stdout=json.dumps(request(settings['workdir'], prompt, timeout_seconds, stage='draft'), ensure_ascii=False))
+        else:
+            result = subprocess.run(
+                _llm_writer_command(settings, prompt),
+                check=True,
+                capture_output=True,
+                text=True,
+                timeout=timeout_seconds,
+            )
         if any(r.paper_document for r in shortlist):
             from pathlib import Path
             from daily_agent.paper_document import atomic_json, digest
@@ -642,7 +667,6 @@ def _llm_writer_command(settings: dict[str, Any], prompt: str) -> list[str]:
         command,
         "exec",
         "--ephemeral",
-        "--ignore-rules",
     ]
     if not settings.get("load_user_config", False):
         args.append("--ignore-user-config")

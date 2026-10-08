@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import re
-from datetime import datetime, timedelta, timezone
+from datetime import date, datetime, timedelta, timezone
 from typing import Any
 
 import httpx
@@ -10,6 +10,7 @@ from daily_agent.config import AppConfig, DomainConfig
 from daily_agent.connectors.publication_types import allowed_publication_types, publication_type_allowed
 from daily_agent.connectors.queries import scholarly_queries
 from daily_agent.models import DigestItem
+from daily_agent.connectors.source_failures import failure_record, finish_collection
 
 CROSSREF_WORKS_URL = "https://api.crossref.org/works"
 
@@ -25,12 +26,22 @@ def fetch_crossref(config: AppConfig, target_date: datetime | None = None, windo
     max_queries_per_domain = int(source_config.get("max_queries_per_domain", 0) or 0)
     allowed_types = allowed_publication_types(source_config)
     items: list[DigestItem] = []
+    failures, errors = [], []
+    successful_requests = 0
     seen_queries: set[str] = set()
+    from daily_agent.author_context import watchlist_discovery_queries
+    watch_queries = watchlist_discovery_queries(config, limit=min(2, max(0, int(source_config.get("watchlist_query_slots", 2)))))
     with httpx.Client(timeout=timeout, follow_redirects=True, headers={"User-Agent": "Daily-Agent/0.1"}) as client:
         for domain in config.domains:
             queries = _queries(domain)
             if max_queries_per_domain > 0:
                 queries = queries[:max_queries_per_domain]
+            # Replace slots, never append requests; retain at least one core
+            # topical query. Candidate hits still pass normal date/topic gates.
+            slots = min(len(watch_queries), max(0, len(queries) - 1))
+            if slots:
+                queries = [*queries[:-slots], *watch_queries[:slots]]
+                watch_queries = watch_queries[slots:]
             for query in queries:
                 if query in seen_queries:
                     continue
@@ -38,9 +49,16 @@ def fetch_crossref(config: AppConfig, target_date: datetime | None = None, windo
                 try:
                     response = client.get(CROSSREF_WORKS_URL, params=_params(query, target, days, max_results))
                     response.raise_for_status()
-                except (httpx.HTTPError, ValueError):
+                    payload = response.json()
+                    if not isinstance(payload, dict): raise ValueError("Expected source JSON object")
+                    successful_requests += 1
+                except (httpx.HTTPError, ValueError) as exc:
+                    errors.append(exc)
+                    failures.append(failure_record(query, exc))
+                    if getattr(getattr(exc, "response", None), "status_code", None) in {401, 403, 429}:
+                        return finish_collection("Crossref", items, failures, errors, successful_requests)
                     continue
-                for work in response.json().get("message", {}).get("items", []) or []:
+                for work in payload.get("message", {}).get("items", []) or []:
                     if not publication_type_allowed(work.get("type"), allowed_types):
                         continue
                     items.append(_work_to_item(work, domain))
@@ -62,12 +80,19 @@ def fetch_crossref(config: AppConfig, target_date: datetime | None = None, windo
                     try:
                         response = client.get(f"https://api.crossref.org/journals/{issn}/works", params=params)
                         response.raise_for_status()
-                    except (httpx.HTTPError, ValueError):
+                        payload = response.json()
+                        if not isinstance(payload, dict): raise ValueError("Expected source JSON object")
+                        successful_requests += 1
+                    except (httpx.HTTPError, ValueError) as exc:
+                        errors.append(exc)
+                        failures.append(failure_record(f"journal:{issn} query:{query}", exc))
+                        if getattr(getattr(exc, "response", None), "status_code", None) in {401, 403, 429}:
+                            return finish_collection("Crossref", items, failures, errors, successful_requests)
                         continue
-                    for work in response.json().get("message", {}).get("items", []) or []:
+                    for work in payload.get("message", {}).get("items", []) or []:
                         if work.get("type") == "journal-article":
                             items.append(_work_to_item(work, domain))
-    return list({item.canonical_key(): item for item in items}.values())
+    return finish_collection("Crossref", list({item.canonical_key(): item for item in items}.values()), failures, errors, successful_requests)
 
 
 def _queries(domain: DomainConfig) -> list[str]:
@@ -107,10 +132,12 @@ def _work_to_item(work: dict[str, Any], domain: DomainConfig) -> DigestItem:
         quota_group=domain.quota_group,
         raw={
             "domain": domain.name,
+            "authorships": [{"name": _author_name(a), "orcid": a.get("ORCID"), "institutions": [i.get("name", "") for i in a.get("affiliation", []) if i.get("name")]} for a in work.get("author", []) or []],
             "venue": venue,
             "publisher": work.get("publisher"),
             "cited_by_count": work.get("is-referenced-by-count"),
             "publication_type": work.get("type"),
+            "publication_date_precision": {4: "year", 7: "month", 10: "day"}.get(len(published_at or ""), "unknown"),
         },
     )
 
@@ -122,11 +149,21 @@ def _first(value: Any) -> str | None:
 
 
 def _date_parts(value: Any) -> str | None:
-    parts = (value or {}).get("date-parts") or []
-    if not parts or not parts[0]:
+    # Preserve source precision: padding year/month metadata would manufacture
+    # an exact date and incorrectly admit it through the discovery-window gate.
+    parts = value.get("date-parts") if isinstance(value, dict) else None
+    if not isinstance(parts, list) or not parts or not isinstance(parts[0], list):
         return None
-    year, month, day = [*parts[0], 1, 1][:3]
-    return f"{int(year):04d}-{int(month):02d}-{int(day):02d}"
+    fields = parts[0]
+    if not 1 <= len(fields) <= 3 or any(type(part) is not int for part in fields):
+        return None
+    try:
+        # Defaults validate the supplied components only; never publish them.
+        date(*([*fields, 1, 1][:3]))
+    except ValueError:
+        return None
+    return "-".join(f"{part:04d}" if index == 0 else f"{part:02d}"
+                    for index, part in enumerate(fields))
 
 
 def _author_name(author: dict[str, Any]) -> str:

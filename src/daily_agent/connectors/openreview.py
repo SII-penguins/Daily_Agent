@@ -13,6 +13,17 @@ OPENREVIEW_NOTES_URL = "https://api2.openreview.net/notes"
 OPENREVIEW_BASE_URL = "https://openreview.net"
 
 
+class OpenReviewPartialError(RuntimeError):
+    """Preserve successful notes while exposing every failed venue probe."""
+
+    def __init__(self, items, failures):
+        self.partial_items = items
+        self.partial_success = True
+        self.failures = failures
+        super().__init__("OpenReview partial collection: " + "; ".join(
+            f"{row['venue']}: {row['message']}" for row in failures))
+
+
 class OpenReviewAccessError(httpx.HTTPStatusError):
     """Explicit source outage, never an empty successful collection."""
 
@@ -27,6 +38,7 @@ def fetch_openreview(config: AppConfig, target_date: datetime | None = None, win
     venues = source_config.get("venues", []) or []
     items: list[DigestItem] = []
     errors = []
+    failures = []
     successful_requests = 0
     with httpx.Client(timeout=timeout, follow_redirects=True, headers={"User-Agent": "Daily-Agent/0.1"}) as client:
         for venue in venues:
@@ -47,6 +59,9 @@ def fetch_openreview(config: AppConfig, target_date: datetime | None = None, win
                 successful_requests += 1
             except (httpx.HTTPError, ValueError, OpenReviewAccessError) as exc:
                 errors.append(exc)
+                failures.append({"venue": venue_id or invitation, "type": type(exc).__name__,
+                                 "status_code": exc.response.status_code if isinstance(exc, httpx.HTTPStatusError) else None,
+                                 "message": str(exc)})
                 continue
             for note in payload.get("notes", []) or []:
                 item = _note_to_item(note, str(venue.get("name") or invitation))
@@ -54,8 +69,15 @@ def fetch_openreview(config: AppConfig, target_date: datetime | None = None, win
                     continue
                 if _matches_interest(item, config):
                     items.append(item)
-    if errors and not successful_requests:
-        raise errors[-1]
+    if errors:
+        if successful_requests:
+            raise OpenReviewPartialError(items, failures)
+        error = errors[-1]
+        error.partial_items = []
+        error.failures = failures
+        error.args = ("OpenReview collection failed: " + "; ".join(
+            f"{row['venue']}: {row['message']}" for row in failures),)
+        raise error
     return items
 
 

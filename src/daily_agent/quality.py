@@ -83,6 +83,11 @@ def _check_llm_writer(config: AppConfig) -> QualityCheck:
     run_budget_seconds = float(source_config.get("run_budget_seconds", 14_400) or 0)
     batch_size = int(source_config.get("batch_size", 2) or 0)
     name = "Codex writer"
+    if provider == "parent_queue":
+        return QualityCheck("llm_writer", "Parent-assisted writer", "fallback", True,
+                            "Explicit queued native-assistant transport; not an autonomous Codex CLI runtime. "
+                            "Responses require provenance and independent review before unchanged evidence checks.",
+                            "Service pending jobs with separate writer/reviewer identities before the issue deadline.")
     if provider != "codex":
         return QualityCheck(
             "llm_writer",
@@ -619,16 +624,17 @@ def _check_source_limits(config: AppConfig) -> QualityCheck:
     _require_min_number(config.sources, "openreview", "timeout_seconds", 60, issues)
     _require_min_len(config.sources, "openreview", "venues", 2, issues)
 
-    _require_min_int(config.sources, "pmlr", "recent_days", 365, issues)
+    calendar_window = int(config.sources.get("discovery", {}).get("lookback_calendar_months", 0)) > 0
+    _require_min_int(config.sources, "pmlr", "recent_days", 89 if calendar_window else 365, issues)
     _require_min_int(config.sources, "pmlr", "max_results_per_volume", 100, issues)
     _require_min_number(config.sources, "pmlr", "timeout_seconds", 60, issues)
     _require_min_len(config.sources, "pmlr", "volumes", 2, issues)
 
-    _require_min_int(config.sources, "neurips", "recent_days", 365, issues)
+    _require_min_int(config.sources, "neurips", "recent_days", 89 if calendar_window else 365, issues)
     _require_min_int(config.sources, "neurips", "max_results_per_year", 100, issues)
     _require_min_int(config.sources, "neurips", "max_detail_pages_per_year", 100, issues)
     _require_min_number(config.sources, "neurips", "timeout_seconds", 60, issues)
-    _require_min_len(config.sources, "neurips", "years", 3, issues)
+    _require_min_len(config.sources, "neurips", "years", 1 if calendar_window else 3, issues)
 
     if not issues:
         return QualityCheck("source_limits", "Source high-recall limits", "full", True, "all source limits meet full profile thresholds")

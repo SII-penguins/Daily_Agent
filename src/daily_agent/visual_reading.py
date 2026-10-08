@@ -7,6 +7,8 @@ from pathlib import Path
 from daily_agent.paper_document import digest,load_json,atomic_json,evidence_settings
 
 
+PROTOCOL_SHA256 = hashlib.sha256(Path(__file__).read_bytes()).hexdigest()
+
 def valid_visual(note,page):
     return (isinstance(note,dict) and note.get('page')==page['page']
         and isinstance(note.get('summary'),str) and 0<len(note['summary'])<=2500
@@ -28,11 +30,11 @@ def read_visuals(records,config,invoke=None):
             actual=hashlib.sha256(image.read_bytes()).hexdigest()
             if actual!=page.get('image_hash'):
                 return None, {'page':page['page'],'reason':'页面图像校验不匹配'}
-            fingerprint=digest([actual,page['page'],page['text'],evidence_settings(cfg),config.sources.get('llm_writer',{}),2])
+            fingerprint=digest([PROTOCOL_SHA256,actual,page['page'],page['text'],evidence_settings(cfg),config.sources.get('llm_writer',{}),2])
             cache=config.root/'data'/'reading'/'visual'/f'{fingerprint}.json'
             note=load_json(cache)
             if not valid_visual(note,page):
-                legacy=digest([actual,page['page'],page['text'],cfg,config.sources.get('llm_writer',{}),2])
+                legacy=digest([PROTOCOL_SHA256,actual,page['page'],page['text'],cfg,config.sources.get('llm_writer',{}),2])
                 old=load_json(config.root/'data'/'reading'/'visual'/f'{legacy}.json')
                 if valid_visual(old,page):
                     note=old
