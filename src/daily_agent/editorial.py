@@ -258,6 +258,14 @@ def approve_publication(
                 approval_notes=(draft.verification.get("label") or "旧版结构审核通过；未完成新版证据核验"),
             )
         )
+    if config.delivery.get("cloud", {}).get("profile"):
+        # Count only deliverable evidence before quota allocation. Otherwise a
+        # limited PASS can stop refill or displace a fully reviewed candidate,
+        # only to be removed by the independent handoff audit later.
+        from daily_agent.cloud_workflow import _qualifying_rows
+        rows, _ = _qualifying_rows([item.to_dict() for item in approved])
+        qualifying = {row["key"] for row in rows}
+        approved = [item for item in approved if item.key in qualifying]
     approved.sort(key=lambda item: (item.item_type == "paper" and item.material.reading.get("verification", {}).get("status") == "limited"))
     return _limit_approved_items(config, approved)
 
