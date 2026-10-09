@@ -98,18 +98,50 @@ def audit_label(manifest):
     return '发送已受理；尚未完成投递回读核验'
 
 
+REVISION_FIELDS=('edition_type','revision_id','revision_number','parent_identity','contract_sha256')
+
+
+def _revision_metadata(manifest):
+    """Validate revision provenance without changing legacy manifest handling."""
+    if manifest.get('schema_version')!=3 and not any(field in manifest for field in REVISION_FIELDS):
+        return {}
+    if (manifest.get('schema_version')!=3 or manifest.get('kind')!='report'
+            or manifest.get('edition_type')!='production_revision'
+            or type(manifest.get('revision_number')) is not int or manifest['revision_number']<=0):
+        raise ValueError('Invalid production revision metadata')
+    for field in ('identity','revision_id','parent_identity','contract_sha256'):
+        if not isinstance(manifest.get(field),str) or not re.fullmatch('[0-9a-f]{64}',manifest[field]):
+            raise ValueError('Invalid production revision '+field)
+    return {field:manifest[field] for field in REVISION_FIELDS}
+
+
+def archive_entry_key(manifest):
+    """Return a stable same-depth archive key for original, pilot or revision."""
+    day=strict_date(manifest['date']).isoformat()
+    revision=_revision_metadata(manifest)
+    if revision:
+        return f"reports/{day}-r{revision['revision_number']}-{manifest['identity'][:12]}"
+    if manifest['kind']=='pilot':
+        return 'examples/'+day+'-'+manifest['identity'][:12]
+    return 'reports/'+day
+
+
 def collect_entries(roots, include_current=None):
     """Read only cryptographically verified, accepted/confirmed source snapshots."""
     from daily_agent.cloud_workflow import read_handoff, _safe_relative
+    from daily_agent.production_revision import iter_handoffs
     results=[]
     current=None
     roots=list(roots)
     if include_current is not None:
-        if not isinstance(include_current,dict) or set(include_current)!={'root','date','identity'}:
+        if (not isinstance(include_current,dict)
+                or set(include_current) not in ({'root','date','identity'},{'root','date','identity','revision_id'})):
             raise ValueError('Current candidate requires root, date and sealed identity')
         strict_date(include_current['date'])
         if not re.fullmatch('[0-9a-f]{64}',str(include_current['identity'])):
             raise ValueError('Invalid candidate identity')
+        if 'revision_id' in include_current and not re.fullmatch('[0-9a-f]{64}',str(include_current['revision_id'])):
+            raise ValueError('Invalid candidate revision identity')
         current={**include_current,'root':str(Path(include_current['root']).resolve())}
         roots.append(current['root'])
     seen_roots=set(); matched_current=False
@@ -117,10 +149,16 @@ def collect_entries(roots, include_current=None):
         root=Path(raw_root).resolve()
         if str(root) in seen_roots: continue
         seen_roots.add(str(root))
-        for journal in sorted((root/'data/state/cloud-delivery').glob('*.json')):
-            day=strict_date(journal.stem)
-            manifest=read_handoff(root,day)
-            selected=bool(current and current['root']==str(root) and current['date']==day.isoformat())
+        def snapshots():
+            for journal in sorted((root/'data/state/cloud-delivery').glob('*.json')):
+                day=strict_date(journal.stem)
+                yield {**read_handoff(root,day),'date':day.isoformat()}
+            yield from iter_handoffs(root)
+        for manifest in snapshots():
+            day=strict_date(manifest['date'])
+            revision=_revision_metadata(manifest)
+            selected=bool(current and current['root']==str(root) and current['date']==day.isoformat()
+                and current.get('revision_id')==revision.get('revision_id'))
             if selected:
                 if manifest['identity']!=current['identity'] or manifest['state'] not in {'prepared','accepted','confirmed'}:
                     raise ValueError('Current candidate is not the exact prepared or received handoff')
@@ -128,13 +166,13 @@ def collect_entries(roots, include_current=None):
             if not selected and manifest['state'] not in {'accepted','confirmed'}: continue
             category='examples' if manifest['kind']=='pilot' else 'reports'
             # Examples never count as a formal daily edition, even when sent.
-            slug=day.isoformat() + ('-'+manifest['identity'][:12] if category=='examples' else '')
+            key=archive_entry_key(manifest)
             content=(_safe_relative(root,manifest['html_report']).read_bytes() if manifest.get('html_report') else None)
             source_sha=sha(content) if content else manifest['body_sha256']
-            record={'key':category+'/'+slug, 'date':day.isoformat(), 'category':category,
+            record={'key':key, 'date':day.isoformat(), 'category':category,
                 'kind':manifest['kind'], 'format':'html' if content else 'text', 'created_at':manifest.get('created_at',''), 'source_sha256':source_sha, 'identity':manifest['identity'],
                 'approval_sha256':manifest['approval_sha256'], 'audit':audit_label(manifest),
-                'page':category+'/'+slug+'/index.html'}
+                'page':key+'/index.html', **revision}
             results.append((record,content,manifest['body']))
     if current and not matched_current: raise ValueError('Current candidate not found')
     return results
@@ -150,7 +188,9 @@ def _put(root, relative, data, files):
 
 
 def _entry_page(record, content, body, output, files):
-    navigation='<nav class="archive-bar" aria-label="日报归档"><a href="../../index.html">← 按日期浏览全部日报</a><span>'+text(record['date'])+' · '+('验收样例，非正式日报' if record['category']=='examples' else '每日快照')+'</span></nav>'
+    edition='验收样例，非正式日报' if record['category']=='examples' else '每日快照'
+    if record.get('edition_type')=='production_revision': edition+=' · 修订版 r'+str(record['revision_number'])
+    navigation='<nav class="archive-bar" aria-label="日报归档"><a href="../../index.html">← 按日期浏览全部日报</a><span>'+text(record['date'])+' · '+edition+'</span></nav>'
     audit='<aside class="archive-audit"><p>'+text(record['audit'])+'</p><p>此页保留首次归档时的内容；最新投递审计状态见日期目录。</p></aside>'
     if content is not None:
         source=content.decode('utf-8'); inspect_html(source)
@@ -172,14 +212,24 @@ def _entry_page(record, content, body, output, files):
     _put(output,record['page'],source.encode(),files)
 
 
+def _entry_order(entry):
+    return (entry['date'],entry.get('revision_number',0),entry.get('created_at',''),entry['key'])
+
+
 def _index(entries, base_url=None):
     sections=[]
+    revised_days={e['date'] for e in entries if e.get('edition_type')=='production_revision'}
+    def label(entry,category):
+        if entry.get('edition_type')=='production_revision': return '打开修订版 r'+str(entry['revision_number'])
+        if category=='reports' and entry['date'] in revised_days: return '日报状态' if entry['kind']=='status' else '打开原版日报'
+        return '日报状态' if entry['kind']=='status' else '打开日报' if category=='reports' else ('HTML 验收样例' if entry.get('format')=='html' else '文本验收样例' if entry.get('format')=='text' else '打开验收样例')
     for category,title in [('reports','每日归档'),('examples','验收样例 · 不计入正式日报')]:
-        chosen=sorted((e for e in entries if e['category']==category),key=lambda e:(e['date'],e.get('created_at',''),e['key']),reverse=True)
-        rows=''.join('<li><a href="'+text(e['page'])+'"><time datetime="'+e['date']+'">'+e['date']+'</time><span>'+('日报状态' if e['kind']=='status' else '打开日报' if category=='reports' else ('HTML 验收样例' if e.get('format')=='html' else '文本验收样例' if e.get('format')=='text' else '打开验收样例'))+' →</span></a><small>'+text(e['audit'])+'</small></li>' for e in chosen)
+        chosen=sorted((e for e in entries if e['category']==category),key=_entry_order,reverse=True)
+        rows=''.join('<li><a href="'+text(e['page'])+'"><time datetime="'+e['date']+'">'+e['date']+'</time><span>'+label(e,category)+' →</span></a><small>'+text(e['audit'])+'</small></li>' for e in chosen)
         sections.append('<section class="archive-section"><h2>'+title+'</h2>'+('<ul class="archive-list">'+rows+'</ul>' if chosen else ('<p class="empty-state">尚无正式日报。实际日报生成并受理发送后，才会出现对应日期；不会补造历史日期。</p>' if category=='reports' else '<p class="empty-state">尚无已归档的验收样例。</p>'))+'</section>')
-    reports=sorted((e for e in entries if e['category']=='reports'),key=lambda e:e['date'],reverse=True)
-    latest='<a class="latest-report" href="'+text(reports[0]['page'])+'">直接阅读最新日报 · '+reports[0]['date']+' →</a>' if reports else ''
+    reports=sorted((e for e in entries if e['category']=='reports'),key=_entry_order,reverse=True)
+    latest_edition=(' · 修订版 r'+str(reports[0]['revision_number'])) if reports and reports[0].get('edition_type')=='production_revision' else ''
+    latest='<a class="latest-report" href="'+text(reports[0]['page'])+'">直接阅读最新日报 · '+reports[0]['date']+latest_edition+' →</a>' if reports else ''
     if not reports:
         examples=sorted((e for e in entries if e['category']=='examples'),key=lambda e:(e['date'],e.get('created_at',''),e['key']),reverse=True)
         if examples:
@@ -211,6 +261,11 @@ def verify_archive(output):
                 if key not in documents or unquote(parts.fragment) not in documents[key].ids: raise ValueError('Broken archive anchor: '+url)
     for entry in manifest['entries']:
         strict_date(entry['date'])
+        if any(field in entry for field in REVISION_FIELDS):
+            revision={**entry,'schema_version':3}
+            key=archive_entry_key(revision)
+            if entry.get('category')!='reports' or entry.get('key')!=key or entry.get('page')!=key+'/index.html':
+                raise ValueError('Invalid production revision archive entry')
         if entry['page'] not in manifest['files']: raise ValueError('Missing date page')
     return manifest
 
@@ -234,6 +289,8 @@ def export_archive(roots, output, *, base_url=None, include_current=None):
             if previous:
                 for field in ('source_sha256','identity','approval_sha256','date','category','kind','page'):
                     if previous[field]!=record[field]: raise ValueError('Existing dated report is immutable: '+record['key'])
+                for field in REVISION_FIELDS:
+                    if previous.get(field)!=record.get(field): raise ValueError('Existing revision provenance is immutable: '+record['key'])
                 previous['audit']=record['audit']
                 for field in ('format','created_at'):
                     if field in record: previous[field]=record[field]
@@ -258,10 +315,13 @@ def main(argv=None):
     parser.add_argument('--root',action='append',default=[]); parser.add_argument('--output',required=True)
     parser.add_argument('--base-url'); parser.add_argument('--verify',action='store_true')
     parser.add_argument('--current-root'); parser.add_argument('--current-date'); parser.add_argument('--current-identity')
+    parser.add_argument('--current-revision-id')
     args=parser.parse_args(argv)
     current_values=(args.current_root,args.current_date,args.current_identity)
     if any(current_values) and not all(current_values): parser.error('All three --current-* options are required')
+    if args.current_revision_id and not all(current_values): parser.error('--current-revision-id requires all three --current-* options')
     current=dict(zip(('root','date','identity'),current_values)) if all(current_values) else None
+    if current is not None and args.current_revision_id: current['revision_id']=args.current_revision_id
     result=verify_archive(args.output) if args.verify else export_archive(args.root,args.output,base_url=args.base_url,include_current=current)
     print(json.dumps({'entries':len(result['entries']),'files':len(result['files']),'output':str(Path(args.output).resolve())}))
 

@@ -36,6 +36,11 @@ def materials_dir(config: AppConfig) -> Path:
 
 
 def editorial_dir(config: AppConfig, run_date: date) -> Path:
+    revision_id = config.delivery.get("cloud", {}).get("production_revision_id")
+    if revision_id is not None:
+        from daily_agent.production_revision import issue_dir, read_contract
+        read_contract(config.root, run_date, revision_id)
+        return issue_dir(config.root, run_date, revision_id) / "editorial"
     return config.root / "data" / "editorial" / run_date.isoformat()
 
 
@@ -61,6 +66,25 @@ def load_material_library(config: AppConfig) -> dict[str, MaterialRecord]:
 
 def write_material_library(config: AppConfig, library: dict[str, MaterialRecord]) -> Path:
     ensure_storage_dirs(config)
+    if config.delivery.get('cloud', {}).get('production_revision_id') is not None:
+        # Revision replays carry frozen evidence, never authority to rewind the
+        # shared publication ledger or discard concurrently added materials.
+        from copy import deepcopy
+        current = load_material_library(config)
+        merged = deepcopy(current)
+        for key, incoming in library.items():
+            record = deepcopy(incoming)
+            existing = current.get(key)
+            if existing is not None:
+                from daily_agent.material_pool import same_source_version
+                if existing.quality_status in {'rejected', 'archived'} or not same_source_version(record, existing):
+                    continue
+                record.published_dates = list(dict.fromkeys(existing.published_dates + record.published_dates))
+                if existing.raw.get('published_paper_identity'):
+                    record.raw['published_paper_identity'] = existing.raw['published_paper_identity']
+                if existing.quality_status == 'published': record.quality_status = 'published'
+            merged[key] = record
+        library = merged
     path = materials_dir(config) / MATERIAL_LIBRARY_NAME
     payload = {
         "schema_version": 1,
@@ -935,6 +959,23 @@ def _retained_delivery_artifacts(config: AppConfig) -> set[Path]:
             if not isinstance(value, dict):
                 raise StateCorrupt(f"Invalid retained delivery record: {manifest}")
             collect(value)
+    # Revision contracts, seals, and receipts own shared PDF/figure assets too.
+    # Validation is read-only and fail-closed before any retention deletion.
+    for path in (config.state_dir / 'production-revisions').glob('*/*/contract.json'):
+        from daily_agent.production_revision import read_contract, _ready, read_handoff
+        day = date.fromisoformat(path.parent.parent.name)
+        rid = path.parent.name
+        collect(read_contract(config.root, day, rid))
+        from daily_agent.production_revision import digest
+        for enriched in (path.parent / 'batches').glob('*.enriched.json'):
+            envelope = read_json(enriched)
+            if (not isinstance(envelope, dict) or set(envelope) != {'payload', 'sha256'}
+                    or digest(envelope['payload']) != envelope['sha256']
+                    or not isinstance(envelope['payload'], list)):
+                raise StateCorrupt('Invalid retained revision enrichment')
+            collect(envelope['payload'])
+        if (path.parent / 'ready.json').exists(): collect(_ready(config.root, day, rid))
+        if (path.parent / 'handoff.json').exists(): collect(read_handoff(config.root, day, rid))
     return protected
 
 
@@ -1072,3 +1113,37 @@ def _parse_date(value: str | None) -> date | None:
 
 def _utc_now() -> str:
     return datetime.now(timezone.utc).replace(microsecond=0).isoformat()
+
+
+def write_revision_publication(config: AppConfig, manifest: dict) -> Path:
+    """Append an exact confirmed edition; never replace a legacy date/rank index.
+
+    This immutable event and its delivery receipt are authoritative. A latest
+    pointer is rebuildable and is intentionally not the publication history.
+    """
+    from daily_agent.production_revision import read_handoff, digest
+    from daily_agent.scheduling import _approved_items
+    from daily_agent.workflow_state import exclusive_lock
+    day = date.fromisoformat(manifest['date'])
+    verified = read_handoff(config.root, day, manifest['revision_id'])
+    if (verified['identity'] != manifest['identity'] or verified['state'] != 'confirmed'
+            or verified.get('verified_site_delivery') != verified.get('delivery_identity')):
+        raise StateCorrupt('Confirmed exact revision required for publication')
+    rows = [{'rank': rank, 'key': item.key, 'source': item.source,
+             'item_type': item.item_type, 'title': item.title, 'url': item.url,
+             'tags': item.material.tags, 'quota_group': item.material.quota_group,
+             'score': item.material.score}
+            for rank, item in enumerate(_approved_items(verified['approval']), 1)]
+    event = {key: verified[key] for key in ('date', 'revision_id', 'revision_number',
+             'parent_identity', 'identity', 'approval_sha256', 'contract_sha256',
+             'conversation', 'message_id', 'confirmed_at')}
+    event.update(schema_version=1, records=rows)
+    envelope = {'payload': event, 'sha256': digest(event)}
+    folder = config.state_dir / 'revision-publications'
+    path = folder / (manifest['revision_id'] + '.json')
+    with exclusive_lock(folder / '.lock'):
+        previous = read_json(path)
+        if previous is not None and previous != envelope:
+            raise StateCorrupt('Revision publication event is immutable')
+        if previous is None: atomic_json(path, envelope)
+    return path

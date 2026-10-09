@@ -88,11 +88,12 @@ def test_generation_journals_launch_and_cleans_previous_day(cloud,monkeypatch):
     import daily_agent.workflow_runtime as runtime
     cfg=_config(cloud);path=cfg.state_dir/'cloud-generation.json'
     identity={'pid':98765,'pgid':98765,'description':'owned process'}
+    namespace=runtime.process_namespace()
     import daily_agent.cloud_workflow as workflow
     from datetime import datetime, timezone
     monkeypatch.setattr(workflow,'_clock',lambda:datetime(2026,10,7,17,tzinfo=timezone.utc))
-    atomic_json(path,{'date':'2026-10-07','running':True,'child_identity':identity,'attempt_id':'previous'})
-    atomic_json(cfg.state_dir/'cloud-generation-budgets/2026-10-07.json',{'schema_version':1,'date':'2026-10-07','issue_started_at':'2026-10-07T16:59:00+00:00','deadline':'2026-10-07T23:48:00+00:00','active_started_at':'2026-10-07T16:59:00+00:00','active_attempt_id':'previous','runtime_seconds':0,'failures':0,'resumes':1,'max_runtime_seconds':10000,'max_failures':3,'max_resumes':200})
+    atomic_json(path,{'date':'2026-10-07','running':True,'child_identity':identity,'attempt_id':'previous','namespace':namespace})
+    atomic_json(cfg.state_dir/'cloud-generation-budgets/2026-10-07.json',{'schema_version':1,'date':'2026-10-07','issue_started_at':'2026-10-07T16:59:00+00:00','deadline':'2026-10-07T23:48:00+00:00','active_started_at':'2026-10-07T16:59:00+00:00','active_attempt_id':'previous','active_namespace':namespace,'active_timeout_seconds':900,'runtime_seconds':0,'failures':0,'resumes':1,'max_runtime_seconds':10000,'max_failures':3,'max_resumes':200})
     seen=[]
     monkeypatch.setattr(runtime,'stop_verified_orphan',lambda value,expected_root:seen.append(value))
     def run(*args,**kwargs):

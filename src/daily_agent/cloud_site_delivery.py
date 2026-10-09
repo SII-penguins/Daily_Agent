@@ -45,15 +45,18 @@ def _deployment(raw):
 
 
 def _entry(archive, manifest):
-    from daily_agent.report_archive import strict_date
+    from daily_agent.report_archive import strict_date, archive_entry_key, _revision_metadata, REVISION_FIELDS
     if not isinstance(archive,dict) or archive.get('schema_version')!=1:
         raise ValueError('Invalid archive manifest')
     matches=[e for e in archive.get('entries',[]) if e.get('identity')==manifest['identity']]
     if len(matches)!=1: raise ValueError('Exact sealed handoff archive entry required')
     entry=matches[0]
     category='examples' if manifest['kind']=='pilot' else 'reports'
-    slug=manifest['date']+('-'+manifest['identity'][:12] if category=='examples' else '')
-    key=category+'/'+slug
+    key=archive_entry_key(manifest)
+    revision=_revision_metadata(manifest)
+    archived_revision=_revision_metadata({**entry,'schema_version':3}) if any(field in entry for field in REVISION_FIELDS) else {}
+    if archived_revision!=revision:
+        raise ValueError('Archive revision metadata does not match sealed provenance')
     strict_date(entry.get('date'))
     if (entry.get('key')!=key or entry.get('page')!=key+'/index.html'
             or entry.get('date')!=manifest['date'] or entry.get('category')!=category
@@ -85,7 +88,8 @@ def _caption(manifest, content):
     papers=sum(row['item_type']=='paper' for row in manifest['approval'])
     repos=len(manifest['approval'])-papers
     prefix='界面验收样例（非今日新闻，不进入正式发布历史）\n' if manifest['kind']=='pilot' else ''
-    return (prefix+f"Daily Agent 日报 · {manifest['date']}\n{papers} 篇已核验论文 · {repos} 个开源项目\n"
+    edition=' · 修订版 r'+str(manifest['revision_number']) if manifest.get('edition_type')=='production_revision' else ''
+    return (prefix+f"Daily Agent 日报 · {manifest['date']}{edition}\n{papers} 篇已核验论文 · {repos} 个开源项目\n"
             +f"阅读本期 HTML：{content['page_url']}\n按日期浏览归档：{content['site_url']}/\n"
             +'公共来源版（非全源）；仅收录通过证据审核的内容\n')
 
@@ -168,12 +172,16 @@ def validate_site_binding(root, manifest):
         raise StateCorrupt('Invalid Site delivery evidence: '+str(exc)) from exc
 
 
-def bind_site(root, day, *, archive_dir, deployment_file, site_version_file, site_repo):
+def bind_site(root, day, *, archive_dir, deployment_file, site_version_file, site_repo, revision_id=None):
     """Bind terminal Site success to exact version and committed archive bytes.
 
     Parent owns authenticity of Sites tool responses and verified private access.
     This is deployed-source provenance, NOT a claimed production HTTP round trip.
     """
+    if revision_id is not None:
+        from daily_agent.production_revision import bind_site as bind_revision_site
+        return bind_revision_site(root,day,revision_id=revision_id,archive_dir=archive_dir,
+            deployment_file=deployment_file,site_version_file=site_version_file,site_repo=site_repo)
     from daily_agent.cloud_workflow import _config,_path,read_handoff,_binding_identity
     from daily_agent.report_archive import verify_archive
     config=_config(root); path=_path(config,day)

@@ -19,6 +19,26 @@ class CleanupPending(RuntimeError):
     """The previous process group cannot yet be confirmed stopped."""
 
 
+def process_namespace() -> str:
+    """Stable Linux execution fence shared by a supervisor and its children.
+
+    Numeric process IDs (including a missing PID) only have meaning inside this
+    boot and PID namespace. Never manufacture a fallback for an old journal or
+    an environment whose namespace cannot be verified.
+    """
+    import hashlib
+    import uuid
+    from daily_agent.workflow_state import StateCorrupt
+    try:
+        boot = uuid.UUID(Path('/proc/sys/kernel/random/boot_id').read_text().strip())
+        namespace = os.readlink('/proc/self/ns/pid')
+        if boot.int == 0 or not re.fullmatch(r'pid:\[[1-9][0-9]*\]', namespace):
+            raise ValueError('Invalid boot or PID namespace identity')
+    except (OSError, ValueError) as exc:
+        raise StateCorrupt('Cannot verify execution namespace; operator review required') from exc
+    return hashlib.sha256(f'{boot}\n{namespace}'.encode('ascii')).hexdigest()
+
+
 def validate_process_identity(identity: dict) -> None:
     """A null description retains launch evidence but never authorizes a signal."""
     if (not isinstance(identity, dict) or type(identity.get("pid")) is not int
@@ -112,7 +132,7 @@ def inspect_orphan(identity: dict, expected_root: Path | None = None) -> str:
     if expected_root is not None:
         root = re.escape(str(expected_root))
         command = current["description"]
-        if (not re.search(r"(?:^|\s)-m\s+daily_agent\.(?:cli|cloud_workflow|cloud_pilot)(?=$|\s)", command)
+        if (not re.search(r"(?:^|\s)-m\s+daily_agent\.(?:cli|cloud_workflow|cloud_pilot|production_revision)(?=$|\s)", command)
                 or not re.search(rf"(?:^|\s)--root(?:=|\s+)(?:{root}|\"{root}\"|'{root}')(?=$|\s)", command)):
             raise CleanupPending("Orphan does not belong to this workflow; operator review required")
     return "verified"

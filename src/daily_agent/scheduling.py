@@ -828,7 +828,7 @@ def _read_outbox(config, run_date, payload):
     return outbox
 
 
-def seal_ready_report(config, run_date):
+def seal_ready_report(config, run_date, *, _ready_lock_held=False):
     """Freeze immutable bytes and approval identity. Never replace a sent/in-flight issue."""
     day = run_date.isoformat()
     report = config.reports_dir / f"daily-agent-{day}.md"
@@ -842,7 +842,8 @@ def seal_ready_report(config, run_date):
     content = report.read_bytes()
     checksum = hashlib.sha256(content).hexdigest()
     path = _ready_path(config, run_date)
-    with exclusive_lock(path.with_suffix(".lock")):
+    from contextlib import nullcontext
+    with nullcontext() if _ready_lock_held else exclusive_lock(path.with_suffix(".lock")):
         previous = read_json(path)
         if previous:
             # Keep the known good snapshot through failed/incomplete rewrites.

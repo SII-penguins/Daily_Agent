@@ -52,24 +52,41 @@ def _assert_active(folder,job):
 
 _QUEUE_THREADS = threading.Lock()
 
+
+def _queue_io(strict, function, *args, **kwargs):
+    """An execution queue persistence failure is not an ordinary model failure.
+
+    Keep source-image reads outside this boundary: a missing input image is a
+    source-data failure, not evidence that the durable queue was persisted.
+    """
+    try:
+        return function(*args, **kwargs)
+    except OSError as exc:
+        if not strict:
+            raise
+        raise StateCorrupt('Writer queue persistence failed; preserve the existing operation') from exc
+
+
 @contextmanager
-def queue_lock(path):
+def queue_lock(path, *, timeout=None, strict_io=False):
     # Upstream reads pages/chunks concurrently. Serialize in-process requests,
     # then bound cross-process contention; never misreport a brief lock race as
     # an unread source chunk.
-    if not _QUEUE_THREADS.acquire(timeout=10): raise TimeoutError('Writer queue busy')
+    wait = 10 if timeout is None else min(10, max(0, timeout))
+    bounded_deadline = time.monotonic() + wait
+    if not _QUEUE_THREADS.acquire(timeout=wait): raise TimeoutError('Writer queue busy')
     try:
-        deadline=time.monotonic()+10
+        deadline=time.monotonic()+10 if timeout is None else bounded_deadline
         while True:
             manager=exclusive_lock(path)
             try:
-                manager.__enter__()
+                _queue_io(strict_io, manager.__enter__)
                 break
             except WorkflowBusy:
                 if time.monotonic()>=deadline: raise TimeoutError('Writer queue busy')
-                time.sleep(.02)
+                time.sleep(min(.02, max(0, deadline-time.monotonic())))
         try: yield
-        finally: manager.__exit__(None,None,None)
+        finally: _queue_io(strict_io, manager.__exit__, None, None, None)
     finally: _QUEUE_THREADS.release()
 
 def _stage(prompt):
@@ -78,33 +95,88 @@ def _stage(prompt):
     if prompt.startswith('阅读论文的一个原文块'): return 'reading'
     return 'draft'
 
-def request(root, prompt, timeout, image_path=None, *, stage=None):
-    if not isinstance(prompt,str) or len(prompt)>500000: raise ValueError('Invalid/beyond-budget parent prompt')
-    root=Path(root).resolve(); folder=_folder(root); folder.mkdir(parents=True,exist_ok=True)
+def _request_contract(root, prompt, image_path, stage):
     paths=image_path if isinstance(image_path,list) else [image_path] if image_path else []
     images=[]
     for value in paths:
         path=Path(value).resolve(); path.relative_to(root)
         content=path.read_bytes()
         images.append({'path':str(path.relative_to(root)), 'sha256':hashlib.sha256(content).hexdigest()})
-    contract={'schema_version':1, 'transport':'parent_assisted', 'prompt':prompt,
-              'images':images, 'stage':stage or _stage(prompt)}
-    base_id=digest(contract)
-    with queue_lock(folder/'queue.lock'):
-        job_id=_active_id(folder,base_id);path=folder/f'{job_id}.job.json'
-        job=read_json(path)
+    return {'schema_version':1, 'transport':'parent_assisted', 'prompt':prompt,
+            'images':images, 'stage':stage or _stage(prompt)}
+
+
+def request(root, prompt, timeout, image_path=None, *, stage=None, execution=None, operation=None):
+    """Optionally bind this exact queue generation to an explicit finite operation.
+
+    No implicit execution context or new retry generation is created here.
+    Pending/expired responses keep their BaseException suspension semantics.
+    """
+    if not isinstance(prompt,str) or len(prompt)>500000: raise ValueError('Invalid/beyond-budget parent prompt')
+    explicit = execution is not None
+    if explicit or operation is not None:
+        from daily_agent.batch_execution import BudgetExhausted, ExecutionConflict
+        if (not explicit or not isinstance(operation, (tuple, list)) or len(operation) != 4
+                or any(not isinstance(v, str) or not v for v in operation[:3])
+                or type(operation[3]) is not int):
+            raise ExecutionConflict('Execution and a finite operation tuple are required together')
+        if type(timeout) not in (int, float) or not math.isfinite(timeout) or timeout <= 0:
+            raise ExecutionConflict('A positive finite transport timeout is required')
+        phase = operation[1]
+        remaining = execution.remaining(phase)
+        if remaining <= 0:
+            raise BudgetExhausted('Local stage deadline exhausted')
+    root=Path(root).resolve(); folder=_folder(root)
+    _queue_io(explicit, folder.mkdir, parents=True, exist_ok=True)
+    # The legacy route keeps its original input/lock behavior. Explicit requests
+    # derive image bytes and resolve active generations under the same queue lock.
+    contract = None if explicit else _request_contract(root, prompt, image_path, stage)
+    lock = queue_lock(folder/'queue.lock', timeout=remaining, strict_io=True) if explicit else queue_lock(folder/'queue.lock')
+    with lock:
+        if explicit:
+            contract = _request_contract(root, prompt, image_path, stage)
+        base_id=digest(contract)
+        job_id=_queue_io(explicit, _active_id, folder, base_id);path=folder/f'{job_id}.job.json'
+        job=_queue_io(explicit, read_json, path)
+        new = job is None
         if job is None:
             if job_id!=base_id:raise StateCorrupt('Active writer generation is missing')
-            if len(pending(root)) >= 200: raise RuntimeError('Parent writer pending-job budget exhausted')
+            queued = pending(root, _strict_io=True) if explicit else pending(root)
+            if len(queued) >= 200: raise RuntimeError('Parent writer pending-job budget exhausted')
+        else:
+            validate_job(root, job)
+            if digest({key:job[key] for key in contract}) != base_id: raise StateCorrupt('Queued prompt changed')
+        if explicit:
+            if phase == 'repaired' and execution.repaired_binding(operation[0]) is None:
+                raise ExecutionConflict('Reviewed repaired topology must be bound before transport')
+            if (phase == 'primary_writer' and operation[2] in {'author_research', 'author_review'}
+                    and not execution.author_allowed(operation[0])):
+                raise ExecutionConflict('Original batch author eligibility must be bound before transport')
+            execution.admit(*operation, _contract(job) if job is not None else contract,
+                            queue_job_id=job_id, queue_role=contract['stage'])
+            timeout = min(timeout, execution.remaining(phase))
+            if timeout <= 0:
+                raise BudgetExhausted('Local stage deadline exhausted')
+        if new:
             now=datetime.now(timezone.utc)
             job={**contract,'job_id':job_id,'input_sha256':job_id,'created_at':now.isoformat(),
                  'expires_at':(now+timedelta(hours=6)).isoformat(),'call_timeout_seconds':timeout}
-            atomic_json(path,job)
-        validate_job(root, job)
-        if digest({key:job[key] for key in contract}) != base_id: raise StateCorrupt('Queued prompt changed')
-        answer=read_json(folder/f'{job_id}.answer.json')
+            _queue_io(explicit, atomic_json, path, job)
+            validate_job(root, job)
+        answer=_queue_io(explicit, read_json, folder/f'{job_id}.answer.json')
+        if explicit:
+            timeout = min(timeout, execution.remaining(phase))
+            if timeout <= 0:
+                raise BudgetExhausted('Local stage deadline exhausted')
         if answer is None:
             if datetime.now(timezone.utc)>=datetime.fromisoformat(job['expires_at']): raise ExpiredResponse(job_id)
+            if explicit and not new:
+                old_timeout = job.get('call_timeout_seconds')
+                if (type(old_timeout) not in (int, float) or not math.isfinite(old_timeout)
+                        or old_timeout <= 0):
+                    raise StateCorrupt('Invalid queued call timeout')
+                if timeout < old_timeout:
+                    _queue_io(True, atomic_json, path, {**job, 'call_timeout_seconds': timeout})
             raise PendingResponse(job_id)
         if answer.get('job_id')!=job_id or answer.get('input_sha256')!=job_id or digest(answer.get('response'))!=answer.get('response_sha256'):
             raise StateCorrupt('Parent writer response identity mismatch')
@@ -179,16 +251,17 @@ def validate_job(root, job, *, check_images=True):
         if hashlib.sha256(path.read_bytes()).hexdigest()!=image['sha256']:
             raise StateCorrupt('Queued image changed')
 
-def pending(root, *, include_expired=False):
+def pending(root, *, include_expired=False, _strict_io=False):
     folder=_folder(root); jobs=[]
-    for path in sorted(folder.glob('*.job.json')):
-        if path.with_name(path.name.replace('.job.json','.answer.json')).exists(): continue
-        job=read_json(path)
-        if _active_id(folder,_base_id(job))!=job['job_id']:continue
+    paths = _queue_io(_strict_io, lambda: sorted(folder.glob('*.job.json')))
+    for path in paths:
+        if _queue_io(_strict_io, path.with_name(path.name.replace('.job.json','.answer.json')).exists): continue
+        job=_queue_io(_strict_io, read_json, path)
+        if _queue_io(_strict_io, _active_id, folder, _base_id(job))!=job['job_id']:continue
         expired=datetime.now(timezone.utc)>=datetime.fromisoformat(job['expires_at'])
         if expired and not include_expired:continue
         validate_job(root,job,check_images=not expired)
-        jobs.append({**job,'expired':expired,'claim':read_json(path.with_name(path.name.replace('.job.json','.claim.json')))})
+        jobs.append({**job,'expired':expired,'claim':_queue_io(_strict_io, read_json, path.with_name(path.name.replace('.job.json','.claim.json')))})
     return jobs
 
 

@@ -112,18 +112,22 @@ def _paper_review_target(config: AppConfig) -> int:
     return paper_target * multiplier
 
 
-def draft_report_items(config: AppConfig, shortlist: list[MaterialRecord], use_llm: bool = True) -> list[EditorialDraft]:
+def draft_report_items(config: AppConfig, shortlist: list[MaterialRecord], use_llm: bool = True, *, execution=None) -> list[EditorialDraft]:
     from daily_agent.deferred_review_cache import draft_report_items as cached_draft_report_items
-    return cached_draft_report_items(config, shortlist, use_llm, _draft_report_items_uncached)
+    kwargs = {'execution': execution} if execution is not None else {}
+    return cached_draft_report_items(config, shortlist, use_llm, _draft_report_items_uncached, **kwargs)
 
 
-def _draft_report_items_uncached(config: AppConfig, shortlist: list[MaterialRecord], use_llm: bool = True) -> list[EditorialDraft]:
+def _draft_report_items_uncached(config: AppConfig, shortlist: list[MaterialRecord], use_llm: bool = True, *, execution=None) -> list[EditorialDraft]:
     from daily_agent.reading import CORE, read_papers, verify_draft, semantic_review
     settings = _llm_writer_settings(config)
-    def invoke(prompt, timeout, image_path=None):
+    if execution is not None and settings['provider'] != 'parent_queue':
+        raise ValueError('Explicit batch execution requires parent_queue transport')
+    def invoke(prompt, timeout, image_path=None, *, execution=None, operation=None):
         if settings['provider'] == 'parent_queue':
             from daily_agent.parent_writer import request
-            return request(settings['workdir'], prompt, timeout, image_path)
+            kwargs = {'execution': execution, 'operation': operation} if execution is not None else {}
+            return request(settings['workdir'], prompt, timeout, image_path, **kwargs)
         command = _llm_writer_command(settings, prompt)
         if image_path:
             images = image_path if isinstance(image_path, list) else [image_path]
@@ -134,19 +138,24 @@ def _draft_report_items_uncached(config: AppConfig, shortlist: list[MaterialReco
     structured = [r for r in shortlist if r.item_type == "paper" and r.paper_document]
     # Preserve native extraction before any image-grounded replacement.
     for record in structured:
-        if record.paper_document and 'native_document' not in record.paper_document:
+        if execution is None and record.paper_document and 'native_document' not in record.paper_document:
             record.paper_document['native_document'] = dict(record.paper_document)
-    read_papers(structured, config, invoke if use_llm else None)
+    kwargs = {'execution': execution} if execution is not None else {}
+    read_papers(structured, config, invoke if use_llm else None, **kwargs)
     from daily_agent.visual_reading import read_visuals
     # Screenshot presentation is independent of evidence verification.
-    read_visuals(structured, config, invoke if use_llm else None)
+    read_visuals(structured, config, invoke if use_llm else None, **kwargs)
     from daily_agent.visual_fidelity import repair_visuals
-    repair_visuals(structured, config, invoke if use_llm else None)
+    repair_visuals(structured, config, invoke if use_llm else None, **kwargs)
     visual_results = {r.key:r.reading.get('visual', {}) for r in structured}
     repaired_records = [r for r in structured if r.paper_document.get('evidence_basis') == 'image_transcription_reviewed']
     # Re-chunked image transcription has a different evidence identity. Never
     # synthesize it using notes or chunk IDs from the native extraction.
-    read_papers(repaired_records, config, invoke if use_llm else None)
+    if execution is not None:
+        for record in repaired_records:
+            execution.bind_repaired(record)
+    repaired_kwargs = {**kwargs, 'phase': 'repaired'} if execution is not None else {}
+    read_papers(repaired_records, config, invoke if use_llm else None, **repaired_kwargs)
     for record in structured:
         visual = visual_results[record.key]
         record.reading['visual'] = visual
@@ -158,11 +167,14 @@ def _draft_report_items_uncached(config: AppConfig, shortlist: list[MaterialReco
     pending = [r for r in shortlist if r.key not in cached_drafts]
     drafts = []
     if use_llm and pending:
-        token = _LLM_WRITER_SETTINGS.set(settings)
-        try:
-            drafts = _draft_with_llm(pending)
-        finally:
-            _LLM_WRITER_SETTINGS.reset(token)
+        if execution is not None:
+            drafts = _draft_with_llm(pending, execution=execution, settings=settings)
+        else:
+            token = _LLM_WRITER_SETTINGS.set(settings)
+            try:
+                drafts = _draft_with_llm(pending)
+            finally:
+                _LLM_WRITER_SETTINGS.reset(token)
     if not drafts:
         drafts = [_rule_draft(record) for record in pending]
     drafts.extend(cached_drafts.values())
@@ -172,30 +184,35 @@ def _draft_report_items_uncached(config: AppConfig, shortlist: list[MaterialReco
     for draft in drafts:
         if draft.key in by_key and draft.key not in cached_drafts:
             verify_draft(draft, by_key[draft.key])
-            if use_llm and draft.claim_evidence:
+            if use_llm and draft.claim_evidence and _primary_available(execution):
                 semantic_review(draft, by_key[draft.key], invoke,
-                                float(config.sources.get("reading", {}).get("timeout_seconds", 120)))
+                                float(config.sources.get("reading", {}).get("timeout_seconds", 120)), **kwargs)
             record = by_key[draft.key]
             rejected = [c for c in draft.verification.get("semantic_checks", []) if not c.get("supported")]
             claim_issues = [issue for issue in draft.verification.get("issues", [])
                             if issue.split(":", 1)[0] in CORE]
-            if use_llm and (rejected or claim_issues):
+            if use_llm and (rejected or claim_issues) and _primary_available(execution):
                 # Exactly one evidence-guided rewrite; review thresholds do not change.
-                token = _LLM_WRITER_SETTINGS.set(settings)
-                try:
-                    from daily_agent.reading import repair_evidence
+                from daily_agent.reading import repair_evidence
+                feedback = {"rejected_claims": rejected,
+                            "mechanical_issues": draft.verification.get("issues", []),
+                            "source_chunks": repair_evidence(record, draft)}
+                if execution is not None:
                     repaired = _draft_with_llm_batch([record], timeout_seconds=settings["timeout_seconds"],
-                        feedback={"rejected_claims": rejected,
-                                  "mechanical_issues": draft.verification.get("issues", []),
-                                  "source_chunks": repair_evidence(record, draft)})
-                finally:
-                    _LLM_WRITER_SETTINGS.reset(token)
+                        feedback=feedback, execution=execution, settings=settings, substep='rewrite')
+                else:
+                    token = _LLM_WRITER_SETTINGS.set(settings)
+                    try:
+                        repaired = _draft_with_llm_batch([record], timeout_seconds=settings["timeout_seconds"], feedback=feedback)
+                    finally:
+                        _LLM_WRITER_SETTINGS.reset(token)
                 if repaired:
                     candidate = repaired[0]
                     verify_draft(candidate, record)
-                    if candidate.claim_evidence:
+                    if candidate.claim_evidence and _primary_available(execution):
                         semantic_review(candidate, record, invoke,
-                            float(config.sources.get("reading", {}).get("timeout_seconds", 120)))
+                            float(config.sources.get("reading", {}).get("timeout_seconds", 120)),
+                            **({**kwargs, "ordinal": 1} if execution is not None else {}))
                     def evidence_score(value):
                         fields = set(value.verification.get("valid_fields", []))
                         return (value.verification.get("semantic_support") == "model_checked",
@@ -205,9 +222,12 @@ def _draft_report_items_uncached(config: AppConfig, shortlist: list[MaterialReco
                         draft = candidate
                 record.reading["verification"] = draft.verification
                 record.reading["semantic_rewrite_attempted"] = True
-            if use_llm and draft.verification.get("semantic_support") == "model_checked":
+            if use_llm and draft.verification.get("semantic_support") == "model_checked" and _primary_available(execution):
                 from daily_agent.rendering.composition import review_result_presentation
-                review_result_presentation(draft.draft_fields.get("key_result"), record, invoke)
+                if execution is None:
+                    review_result_presentation(draft.draft_fields.get("key_result"), record, invoke)
+                else:
+                    _review_presentation(draft, record, invoke, execution)
             if record.reading.get("complete") and draft.verification.get("semantic_support") == "model_checked":
                 atomic_json(config.root / "data" / "reading" / record.reading["fingerprint"] / "draft-v3.json", draft.to_dict())
         elif draft.key in cached_drafts:
@@ -566,8 +586,59 @@ def _rule_review(draft: EditorialDraft) -> EditorialReview:
     )
 
 
-def _draft_with_llm(shortlist: list[MaterialRecord]) -> list[EditorialDraft]:
-    settings = _LLM_WRITER_SETTINGS.get() or _DEFAULT_LLM_WRITER_SETTINGS
+def _primary_available(execution):
+    return execution is None or (execution.snapshot()['writer_circuit'] is None
+                                 and execution.remaining('primary_writer') > 0)
+
+
+def _review_presentation(draft, record, invoke, execution):
+    from daily_agent.rendering.composition import review_result_presentation
+    from daily_agent.workflow_state import StateCorrupt
+    conflicts = []
+    def call(prompt, timeout):
+        try:
+            with execution.stage('primary_writer'):
+                result = invoke(prompt, min(timeout, execution.remaining('primary_writer')),
+                    execution=execution, operation=(record.key, 'primary_writer', 'presentation', 0))
+                if (not isinstance(result, dict) or type(result.get('supported')) is not bool
+                        or type(result.get('conditions_complete')) is not bool
+                        or not isinstance(result.get('issues'), list)
+                        or any(not isinstance(issue, str) for issue in result['issues'])):
+                    execution.writer_failure('schema', 'Invalid result presentation review')
+                    raise ValueError('Invalid result presentation review')
+                return result
+        except StateCorrupt as exc:
+            execution.snapshot()
+            conflicts.append(exc)
+            raise
+        except json.JSONDecodeError as exc:
+            execution.snapshot()
+            execution.writer_failure('json', type(exc).__name__)
+            raise
+        except (subprocess.SubprocessError, ConnectionError) as exc:
+            execution.snapshot()
+            execution.writer_failure('backend', type(exc).__name__)
+            raise
+        except Exception:
+            execution.snapshot()
+            raise
+    review_result_presentation(draft.draft_fields.get('key_result'), record, call)
+    execution.snapshot()  # The legacy renderer catches callbacks; never hide a poisoned ledger.
+    if conflicts:
+        raise conflicts[0]
+
+
+def _draft_with_llm(shortlist: list[MaterialRecord], *, execution=None, settings=None) -> list[EditorialDraft]:
+    if execution is not None:
+        if settings is None:
+            raise ValueError('Explicit writer settings required')
+        drafts = []
+        for record in shortlist:
+            result = _draft_with_llm_batch([record], timeout_seconds=settings['timeout_seconds'],
+                                          execution=execution, settings=settings)
+            drafts.extend(result or [_rule_draft(record)])
+        return drafts
+    settings = settings or _LLM_WRITER_SETTINGS.get() or _DEFAULT_LLM_WRITER_SETTINGS
     batch_size = max(1, int(settings.get("batch_size", _DEFAULT_LLM_WRITER_SETTINGS["batch_size"])))
     timeout_seconds = max(1.0, float(settings.get("timeout_seconds", _DEFAULT_LLM_WRITER_SETTINGS["timeout_seconds"])))
     run_budget_seconds = max(0.0, float(settings.get("run_budget_seconds", _DEFAULT_LLM_WRITER_SETTINGS["run_budget_seconds"])))
@@ -619,9 +690,29 @@ def _llm_writer_settings(config: AppConfig) -> dict[str, Any]:
     }
 
 
-def _draft_with_llm_batch(shortlist: list[MaterialRecord], timeout_seconds: float = 600.0, feedback: dict | None = None) -> list[EditorialDraft]:
-    settings = _LLM_WRITER_SETTINGS.get() or _DEFAULT_LLM_WRITER_SETTINGS
-    prompt = _llm_prompt(shortlist, max_input_chars_per_item=int(settings.get("max_input_chars_per_item", 24_000)))
+def _draft_with_llm_batch(shortlist: list[MaterialRecord], timeout_seconds: float = 600.0,
+                          feedback: dict | None = None, *, execution=None, settings=None,
+                          substep='draft') -> list[EditorialDraft]:
+    if execution is None:
+        return _draft_with_llm_batch_active(shortlist, timeout_seconds, feedback, settings=settings)
+    from daily_agent.batch_execution import BudgetExhausted, WriterCircuitOpen
+    if len(shortlist) != 1 or settings is None or settings.get('provider') != 'parent_queue':
+        raise ValueError('Explicit writer calls require one material and parent_queue settings')
+    try:
+        with execution.stage('primary_writer'):
+            return _draft_with_llm_batch_active(shortlist, min(timeout_seconds, execution.remaining('primary_writer')),
+                feedback, execution=execution, settings=settings, substep=substep)
+    except (BudgetExhausted, WriterCircuitOpen) as exc:
+        execution.snapshot()
+        for record in shortlist:
+            record.reading['writer_error'] = {'type': type(exc).__name__}
+        return []
+
+
+def _draft_with_llm_batch_active(shortlist, timeout_seconds, feedback, *, execution=None, settings=None, substep='draft'):
+    settings = settings or _LLM_WRITER_SETTINGS.get() or _DEFAULT_LLM_WRITER_SETTINGS
+    prompt = _llm_prompt(shortlist, max_input_chars_per_item=int(settings.get("max_input_chars_per_item", 24_000)),
+                         **({"settings": settings} if execution is not None else {}))
     if feedback:
         prompt += ('\n上一版被证据审核拒绝。按以下反馈重新写完整JSON数组：先选可定位引句，再写结论；'
                    '每字段只写引句直接支持的最小事实，不必塞满全部研究内容。'
@@ -629,11 +720,13 @@ def _draft_with_llm_batch(shortlist: list[MaterialRecord], timeout_seconds: floa
                    '删掉缺证据的成分，而不是解释它可能正确。不得使用上一版被拒绝的内容作为证据。反馈：'
                    + json.dumps(feedback, ensure_ascii=False))
     result = None
+    validating = False
     try:
         if settings['provider'] == 'parent_queue':
             from daily_agent.parent_writer import request
             from types import SimpleNamespace
-            result = SimpleNamespace(stdout=json.dumps(request(settings['workdir'], prompt, timeout_seconds, stage='draft'), ensure_ascii=False))
+            kwargs = {'execution': execution, 'operation': (shortlist[0].key, 'primary_writer', substep, 0)} if execution is not None else {}
+            result = SimpleNamespace(stdout=json.dumps(request(settings['workdir'], prompt, timeout_seconds, stage='draft', **kwargs), ensure_ascii=False))
         else:
             result = subprocess.run(
                 _llm_writer_command(settings, prompt),
@@ -647,11 +740,24 @@ def _draft_with_llm_batch(shortlist: list[MaterialRecord], timeout_seconds: floa
             from daily_agent.paper_document import atomic_json, digest
             atomic_json(Path(settings['workdir']) / 'data' / 'reading' / 'writer' / (digest(prompt)+'.json'),
                         {'response': result.stdout})
+        validating = True
         payload = _load_llm_payload(result.stdout)
         by_key = {record.key: record for record in shortlist}
         drafts = _validated_llm_drafts(payload, by_key)
         return _complete_llm_drafts_with_rule_fallback(drafts, by_key)
     except Exception as exc:
+        if execution is not None:
+            execution.snapshot()  # Fail closed immediately after uncertain ledger writes.
+            from daily_agent.batch_execution import BudgetExhausted, WriterCircuitOpen
+            from daily_agent.workflow_state import StateCorrupt
+            if isinstance(exc, (StateCorrupt, BudgetExhausted, WriterCircuitOpen)):
+                raise
+            if isinstance(exc, json.JSONDecodeError):
+                execution.writer_failure('json', type(exc).__name__)
+            elif validating and isinstance(exc, (ValueError, TypeError, KeyError, AttributeError)):
+                execution.writer_failure('schema', type(exc).__name__)
+            elif isinstance(exc, (subprocess.SubprocessError, ConnectionError)):
+                execution.writer_failure('backend', type(exc).__name__)
         # Do not persist subprocess command/streams: prompts and credentials may
         # appear there. Keep actionable, bounded diagnostics for every item.
         error = {"type": type(exc).__name__}
@@ -836,7 +942,8 @@ def _required_string_list(value: Any, field_name: str) -> list[str]:
     return items
 
 
-def _llm_prompt(shortlist: list[MaterialRecord], max_input_chars_per_item: int = 24_000) -> str:
+def _llm_prompt(shortlist: list[MaterialRecord], max_input_chars_per_item: int = 24_000, *, settings=None) -> str:
+    settings = settings if settings is not None else (_LLM_WRITER_SETTINGS.get() or {})
     input_limit = max(1, int(max_input_chars_per_item))
     from daily_agent.reading import synthesis_evidence
     records = []
@@ -848,7 +955,7 @@ def _llm_prompt(shortlist: list[MaterialRecord], max_input_chars_per_item: int =
                 "title": record.title,
                 "abstract": record.abstract,
                 "paper_section_notes": {} if record.paper_document else _paper_section_notes(record),
-                "reading_notes": synthesis_evidence(record, int((_LLM_WRITER_SETTINGS.get() or {}).get("synthesis_chars", 60000))) if record.paper_document else [],
+                "reading_notes": synthesis_evidence(record, int(settings.get("synthesis_chars", 60000))) if record.paper_document else [],
                 "reading_coverage": {k:v for k,v in record.reading.items() if k not in {"notes", "visual"}},
                 "visual_observations": {k:v for k,v in record.reading.get("visual", {}).items() if k != "fidelity"},
                 "paper_text_excerpt": "" if record.paper_document else (record.paper_text_excerpt or "")[:input_limit],

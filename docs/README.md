@@ -8,6 +8,9 @@ Start with the [English project guide](../README.md) or [中文项目指南](../
 - [Cloud operations](cloud-migration.md): separate public-source `parent_queue` root, worker claims, resumable generation, immutable handoffs, backup/restore and private HTML transport
 - [Workflow recovery](workflow-recovery.md): local controller state, cleanup, retry budgets and operator reconciliation
 - [Cloud delivery audit](cloud-delivery-audit.md): delivery-state invariants, ambiguous outcomes and recovery checks
+- [Incremental cloud execution](incremental_execution.md): per-paper completion, shared stage budgets, supervised attempts and recovery boundaries
+- [Batch execution contract](batch_execution_contract.md): durable operation slots, conservative accounting and completion transactions
+- [Production revisions](production_revision.md): explicit republishing authorization, preserved original editions and transaction-fenced executor-loss recovery
 
 The local full profile and cloud profile are separate. Never apply local full-profile enforcement or legacy scheduled generation to an explicit cloud root. A setup check is not a per-paper evidence certification.
 
