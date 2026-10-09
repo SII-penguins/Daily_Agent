@@ -213,9 +213,10 @@ def reusable_enrichment(config, record):
         return False
 
 
-def draft_report_items(config, shortlist, use_llm, original):
+def draft_report_items(config, shortlist, use_llm, original, *, execution=None):
+    kwargs = {"execution": execution} if execution is not None else {}
     if not use_llm:
-        return original(config, shortlist, use_llm=use_llm)
+        return original(config, shortlist, use_llm=use_llm, **kwargs)
     ready, pending, input_keys, enrichment_keys = {}, [], {}, {}
     for record in shortlist:
         cached = _load(config, record)
@@ -232,7 +233,7 @@ def draft_report_items(config, shortlist, use_llm, original):
             pending.append(record)
             input_keys[record.key] = _identity(config, record)
             enrichment_keys[record.key] = _enrichment_identity(config, record)
-    computed = original(config, pending, use_llm=use_llm) if pending else []
+    computed = original(config, pending, use_llm=use_llm, **kwargs) if pending else []
     by_key = {r.key: r for r in pending}
     for draft in computed:
         record = by_key.get(draft.key)

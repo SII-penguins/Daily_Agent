@@ -86,15 +86,36 @@ def run_pipeline(
     dry_run: bool = True,
     use_llm: bool = True,
     delivery_mode: str = "local",
+    *,
+    expected_attempt: str | None = None,
+    expected_namespace: str | None = None,
 ) -> PipelineResult:
     # Manual runs and scheduled runs share a material library and report paths.
     # A scheduling-only lock cannot protect manual callers against concurrent writes.
     from daily_agent.workflow_state import exclusive_lock
     config = load_config(root)
     external = not dry_run and delivery_mode != "local"
-    with exclusive_lock(config.state_dir / "pipeline.lock"):
-        result = _run_pipeline_unlocked(root, run_date, dry_run, use_llm, delivery_mode,
-                                        defer_delivery=external)
+    from contextlib import ExitStack
+    from daily_agent.scheduling import _ready_path
+    day = run_date or date.today()
+    with ExitStack() as locks:
+        cloud = bool(config.delivery.get('cloud', {}).get('profile'))
+        if cloud:
+            from daily_agent.cloud_workflow import _path
+            locks.enter_context(exclusive_lock(_path(config, day).with_suffix('.lock')))
+        # Match delivery/reconciliation ordering for manual and scheduled entry.
+        locks.enter_context(exclusive_lock(_ready_path(config, day).with_suffix('.lock')))
+        locks.enter_context(exclusive_lock(config.state_dir / "pipeline.lock"))
+        plan = None
+        if cloud:
+            from daily_agent.incremental_issue import assert_generation_allowed, assert_active_generation, load_plan
+            assert_generation_allowed(config, day)
+            if use_llm or not dry_run:
+                assert_active_generation(config, day, expected_attempt=expected_attempt,
+                                         expected_namespace=expected_namespace)
+                plan = load_plan(config, day, require_budget=True)
+        result = _run_pipeline_unlocked(root, day, dry_run, use_llm, delivery_mode,
+                                        defer_delivery=external, _issue_plan=plan, _ready_lock_held=True)
     if external:
         # Generation releases its lock before the outbox commits publication.
         # Until a confirmed receipt exists, formal history must remain unchanged.
@@ -152,7 +173,7 @@ def _run_pipeline_unlocked(
     dry_run: bool = True,
     use_llm: bool = True,
     delivery_mode: str = "local",
-    *, defer_delivery: bool = False,
+    *, defer_delivery: bool = False, _issue_plan=None, _ready_lock_held=False,
 ) -> PipelineResult:
     config = load_config(root)
     today = run_date or date.today()
@@ -163,24 +184,39 @@ def _run_pipeline_unlocked(
     raw_items: list[DigestItem] = []
     selected_items: list[DigestItem] = []
     shortlist = []
-    expanded = False
-    for index, (arxiv_window, github_window) in enumerate(_fallback_window_steps(config, target_dt)):
-        if index > 0:
-            expanded = True
-        window_items = _fetch_windowed_sources(config, target_dt, arxiv_window, github_window, status)
-        raw_items.extend(window_items)
-        selected_items = _prepare_selected_items(raw_items, config, history, target_dt)
-        preview_library = dict(load_material_library(config))
-        for key, record in upsert_materials_preview(preview_library, selected_items, today).items():
-            preview_library[key] = record
-        shortlist = _build_shortlist_from_library(config, preview_library, today)
-        if len(shortlist) >= _shortlist_target(config):
-            break
-    if expanded and not status.fallback:
-        status.fallback = "内容不足，已扩展检索窗口"
-
-    if selected_items:
+    frozen_discovery = _issue_plan.discovery() if _issue_plan is not None else None
+    if frozen_discovery is not None:
+        raw_items = [DigestItem.from_dict(row) for row in frozen_discovery['raw_items']]
+        selected_items = [DigestItem.from_dict(row) for row in frozen_discovery['selected_items']]
+        index = frozen_discovery['window_index']
+        saved_status = frozen_discovery['status']
+        status = RunStatus(generated_at=saved_status['generated_at'],
+                           sources=[SourceStatus(**row) for row in saved_status['sources']],
+                           fallback=saved_status['fallback'], errors=list(saved_status['errors']))
+    else:
+        expanded = False
+        for index, (arxiv_window, github_window) in enumerate(_fallback_window_steps(config, target_dt)):
+            if index > 0:
+                expanded = True
+            window_items = _fetch_windowed_sources(config, target_dt, arxiv_window, github_window, status)
+            raw_items.extend(window_items)
+            selected_items = _prepare_selected_items(raw_items, config, history, target_dt)
+            preview_library = dict(load_material_library(config))
+            for key, record in upsert_materials_preview(preview_library, selected_items, today).items():
+                preview_library[key] = record
+            shortlist = _build_shortlist_from_library(config, preview_library, today)
+            if len(shortlist) >= _shortlist_target(config):
+                break
+        if expanded and not status.fallback:
+            status.fallback = "内容不足，已扩展检索窗口"
+    if selected_items and frozen_discovery is None:
         upsert_materials(config, selected_items, today)
+    if _issue_plan is not None and frozen_discovery is None:
+        # Commit discovery only after its initial upsert. A replay must not
+        # overwrite a newer library source/version with an old fetched snapshot.
+        _issue_plan.freeze_discovery({'raw_items': [item.to_dict() for item in raw_items],
+                                     'selected_items': [item.to_dict() for item in selected_items],
+                                     'window_index': index, 'status': status.to_dict()})
     library = load_material_library(config)
     shortlist, drafts, reviews, approved = [], [], [], []
     attempted: set[str] = set()
@@ -195,19 +231,28 @@ def _run_pipeline_unlocked(
     next_window = index + 1
     max_batches = max(1, int(config.sources.get("selection", {}).get("max_review_batches", 3)))
     for batch_index in range(max_batches):
-        batch = _bounded_editorial_batch(config, _build_shortlist_from_library(
-            config, remaining_library(), today), approved)
+        frozen_batch = _issue_plan.batch(batch_index) if _issue_plan is not None else None
+        batch = ([MaterialRecord.from_dict(row) for row in frozen_batch['selected']] if frozen_batch else
+                 _bounded_editorial_batch(config, _build_shortlist_from_library(
+                     config, remaining_library(), today), approved))
         while not batch and next_window < len(windows):
             arxiv_window, github_window = windows[next_window]
             next_window += 1
-            raw_items.extend(_fetch_windowed_sources(config, target_dt, arxiv_window, github_window, status))
-            upsert_materials(config, _prepare_selected_items(raw_items, config, history, target_dt), today)
+            window_items = _fetch_windowed_sources(config, target_dt, arxiv_window, github_window, status)
+            raw_items.extend(window_items)
+            # An incremental replay may retain an old discovery snapshot; only
+            # fresh window results may update the current source-version store.
+            to_upsert = window_items if _issue_plan is not None else raw_items
+            upsert_materials(config, _prepare_selected_items(to_upsert, config, history, target_dt), today)
             library = load_material_library(config)
             batch = _bounded_editorial_batch(config, _build_shortlist_from_library(
                 config, remaining_library(), today), approved)
             status.fallback = "审核后内容不足，已扩展检索窗口"
         if not batch:
             break
+        if _issue_plan is not None and frozen_batch is None:
+            _issue_plan.freeze_batch(batch_index, batch)
+            frozen_batch = _issue_plan.batch(batch_index)
         attempted.update(record.key for record in batch)
         for record in batch:
             attempted_identities.update(_identity_keys(record.to_digest_item()))
@@ -222,27 +267,40 @@ def _run_pipeline_unlocked(
                     record.raw["research_context"] = item.raw["research_context"]
             return enrich_citation_contexts(values, config)
         from daily_agent.cloud_cache import prepare_batch
-        batch = prepare_batch(config, today, batch, enrich_batch)
+        if frozen_batch and frozen_batch['enriched'] is not None:
+            batch = [MaterialRecord.from_dict(row) for row in frozen_batch['enriched']]
+        else:
+            batch = prepare_batch(config, today, batch, enrich_batch)
+            if _issue_plan is not None:
+                _issue_plan.freeze_enriched(batch_index, batch)
+        eligible_keys = (_replay_eligible_keys(config, today, batch, library)
+                         if _issue_plan is not None else None)
         from daily_agent.cloud_cache import enabled as cloud_checkpoints_enabled
         if cloud_checkpoints_enabled(config):
             # A pending parent response must not lose downloaded documents or
             # README enrichment and force the next resume to fetch them again.
-            library.update({record.key: record for record in batch})
+            library.update({record.key: record for record in batch
+                            if eligible_keys is None or record.key in eligible_keys})
             write_material_library(config, library)
-        if use_llm and config.sources.get("llm_writer", {}).get("provider") == "parent_queue":
-            # Author research is independent of scientific reading/review and
-            # may suspend. Persist full text before its first queued request.
-            library.update({record.key: record for record in batch})
-            write_material_library(config, library)
-            from daily_agent.author_context import enrich_selected_author_contexts
-            batch = enrich_selected_author_contexts(batch, config)
-            library.update({record.key: record for record in batch})
-            write_material_library(config, library)
-        write_editorial_artifacts(config, today, shortlist + batch, drafts, reviews, approved)
-        batch_drafts = draft_report_items(config, batch, use_llm=use_llm)
-        from daily_agent.scientific_analysis import analyze_papers
-        analyze_papers(config, batch, batch_drafts, use_llm=use_llm)
-        batch_reviews = review_draft(config, batch_drafts, use_llm=use_llm)
+        if _issue_plan is not None:
+            batch, batch_drafts, batch_reviews = _process_incremental_batch(
+                config, today, batch, _issue_plan, frozen_batch['id'],
+                library, shortlist, drafts, reviews, use_llm=use_llm, eligible_keys=eligible_keys)
+        else:
+            if use_llm and config.sources.get("llm_writer", {}).get("provider") == "parent_queue":
+                # Author research is independent of scientific reading/review and
+                # may suspend. Persist full text before its first queued request.
+                library.update({record.key: record for record in batch})
+                write_material_library(config, library)
+                from daily_agent.author_context import enrich_selected_author_contexts
+                batch = enrich_selected_author_contexts(batch, config)
+                library.update({record.key: record for record in batch})
+                write_material_library(config, library)
+            write_editorial_artifacts(config, today, shortlist + batch, drafts, reviews, approved)
+            batch_drafts = draft_report_items(config, batch, use_llm=use_llm)
+            from daily_agent.scientific_analysis import analyze_papers
+            analyze_papers(config, batch, batch_drafts, use_llm=use_llm)
+            batch_reviews = review_draft(config, batch_drafts, use_llm=use_llm)
         shortlist.extend(batch)
         drafts.extend(batch_drafts)
         reviews.extend(batch_reviews)
@@ -324,7 +382,10 @@ def _run_pipeline_unlocked(
     health_path = write_health_report(config, health)
 
     from daily_agent.scheduling import seal_ready_report
-    seal_ready_report(config, today)
+    if _ready_lock_held:
+        seal_ready_report(config, today, _ready_lock_held=True)
+    else:
+        seal_ready_report(config, today)
 
     return PipelineResult(
         run_date=today,
@@ -344,6 +405,86 @@ def _run_pipeline_unlocked(
         health_path=health_path,
     )
 
+
+
+
+def _replay_eligible_keys(config, day, batch, library):
+    """Completion does not override current publication/source eligibility."""
+    from copy import deepcopy
+    from daily_agent.batch_execution import ExecutionConflict, digest
+    from daily_agent.paper_document import version_identity
+    eligible = {r.key for r in select_library_candidates(config, deepcopy(library), day)}
+    for record in batch:
+        current = library.get(record.key)
+        if current is None:
+            eligible.discard(record.key)
+            continue
+        if version_identity(current) != version_identity(record):
+            raise ExecutionConflict('Frozen source version changed; original budget retained')
+        original_document = record.paper_document.get('native_document', record.paper_document)
+        current_document = current.paper_document.get('native_document', current.paper_document)
+        if original_document and current_document and digest(original_document) != digest(current_document):
+            raise ExecutionConflict('Frozen source document changed; original budget retained')
+    return eligible
+
+def _process_incremental_batch(config, day, batch, plan, batch_id,
+                               library, previous_records, previous_drafts, previous_reviews, *, use_llm,
+                               eligible_keys=None):
+    """Finish each material before admitting the next; journal precedes views.
+
+    Completed results regain no permanent quota/publication rights. Every replay
+    revalidates the existing base evidence and rebuilds ordinary projections.
+    """
+    from daily_agent.batch_execution import Execution, candidate, existing_review_validator
+    from daily_agent.deferred_review_cache import _assets
+    from daily_agent.author_context import enrich_selected_author_contexts
+    from daily_agent.scientific_analysis import analyze_papers
+    from daily_agent.models import EditorialDraft, EditorialReview
+    from daily_agent.incremental_issue import PROTOCOL
+    records, drafts, reviews = [], [], []
+    validator = existing_review_validator(config)
+    with Execution(plan.folder, batch_id, [candidate(r) for r in batch], config,
+                   protocol=PROTOCOL, issue_state='generating') as execution:
+        for original in batch:
+            if eligible_keys is not None and original.key not in eligible_keys:
+                continue
+            completed = execution.completed(original.key, validator=validator)
+            if completed is not None:
+                record = MaterialRecord.from_dict(completed['record'])
+                draft = EditorialDraft.from_dict(completed['draft'])
+                review = EditorialReview.from_dict(completed['review'])
+            else:
+                record = original
+                enrich_selected_author_contexts([record], config, execution=execution)
+                generated = draft_report_items(config, [record], use_llm=use_llm, execution=execution)
+                if len(generated) != 1 or generated[0].key != record.key:
+                    raise ValueError('Singleton writer returned a different material')
+                draft = generated[0]
+                analyze_papers(config, [record], [draft], use_llm=use_llm, execution=execution)
+                review = review_draft(config, [draft], use_llm=use_llm)[0]
+                assets = _assets(config, record, save=False)
+                if review.verdict == 'PASS' and assets is not None:
+                    # PASS alone does not qualify a completion; this invokes the
+                    # same mechanical/independent-review/asset checks as reuse.
+                    payload = {'material': record.key, 'record': record.to_dict(),
+                               'draft': draft.to_dict(), 'review': review.to_dict(), 'asset_hashes': assets}
+                    if validator(payload):
+                        sha = execution.prepare_completion(record.key, record=payload['record'],
+                            draft=payload['draft'], review=payload['review'],
+                            science=record.reading.get('scientific_analysis', {}),
+                            evidence={'reading': record.reading,
+                                      'author': record.raw.get('author_research_evidence', {})},
+                            asset_hashes=assets)
+                        execution.commit_completion(record.key, sha, validator=validator)
+            records.append(record); drafts.append(draft); reviews.append(review)
+            library[record.key] = record
+            # These two views are rebuildable, and either write may be interrupted.
+            write_material_library(config, library)
+            all_records, all_drafts, all_reviews = (previous_records + records,
+                previous_drafts + drafts, previous_reviews + reviews)
+            approved = approve_publication(config, all_records, all_drafts, all_reviews)
+            write_editorial_artifacts(config, day, all_records, all_drafts, all_reviews, approved)
+    return records, drafts, reviews
 
 def _fallback_window_steps(config: AppConfig, target_dt: datetime | None = None) -> list[tuple[int, int]]:
     arxiv_config = config.sources.get("arxiv", {}) or {}

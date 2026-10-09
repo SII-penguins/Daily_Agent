@@ -8,6 +8,7 @@ and exposes a gap, never an unreviewed interpretation.
 from __future__ import annotations
 
 from copy import deepcopy
+from contextlib import nullcontext
 import json
 import inspect
 import ast
@@ -203,32 +204,68 @@ def validate_analysis(value, record):
     return facets == FACETS and 'valuable_insight' in {f for c in paragraphs[0]['claims'] for f in c['facets']}
 
 
-def validate_review(review, analysis, input_hash):
+def _valid_review_schema(review, analysis, input_hash):
     if not isinstance(review, dict) or review.get('input_sha256') != input_hash: return False
     ids = {c['id'] for p in analysis['paragraphs'] for c in p['claims']}
     for key, field, expected, verdict in [('checks', 'id', ids, 'supported'), ('facets', 'facet', FACETS, 'adequate')]:
         rows = review.get(key)
         if not isinstance(rows, list) or len(rows) != len(expected): return False
-        if any(not isinstance(r, dict) or not isinstance(r.get(field), str) or r.get(verdict) is not True
+        if any(not isinstance(r, dict) or not isinstance(r.get(field), str) or type(r.get(verdict)) is not bool
                or not isinstance(r.get('reason'), str) or not r['reason'].strip() for r in rows): return False
         if {r[field] for r in rows} != expected: return False
     return True
 
 
-def _transport(config):
+def validate_review(review, analysis, input_hash):
+    if not _valid_review_schema(review, analysis, input_hash):
+        return False
+    return (all(row['supported'] for row in review['checks'])
+            and all(row['adequate'] for row in review['facets']))
+
+
+def _transport(config, *, execution=None, material=None):
     from daily_agent.editorial import _llm_writer_settings, _llm_writer_command, _decode_model_json
     settings = _llm_writer_settings(config)
     def invoke(prompt, timeout, *, stage):
         if settings['provider'] == 'parent_queue':
             from daily_agent.parent_writer import request
-            return request(config.root, prompt, timeout, stage=stage)
-        result = subprocess.run(_llm_writer_command(settings, prompt), check=True,
-                                capture_output=True, text=True, timeout=timeout)
-        return _decode_model_json(result.stdout)
+            if execution is None:
+                return request(config.root, prompt, timeout, stage=stage)
+            substep = 'scientific_writer' if stage == 'draft' else 'scientific_review'
+            return request(config.root, prompt, timeout, stage=stage, execution=execution,
+                           operation=(material, 'primary_writer', substep, 0))
+        if execution is not None:
+            substep = 'scientific_writer' if stage == 'draft' else 'scientific_review'
+            execution.admit(material, 'primary_writer', substep, 0,
+                            {'prompt': prompt, 'settings': settings, 'stage': stage},
+                            retry_generation=0, queue_role=stage)
+        try:
+            result = subprocess.run(_llm_writer_command(settings, prompt), check=True,
+                                    capture_output=True, text=True, timeout=timeout)
+        except (OSError, subprocess.SubprocessError) as exc:
+            if execution is not None:
+                execution.writer_failure('backend', type(exc).__name__)
+            raise
+        try:
+            return _decode_model_json(result.stdout)
+        except ValueError as exc:
+            if execution is not None:
+                execution.writer_failure('json', str(exc))
+            raise
     return invoke
 
 
-def analyze_papers(config, records, drafts, *, use_llm=True, invoke=None):
+def _analysis_timeout(timeout, execution):
+    if execution is None:
+        return timeout
+    from daily_agent.batch_execution import BudgetExhausted
+    timeout = min(timeout, execution.remaining('primary_writer'))
+    if timeout <= 0:
+        raise BudgetExhausted('Scientific analysis deadline exhausted')
+    return timeout
+
+
+def analyze_papers(config, records, drafts, *, use_llm=True, invoke=None, execution=None):
     """Actual pipeline stage, with bounded failure and separately cached review.
 
     PendingResponse intentionally propagates for durable parent-queue resume.
@@ -268,29 +305,57 @@ def analyze_papers(config, records, drafts, *, use_llm=True, invoke=None):
                 record.reading['scientific_analysis'].update(status='failed', identity=identity)
                 continue
         try:
-            serialized = json.dumps(source, ensure_ascii=False)
-            if len(serialized) > int(settings.get('max_input_chars', 380000)):
-                raise ValueError('Scientific analysis input exceeds explicit budget; no silent truncation')
-            call = invoke or _transport(config)
-            timeout = min(600.0, max(1.0, float(settings.get('timeout_seconds', 180))))
-            analysis = load_json(folder / 'draft.json')
-            if not validate_analysis(analysis, record):
-                analysis = call(WRITER_PROMPT + serialized, timeout, stage='draft')
-                if not validate_analysis(analysis, record): raise ValueError('Unlocated or incomplete scientific analysis')
-                atomic_json(folder / 'draft.json', analysis)
-            review_hash = digest([source_hash, analysis])
-            review = call(REVIEW_PROMPT + json.dumps({'input_sha256': review_hash,
-                'required_facets': sorted(FACETS), 'analysis': analysis, 'source': source}, ensure_ascii=False), timeout, stage='review')
-            if not validate_review(review, analysis, review_hash): raise ValueError('Independent scientific analysis review rejected')
-            result = {'schema_version': SCHEMA, 'status': 'passed', 'input_sha256': source_hash,
-                      'protocol_sha256': semantic_protocol(),
-                      'analysis': analysis, 'review': review}
-            atomic_json(folder / 'result.json', result)
-            _attach(record, draft, result, identity)
+            with execution.stage('primary_writer') if execution is not None else nullcontext():
+                serialized = json.dumps(source, ensure_ascii=False)
+                if len(serialized) > int(settings.get('max_input_chars', 380000)):
+                    raise ValueError('Scientific analysis input exceeds explicit budget; no silent truncation')
+                call = invoke or _transport(config, execution=execution, material=record.key)
+                timeout = min(600.0, max(1.0, float(settings.get('timeout_seconds', 180))))
+                analysis = load_json(folder / 'draft.json')
+                if not validate_analysis(analysis, record):
+                    current_timeout = _analysis_timeout(timeout, execution)
+                    analysis = call(WRITER_PROMPT + serialized, current_timeout, stage='draft')
+                    if not validate_analysis(analysis, record):
+                        if execution is not None:
+                            execution.writer_failure('schema', 'Unlocated or incomplete scientific analysis')
+                        raise ValueError('Unlocated or incomplete scientific analysis')
+                    atomic_json(folder / 'draft.json', analysis)
+                review_hash = digest([source_hash, analysis])
+                current_timeout = _analysis_timeout(timeout, execution)
+                review = call(REVIEW_PROMPT + json.dumps({'input_sha256': review_hash,
+                    'required_facets': sorted(FACETS), 'analysis': analysis, 'source': source}, ensure_ascii=False), current_timeout, stage='review')
+                if not _valid_review_schema(review, analysis, review_hash):
+                    if execution is not None:
+                        execution.writer_failure('schema', 'Invalid scientific analysis review response')
+                    raise ValueError('Invalid scientific analysis review response')
+                if not validate_review(review, analysis, review_hash):
+                    raise ValueError('Independent scientific analysis review rejected')
+                result = {'schema_version': SCHEMA, 'status': 'passed', 'input_sha256': source_hash,
+                          'protocol_sha256': semantic_protocol(),
+                          'analysis': analysis, 'review': review}
+                atomic_json(folder / 'result.json', result)
+                _attach(record, draft, result, identity)
         except ExpiredResponse:
+            if execution is not None:
+                execution.snapshot()
+                raise
             atomic_json(folder / 'result.json', {'status': 'failed', 'input_sha256': source_hash, 'reason': 'ExpiredResponse'})
             record.reading['scientific_analysis'].update(status='failed', identity=identity)
         except Exception as exc:
+            if execution is not None:
+                execution.snapshot()  # Fail closed immediately after uncertain ledger writes.
+                from daily_agent.batch_execution import BudgetExhausted, WriterCircuitOpen
+                from daily_agent.workflow_state import StateCorrupt
+                if isinstance(exc, StateCorrupt):
+                    raise
+                if isinstance(exc, (BudgetExhausted, WriterCircuitOpen, TimeoutError)):
+                    record.reading['scientific_analysis'].update(
+                        status='not_reviewed', identity=identity, reason=type(exc).__name__)
+                    continue
+                if isinstance(exc, json.JSONDecodeError):
+                    execution.writer_failure('json', str(exc))
+                elif isinstance(exc, (subprocess.SubprocessError, ConnectionError)):
+                    execution.writer_failure('backend', type(exc).__name__)
             atomic_json(folder / 'result.json', {'status': 'failed', 'input_sha256': source_hash, 'reason': type(exc).__name__})
             record.reading['scientific_analysis'].update(status='failed', identity=identity)
 

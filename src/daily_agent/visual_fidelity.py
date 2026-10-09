@@ -147,7 +147,21 @@ def evidence_text(candidate):
     return '\n'.join(parts)
 
 
-def repair_visuals(records, config, invoke=None):
+def repair_visuals(records, config, invoke=None, *, execution=None):
+    if execution is None:
+        return _repair_visuals(records, config, invoke)
+    if not records or not config.sources.get('reading', {}).get('fidelity_enabled', False):
+        return
+    from daily_agent.batch_execution import BudgetExhausted
+    try:
+        with execution.stage('fidelity'):
+            return _repair_visuals(records, config, invoke, execution=execution)
+    except BudgetExhausted:
+        execution.snapshot()
+        return _repair_visuals(records, config, None, execution=execution, exhausted=True)
+
+
+def _repair_visuals(records, config, invoke=None, *, execution=None, exhausted=False):
     """Reconstruct and separately review every required page, with one repair.
 
     No document promotion on partial success. Only fully accepted page evidence
@@ -190,13 +204,15 @@ def repair_visuals(records, config, invoke=None):
                                 and legacy.get('candidate_hash') == digest(legacy['candidate'])
                                 and valid_review(legacy.get('review'), legacy['candidate'])):
                             atomic_json(target, {**legacy, 'fingerprint':key})
+                if exhausted: raise FidelityBudgetExhausted('fidelity budget exhausted')
                 if invoke is None or not cfg.get('visual_enabled', True): raise RuntimeError('fidelity model disabled')
 
                 images = str(image)
-                def call(prompt):
-                    remaining = deadline - time.monotonic()
+                def call(prompt, substep, ordinal):
+                    remaining = execution.remaining('fidelity') if execution is not None else deadline - time.monotonic()
                     if remaining <= 0: raise FidelityBudgetExhausted('fidelity budget exhausted')
-                    return invoke(prompt, min(float(cfg.get('fidelity_timeout_seconds', 180)), remaining), images)
+                    kwargs = {'execution': execution, 'operation': (record.key, 'fidelity', substep + ':' + str(page['page']), ordinal)} if execution is not None else {}
+                    return invoke(prompt, min(float(cfg.get('fidelity_timeout_seconds', 180)), remaining), images, **kwargs)
 
                 feedback = None
                 previous_candidate = None
@@ -215,6 +231,8 @@ def repair_visuals(records, config, invoke=None):
                                               'focus':focus,
                                               'hashes':[hashlib.sha256(Path(p).read_bytes()).hexdigest() for p in crops]}
                         except Exception:
+                            if execution is not None:
+                                execution.snapshot()
                             # Missing renderer does not waive unresolved labels.
                             images = str(image)
                     context_hash = digest([feedback, detail_context])
@@ -242,14 +260,14 @@ def repair_visuals(records, config, invoke=None):
                     else:
                         candidate = call(TRANSCRIBE + json.dumps({'page':page['page'], 'native_text':page['text'],
                                           'previous_review':feedback, 'previous_candidate':previous_candidate,
-                                          'detail_images':detail_context}, ensure_ascii=False))
+                                          'detail_images':detail_context}, ensure_ascii=False), 'transcribe', attempt)
                     if not valid_candidate(candidate, page):
                         atomic_json(folder / f'{key}.attempt-{attempt+1}.json', {'candidate':candidate, 'error':'invalid candidate'})
                         feedback = {'issues':['输出不符合完整转写JSON结构，请按要求完整重建。']}
                         continue
                     atomic_json(pending_path, {'fingerprint':key, 'feedback_hash':context_hash,
                                               'candidate':candidate, 'candidate_hash':digest(candidate)})
-                    review = call(REVIEW + json.dumps({**candidate, 'detail_images':detail_context}, ensure_ascii=False))
+                    review = call(REVIEW + json.dumps({**candidate, 'detail_images':detail_context}, ensure_ascii=False), 'review', attempt)
                     result = {'page':page['page'], 'fingerprint':key, 'image_hash':actual,
                               'native_text_hash':digest(page['text']), 'candidate_hash':digest(candidate),
                               'candidate':candidate, 'review':review, 'passed':accepted(candidate, review),
@@ -263,6 +281,11 @@ def repair_visuals(records, config, invoke=None):
                     feedback = review if valid_review(review, candidate) else {'issues':['复核返回格式无效，未验收。']}
                 return {'page':page['page'], 'passed':False, 'reason':'逐页重建/独立复核未通过', 'last_review':feedback}
             except Exception as exc:
+                if execution is not None:
+                    execution.snapshot()  # Fail closed immediately after uncertain ledger writes.
+                    from daily_agent.workflow_state import StateCorrupt
+                    if isinstance(exc, StateCorrupt):
+                        raise
                 return {'page':page['page'], 'passed':False, 'reason':type(exc).__name__}
 
         workers = max(1, min(4, int(cfg.get('concurrent_reads', 1))))

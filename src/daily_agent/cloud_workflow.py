@@ -169,6 +169,11 @@ def reserved_delivery_identities(config, day):
             for item in _approved_items(copy.deepcopy(manifest['approval'])):
                 reserved.update(_identity_keys(item.material.to_digest_item()))
                 reserved.add(item.key)
+    # Explicit revisions share the canonical publication history and reservations.
+    # Only an exact current revision may exclude itself; never the whole day.
+    from daily_agent.production_revision import reservation_keys
+    reserved.update(reservation_keys(config.root,
+        exclude_revision_id=config.delivery.get('cloud', {}).get('reservation_exclude_revision_id')))
     return reserved
 
 
@@ -547,6 +552,16 @@ def _validate_budget(value, expected_day):
         raise StateCorrupt('Incomplete active cloud attempt')
     if 'active_attempt_id' in value and (not isinstance(value['active_attempt_id'],str) or not value['active_attempt_id']):
         raise StateCorrupt('Invalid active cloud attempt identity')
+    # Historical idle budgets remain valid; only freshly fenced active attempts
+    # may execute or be automatically recovered.
+    if 'active_namespace' in value:
+        if (not isinstance(value['active_namespace'], str) or not value['active_namespace']
+                or not value.get('active_attempt_id')):
+            raise StateCorrupt('Invalid active cloud execution namespace')
+    if 'active_timeout_seconds' in value:
+        limit = value['active_timeout_seconds']
+        if type(limit) not in {int, float} or not math.isfinite(limit) or limit <= 0:
+            raise StateCorrupt('Invalid active cloud attempt timeout')
 
 
 def _local_day(root, requested=None):
@@ -555,9 +570,31 @@ def _local_day(root, requested=None):
     return _clock().astimezone(ZoneInfo(config.delivery.get('report',{}).get('timezone','Asia/Shanghai'))).date()
 
 
+def _read_generation_attempt(config, day, attempt, namespace, *, settled=False):
+    """Compare both durable fences while the caller holds cloud-generation.lock.
+
+    No nested flock: the ordinary supervisor owns this lock for its entire run.
+    Budget settlement is persisted first; the matching settled fence allows the
+    final journal write without ever adopting a newer attempt's metadata.
+    """
+    budget = read_json(config.state_dir / 'cloud-generation-budgets' / f'{day}.json')
+    _validate_budget(budget, day)
+    prefix = 'last' if settled else 'active'
+    if (budget.get(f'{prefix}_attempt_id') != attempt
+            or budget.get(f'{prefix}_namespace') != namespace
+            or (settled and budget.get('active_attempt_id'))):
+        raise StateCorrupt('Cloud supervisor attempt was superseded')
+    state = read_json(config.state_dir / 'cloud-generation.json')
+    if (not isinstance(state, dict) or state.get('date') != str(day)
+            or state.get('running') is not True or state.get('attempt_id') != attempt
+            or state.get('namespace') != namespace):
+        raise StateCorrupt('Cloud supervisor journal was superseded')
+    return budget, state
+
+
 def run_generation(root, day, timeout, *, worker_module="daily_agent.cloud_workflow"):
     """Persist issue-wide deadline/runtime across resumptions and supervisor restarts."""
-    from daily_agent.workflow_runtime import run_process, stop_verified_orphan
+    from daily_agent.workflow_runtime import run_process, stop_verified_orphan, process_namespace, CleanupPending
     config = _config(root)
     if worker_module not in {'daily_agent.cloud_workflow','daily_agent.cloud_pilot'}:
         raise ValueError('Unsupported generation worker')
@@ -573,31 +610,55 @@ def run_generation(root, day, timeout, *, worker_module="daily_agent.cloud_workf
     max_resumes = int(policy.get('max_generation_resumes', _resume_capacity(config)))
     if not math.isfinite(max_seconds) or not 0 < max_seconds <= 86400 or not 1 <= max_failures <= 20 or not 1 <= max_resumes <= 10000:
         raise ValueError('Invalid persistent cloud issue budget')
+    namespace = process_namespace()
     with exclusive_lock(path.with_suffix('.lock')):
         previous = read_json(path)
         if previous and previous.get('running'):
+            if (not previous.get('namespace') or previous['namespace'] != namespace):
+                raise StateCorrupt('Previous cloud generation namespace cannot be verified; operator review required')
             if not previous.get('child_identity'):
                 raise StateCorrupt('Previous cloud generation has no cleanup identity; operator review required')
             old_path = budget_dir / f"{date.fromisoformat(previous['date'])}.json"
             old_budget = read_json(old_path)
             _validate_budget(old_budget, date.fromisoformat(previous['date']))
-            stop_verified_orphan(previous['child_identity'], expected_root=config.root)
             if old_budget.get('active_started_at'):
-                if old_budget.get('active_attempt_id') != previous.get('attempt_id'):
+                if (old_budget.get('active_attempt_id') != previous.get('attempt_id')
+                        or old_budget.get('active_namespace') != namespace):
                     raise StateCorrupt('Retained cloud process budget identity mismatch')
+            elif (old_budget.get('last_attempt_id') != previous.get('attempt_id')
+                    or old_budget.get('last_namespace') != namespace):
+                raise StateCorrupt('Retained cloud process has no matching completed budget')
+            stop_verified_orphan(previous['child_identity'], expected_root=config.root)
+            # Cleanup may block. Recheck ownership before charging runtime or
+            # marking its journal stopped; never overwrite a replacement fence.
+            old_day = date.fromisoformat(previous['date'])
+            old_attempt = previous['attempt_id']
+            old_budget, previous = _read_generation_attempt(config, old_day, old_attempt, namespace,
+                settled=not bool(old_budget.get('active_started_at')))
+            if old_budget.get('active_started_at'):
                 elapsed = max(0, (_clock()-datetime.fromisoformat(old_budget['active_started_at'])).total_seconds())
                 old_budget['runtime_seconds'] += elapsed
                 old_budget['failures'] += 1
                 old_budget['last_attempt_id'] = old_budget.pop('active_attempt_id')
+                old_budget['last_namespace'] = old_budget.pop('active_namespace')
+                old_budget.pop('active_timeout_seconds', None)
                 old_budget['last_returncode'] = 124
                 old_budget.pop('active_started_at', None)
                 atomic_json(old_path, old_budget)
-            elif old_budget.get('last_attempt_id') != previous.get('attempt_id'):
-                raise StateCorrupt('Retained cloud process has no matching completed budget')
+            _, previous = _read_generation_attempt(config, old_day, old_attempt, namespace, settled=True)
             previous.update(running=False, cleanup_confirmed_at=_now())
             atomic_json(path, previous)
         budget = read_json(budget_path)
+        from daily_agent.incremental_issue import issue_dir, can_enroll, enroll, assert_generation_allowed, load_plan, PROTOCOL, has_prior_activity
+        # Do not launch or spend a new issue attempt after a publication seal.
+        from daily_agent.scheduling import _ready_path
+        with exclusive_lock(_path(config, day).with_suffix('.lock')), \
+                exclusive_lock(_ready_path(config, day).with_suffix('.lock')):
+            assert_generation_allowed(config, day)
+        if budget is None and (issue_dir(config, day).exists() or has_prior_activity(config, day)):
+            raise StateCorrupt('Prior issue budget missing; refusing reset')
         if budget is None:
+            enroll_incremental = worker_module == 'daily_agent.cloud_workflow' and can_enroll(config, day)
             now = _clock()
             if policy.get('pilot'):
                 deadline = now + timedelta(seconds=min(21600, max_seconds))
@@ -609,8 +670,13 @@ def run_generation(root, day, timeout, *, worker_module="daily_agent.cloud_workf
             budget = {'schema_version':1,'date':str(day),'issue_started_at':now.isoformat(),
                       'deadline':deadline.isoformat(),'runtime_seconds':0.,'failures':0,'resumes':0,
                       'max_runtime_seconds':max_seconds,'max_failures':max_failures,'max_resumes':max_resumes}
+            if enroll_incremental:
+                budget['execution_protocol'] = PROTOCOL
             atomic_json(budget_path,budget)
+            if enroll_incremental:
+                enroll(config, day)
         _validate_budget(budget, day)
+        load_plan(config, day, require_budget=True)
         if budget.get('active_started_at'):
             raise StateCorrupt('Unreconciled cloud launch budget; operator review required')
         remaining_wall = (datetime.fromisoformat(budget['deadline'])-_clock()).total_seconds()
@@ -620,36 +686,65 @@ def run_generation(root, day, timeout, *, worker_module="daily_agent.cloud_workf
             atomic_json(budget_path,budget)
             return 124
         permitted = min(timeout, float(policy.get('max_generation_seconds',900)),remaining_wall,remaining_runtime)
+        if not math.isfinite(permitted) or permitted <= 0:
+            raise ValueError('Invalid cloud attempt timeout')
         started_at = _clock()
         started_monotonic = time.monotonic()
         attempt = uuid.uuid4().hex
-        budget.update(resumes=budget['resumes']+1,active_started_at=started_at.isoformat(),active_attempt_id=attempt)
+        budget.update(resumes=budget['resumes']+1, active_started_at=started_at.isoformat(),
+                      active_attempt_id=attempt, active_namespace=namespace, active_timeout_seconds=permitted)
         atomic_json(budget_path,budget)
         state = {'date':str(day),'running':True,'started_at':started_at.isoformat(),'child_identity':None,
-                 'timeout_seconds':permitted,'issue_deadline':budget['deadline'],'attempt_id':attempt}
+                 'timeout_seconds':permitted,'issue_deadline':budget['deadline'],
+                 'attempt_id':attempt,'namespace':namespace}
+        launch_known = False
         def started(identity):
-            state['child_identity']=identity
-            atomic_json(path,state)
+            nonlocal state, launch_known
+            # The child exists before any fallible fence read/fsync. Retain
+            # this fact even if the journal write or subsequent cleanup fails.
+            launch_known = True
+            state['child_identity'] = copy.deepcopy(identity)
+            _, current = _read_generation_attempt(config, day, attempt, namespace)
+            current['child_identity'] = identity
+            atomic_json(path, current)
+            state = current
         def tick():
-            state['heartbeat_at']=_now()
-            atomic_json(path,state)
+            nonlocal state
+            _, current = _read_generation_attempt(config, day, attempt, namespace)
+            current['heartbeat_at'] = _now()
+            atomic_json(path, current)
+            state = current
         log_prefix = config.logs_dir / f'cloud-{day}'
         output_log = log_prefix.with_suffix('.out.log')
         output_offset = output_log.stat().st_size if output_log.exists() else 0
+        # Persist the attempt before launch so the worker can bind itself to
+        # this supervisor while on_start publishes its child process identity.
+        atomic_json(path, state)
+        command = [sys.executable, '-m', worker_module,
+                   'generate' if worker_module == 'daily_agent.cloud_workflow' else 'worker',
+                   '--root', str(config.root), '--date', str(day)]
+        if worker_module == 'daily_agent.cloud_workflow':
+            command += ['--expected-attempt', attempt, '--expected-namespace', namespace]
         try:
-            rc = run_process([sys.executable, '-m', worker_module, 'generate' if worker_module=='daily_agent.cloud_workflow' else 'worker', '--root', str(config.root), '--date', str(day)],
+            rc = run_process(command,
                              config.root, permitted, on_start=started, on_tick=tick,
                              log_prefix=log_prefix)
+        except CleanupPending:
+            raise  # Unconfirmed cleanup can never settle a launch as stopped.
         except Exception:
-            if state['child_identity'] is not None:
-                raise  # Retain evidence of a possibly running process for safe cleanup.
+            if launch_known:
+                raise  # Retain the active budget for a possibly running child.
             rc = 1  # Popen/log-open failed before any launched-process callback.
+        budget, state = _read_generation_attempt(config, day, attempt, namespace)
         budget['runtime_seconds'] += max(0,time.monotonic()-started_monotonic,(_clock()-started_at).total_seconds())
         budget['failures'] += int(rc not in {0,75})
         budget.pop('active_started_at',None)
         budget['last_attempt_id'] = budget.pop('active_attempt_id')
+        budget['last_namespace'] = budget.pop('active_namespace')
+        budget.pop('active_timeout_seconds', None)
         budget['last_returncode'] = rc
         atomic_json(budget_path,budget)
+        _, state = _read_generation_attempt(config, day, attempt, namespace, settled=True)
         state.update(running=False,finished_at=_now(),returncode=rc)
         if rc==75 and output_log.exists() and output_log.stat().st_size>output_offset:
             with output_log.open('rb') as handle:
@@ -662,19 +757,31 @@ def run_generation(root, day, timeout, *, worker_module="daily_agent.cloud_workf
                         and re.fullmatch(r'[0-9a-f]{64}',str(checkpoint.get('job_id','')))):
                     state['checkpoint']={'state':checkpoint['state'],'job_id':checkpoint['job_id'],'issue_date':str(day)}
                     break
+        _read_generation_attempt(config, day, attempt, namespace, settled=True)
         atomic_json(path,state)
         return rc
 
 
-def generate(root, day):
+def generate(root, day, *, expected_attempt=None, expected_namespace=None):
     previous = os.environ.get('DAILY_AGENT_DISABLE_EXTERNAL_SECRETS')
     os.environ['DAILY_AGENT_DISABLE_EXTERNAL_SECRETS'] = '1'
     try:
         config = _config(root)
         from daily_agent.pipeline import _run_pipeline_unlocked
-        with exclusive_lock(config.state_dir / 'pipeline.lock'):
+        from daily_agent.incremental_issue import assert_generation_allowed, assert_active_generation, load_plan
+        from daily_agent.scheduling import _ready_path
+        # Publication owns the outer locks, matching existing reconciliation
+        # (publication lock -> pipeline lock). Hold through the final seal.
+        with exclusive_lock(_path(config, day).with_suffix('.lock')), \
+                exclusive_lock(_ready_path(config, day).with_suffix('.lock')), \
+                exclusive_lock(config.state_dir / 'pipeline.lock'):
+            assert_generation_allowed(config, day)
+            assert_active_generation(config, day, expected_attempt=expected_attempt,
+                                     expected_namespace=expected_namespace)
+            plan = load_plan(config, day, require_budget=True)
             return _run_pipeline_unlocked(config.root, day, dry_run=False, use_llm=True,
-                                          delivery_mode='local', defer_delivery=True)
+                                          delivery_mode='local', defer_delivery=True,
+                                          _issue_plan=plan, _ready_lock_held=True)
     finally:
         if previous is None: os.environ.pop('DAILY_AGENT_DISABLE_EXTERNAL_SECRETS', None)
         else: os.environ['DAILY_AGENT_DISABLE_EXTERNAL_SECRETS'] = previous
@@ -701,6 +808,8 @@ def main(argv=None):
     parser.add_argument('--date')
     parser.add_argument('--conversation')
     parser.add_argument('--attempt-id')
+    parser.add_argument('--expected-attempt', help='Immutable supervisor generation attempt')
+    parser.add_argument('--expected-namespace', help='Immutable supervisor execution namespace')
     parser.add_argument('--message-id')
     parser.add_argument('--readback-file')
     parser.add_argument('--failure')
@@ -722,7 +831,8 @@ def main(argv=None):
         result = init_profile(Path(args.source), Path(args.root), args.writer)
     elif args.action == 'generate':
         from daily_agent.parent_writer import PendingResponse
-        try: generate(args.root, day)
+        try: generate(args.root, day, expected_attempt=args.expected_attempt,
+                      expected_namespace=args.expected_namespace)
         except PendingResponse as exc:
             print(json.dumps({'state':'expired_parent_writer' if getattr(exc,'expired',False) else 'awaiting_parent_writer','job_id':exc.job_id,'issue_date':str(day)}))
             return 75

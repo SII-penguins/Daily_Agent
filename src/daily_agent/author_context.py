@@ -364,9 +364,11 @@ def research_context_lines(context):
     return lines
 
 
-def enrich_selected_author_contexts(records, config):
+def enrich_selected_author_contexts(records, config, *, execution=None):
     from daily_agent.author_research import enrich_selected_author_contexts as enrich
-    return enrich(records, config)
+    if execution is None:
+        return enrich(records, config)
+    return enrich(records, config, execution=execution)
 
 
 def watchlist_discovery_queries(config, limit=2):
