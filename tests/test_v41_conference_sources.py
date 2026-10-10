@@ -1,4 +1,5 @@
 from pathlib import Path
+from contextlib import contextmanager
 from datetime import date, datetime, timezone
 
 import httpx
@@ -26,6 +27,12 @@ class _Client:
 
     def get(self, url, **kwargs):
         return self.handler(url, **kwargs)
+
+    @contextmanager
+    def stream(self, method, url, **kwargs):
+        response = self.handler(url)
+        response.headers["content-type"] = "text/html"
+        yield response
 
 
 def test_openreview_fetch_normalizes_iclr_note(monkeypatch):
@@ -73,9 +80,11 @@ def test_openreview_fetch_normalizes_iclr_note(monkeypatch):
 
 def test_pmlr_fetch_normalizes_icml_volume(monkeypatch):
     config = load_config(str(Path(__file__).resolve().parents[1]))
-    config.sources["pmlr"] = {"enabled": True, "volumes": [{"venue": "ICML 2025", "url": "https://proceedings.mlr.press/v267/"}]}
+    config.sources["discovery"] = {}
+    config.sources["pmlr"] = {"enabled": True, "max_detail_pages": 0, "volumes": [{"venue": "ICML 2025", "url": "https://proceedings.mlr.press/v267/"}]}
 
     html = """
+    <title>Published as Volume 267 by PMLR on 27 July 2025</title>
     <div class="paper">
       <p class="title">Quantum circuit learning at ICML</p>
       <p class="authors">Carol Chen, Dana Doe</p>

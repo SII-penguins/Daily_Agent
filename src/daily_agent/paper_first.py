@@ -7,10 +7,8 @@ This module prepares HTML; it never publishes, sends, or changes legacy seals.
 from __future__ import annotations
 
 import argparse
-import base64
 from datetime import date, datetime, timezone
 import hashlib
-from html import escape
 import json
 from pathlib import Path
 import re
@@ -180,9 +178,23 @@ def create_issue(root, issue_date, papers, *, diagnostic=False, target=None):
 def _reader_prompt(root, meta, record):
     source = _json(root, meta['document'])
     contract = '''Read the COMPLETE native PDF text below and produce ONE concise Chinese scientific report.
-Do not transcribe pages/chunks. Integrate problem, method, insight, results, limits and reuse.
+Do not transcribe pages/chunks. Build a connected mainline: insight -> explanatory idea -> decisive evidence and limits.
+Claims c1-c6 are the visible core, in this exact section order: problem, method, insight, results, limits, reuse.
+Together their text AND conditions should usually total 450-850 Chinese characters. This is editorial guidance,
+not a reason to omit decisive caveats or truncate prose. Avoid repeating the same fact in different sections.
+Cover the precise problem and bottleneck, the minimal idea and why it works, novelty versus the closest prior
+approach, necessary method steps/technical route and complexity, the argument's progression, decisive evidence,
+and unresolved questions. Narrative means the paper's argument, never invented discovery history.
+For theory papers decisive evidence can be a theorem/proof and its assumptions. When controls do not
+establish whether complexity is necessary, say so. These are aspects of ONE coherent paper analysis, not eight separate checklists.
+Distinguish a mechanism established by evidence from the authors' explanation or an editor's interpretation.
+Claims c7-c12, when necessary, hold optional technical derivations, extra ablations or supporting detail.
+Keep central numbers with their baselines/conditions and decisive counterevidence or limitations in c1-c6;
+do not put a strong core claim in the mainline while relegating the qualification that changes it to details.
 Every published scientific sentence belongs in claims. Separate author_claim from editor_inference.
 Keep numeric units, evaluation conditions, denominators, comparison baselines and caveats.
+Put essential conditions in the core text; the conditions field should briefly preserve necessary scope,
+preferably as an exact existing text substring, not a duplicate paragraph or an evidence worklog.
 Read appendices too; distinguish evidence from conjecture. No facts from outside this source.
 Author context: use names/affiliations from this PDF only, and label group history or correspondence unknown unless explicit.
 Select 1-3 useful ORIGINAL visual regions when available: framework, decisive experiment/table, and only a central formula.
@@ -194,7 +206,7 @@ Return a JSON object (no Markdown):
 "figures":[{"id":"f1","role":"framework|result|formula|other","label":"Figure 1(d)","page":2,"bbox":[0.1,0.1,0.9,0.6],"caption":"Chinese explanation with scope/conditions","claim_ids":["c1"]}],
 "no_figure_reason":"only if no useful visual exists",
 "author_context":{"text":"bounded supported author/context statement; unknowns explicit","anchors":[{"page":1,"quote":"exact source names/affiliations"}]}}
-All six claim sections are required. Use 6-12 short paragraphs, usually 1-2 per section. Each claim and author_context must have 1-8 exact page anchors, each 5-1200 characters. Combine nearby evidence into one exact quote when useful; do not create per-sentence evidence logs. Quotes are anchors, not report prose.
+All six claim sections are required. Use 6-12 short paragraphs: six connected core paragraphs followed only by useful optional detail. Each claim and author_context must have 1-8 exact page anchors, each 5-1200 characters. Combine nearby evidence into one exact quote when useful; do not create per-sentence evidence logs. Quotes are anchors, not report prose.
 '''
     if record['round']:
         contract += '\nREPAIR: Preserve correct reading; fix only failed statements/captions/crops. Return the complete corrected object.\n'
@@ -240,6 +252,10 @@ def _validate_draft(draft, source):
         _anchors(claim.get('anchors'), pages)
     if {c['section'] for c in claims} != set(SECTIONS):
         raise ValueError('All six explanation sections required')
+    core = {claim['id']: claim for claim in claims}
+    if any(core.get(f'c{index}', {}).get('section') != section
+           for index, section in enumerate(SECTIONS, 1)):
+        raise ValueError('Claims c1-c6 must preserve the visible-core section order')
     figures = draft.get('figures')
     if not isinstance(figures, list) or len(figures) > MAX_FIGURES:
         raise ValueError('At most three useful original figures')
@@ -304,6 +320,14 @@ author-claim versus editor inference, limitations, scientific insight and bounde
 Inspect every supplied full source-page image AND corresponding selected crop. Verify exact label/subpanel,
 axes/legend/units are legible and complete; crop and caption must match. No need to transcribe pages.
 Check all pages were available and the draft reflects the complete paper, not only the abstract.
+Review c1-c6 together as the visible mainline (problem, method, insight, results, limits, reuse), normally
+450-850 Chinese characters INCLUDING conditions. Check coherence, no repetitive padding, precise problem,
+bottleneck, minimal explanatory idea, why it works, novelty, necessary method/complexity, argument progression,
+decisive evidence and unresolved questions. Do this within this ONE independent review, not separate jobs.
+A missing causal explanation must be labeled unknown rather than invented. All decisive negative evidence
+and qualifications must remain in c1-c6 alongside the claims they limit; c7+ may contain optional detail.
+Use REPAIR for a materially incomplete or misleading mainline, unsupported novelty/mechanism or excessive
+repetition. Character count alone is guidance, never grounds for dropping necessary scope or caveats.
 A harmless local caption/asset problem means REPAIR, not discarding otherwise valid reading.
 Return JSON only:
 {"verdict":"PASS|REPAIR|REJECT","full_source_checked":true,
@@ -493,43 +517,19 @@ def render(root, *, seal=False):
             if _hash(path.read_bytes()) != state['sealed']['sha256']:
                 raise StateCorrupt('Sealed HTML changed')
             return path
-        sections = []
-        qualified = 0
+        from daily_agent.rendering.paper_first_editorial import render_paper_first_editorial
+        entries = []
         for meta in state['inputs']:
             record = state['papers'][meta['key']]
             if record['status'] != 'qualified':
                 continue
             receipt, draft = _verified_receipt(root, meta, record)
-            qualified += 1
-            venue = (meta.get('publication') or {}).get('venue', '预印本／正式发表状态未独立确认')
-            parts = [f'<article id="paper-{qualified}"><h2>{escape(meta["title"])}</h2>',
-                     f'<p class="meta">{escape(meta["source_date"])} · {escape(meta["version"])} · {escape(venue)}</p>',
-                     f'<p><a href="{escape(meta["url"], quote=True)}">论文原文</a> · <a href="{escape(meta["pdf_url"], quote=True)}">PDF</a></p>',
-                     f'<p class="authors">{escape(draft["author_context"]["text"])}</p>']
-            for role in SECTIONS:
-                parts.append(f'<h3>{LABELS[role]}</h3>')
-                for claim in draft['claims']:
-                    if claim['section'] != role:
-                        continue
-                    links = ' '.join(f'<a href="{escape(meta["pdf_url"], quote=True)}#page={a["page"]}">p.{a["page"]}</a>' for a in claim['anchors'])
-                    prefix = '编者推断：' if claim['basis'] == 'editor_inference' else ''
-                    parts.append(f'<p>{prefix}{escape(claim["text"])} <span class="refs">{links}</span></p>')
-                    if ' '.join(claim['conditions'].split()) not in ' '.join(claim['text'].split()):
-                        parts.append(f'<p class="conditions">适用条件：{escape(claim["conditions"])}</p>')
-            assets = {a['id']: a for a in receipt['assets']}
-            for figure in draft['figures']:
-                image = base64.b64encode(_get(root, assets[figure['id']]['crop'])).decode()
-                parts.append(f'<figure><img alt="{escape(figure["label"], quote=True)}" src="data:image/png;base64,{image}"><figcaption>{escape(figure["label"])} · {escape(figure["caption"])} <a href="{escape(meta["pdf_url"], quote=True)}#page={figure["page"]}">原文 p.{figure["page"]}</a></figcaption></figure>')
-            parts.append('</article>')
-            sections.append(''.join(parts))
+            crops = {asset['id']: _get(root, asset['crop']) for asset in receipt['assets']}
+            entries.append((meta, receipt, draft, crops))
+        qualified = len(entries)
         if seal and not qualified:
             raise ValueError('Cannot seal a zero-qualified issue')
-        st = status(root)
-        title = f'{state["issue_date"]} 研究简报' + (' · 隔离验证' if state['diagnostic'] else '')
-        html = '<!doctype html><html lang="zh-CN"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">'
-        html += f'<title>{escape(title)}</title><style>body{{margin:0;background:#f4f6f8;color:#1d2939;font:17px/1.85 system-ui,sans-serif}}main{{max-width:960px;margin:auto;padding:36px 20px}}article{{background:white;border-radius:14px;padding:32px;margin:28px 0}}h1{{font-size:32px}}h2{{font-size:25px;line-height:1.4}}h3{{font-size:18px;margin-bottom:6px}}p{{margin:10px 0 20px}}a{{color:#245c9e}}.meta,.authors,figcaption,.refs{{color:#667085;font-size:14px}}img{{max-width:100%;height:auto}}figure{{margin:28px 0}}.coverage{{background:#e9eef5;padding:14px 20px;border-radius:10px}}@media(max-width:600px){{article{{padding:20px}}main{{padding:20px 12px}}}}</style><main>'
-        html += f'<h1>{escape(title)}</h1><p class="coverage">已独立核验 {qualified} 篇论文；目标 {state["target"]} 篇。另有 {st["pending"]} 篇待完成、{st["rejected"]} 篇未通过。本页仅呈现合格内容。</p>'
-        html += ''.join(sections) + '</main></html>'
+        html = render_paper_first_editorial(state, entries, status(root))
         path = root / ('report.html' if seal else 'preview.html')
         path.write_text(html, encoding='utf-8')
         if seal:

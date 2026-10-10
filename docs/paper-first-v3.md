@@ -32,6 +32,50 @@ python -m daily_agent.paper_first seal --root /path/to/new-issue
 
 `render` is an updateable preview. `seal` creates immutable `report.html` with only qualified papers, even when others remain pending; it neither cancels already running host workers nor authorizes external delivery. The host must stop dispatching after a seal. `--diagnostic` permits an isolated past-date experiment and labels its HTML. A diagnostic must never be installed as a formal dated edition.
 
+### Default presentation for fresh issues
+
+The default Python `render` function and both `render`/`seal` CLI commands now use
+`rendering.paper_first_editorial`, version `editorial-v4-paper-first-v1`. No host
+wrapper, special flag, or one-off adapter is required. The approved editorial-v4
+stylesheet is reused byte-for-byte and checked against its reviewed digest.
+The old blue/grey fallback template is no longer the default export.
+
+- Compact dated header, warm paper/dark-green system typography, article cards
+- Sticky bounded desktop directory; a separate native mobile directory starts closed
+- Three continuous primary sections: core question/insight, key idea, evidence/boundaries
+- The complete c1–c6 paragraphs remain visible, including their conditions and provenance
+- Optional c7+ paragraphs remain available in secondary details, in the original six-section order
+- Exact reviewed author/affiliation text appears visibly below publication metadata; unknown roles and team history stay unknown
+- Zero to three original crops, unchanged captions, explicit PDF page controls, and source/crop identities; a no-figure case shows its reviewed reason
+- Offline PNGs, restrictive CSP, native keyboard disclosures, skip/return links, focus styling, dark mode, reduced-motion and print CSS
+
+The fresh-issue draft validator requires c1–c6 to match the six core section
+identities. A missing/misplaced core claim enters the existing bounded repair
+path before independent review. This is a mechanical presentation-contract
+check, not a claim that six labels prove scientific adequacy. The independent
+review still must reject a primary statement whose decisive limitation is only
+in optional detail. The 450–850-Chinese-character instruction remains guidance,
+not a truncation rule.
+
+Formatting retains the previous paper-first serialization of every scientific
+paragraph and adjacent condition, each author's paragraph, image tag, and
+caption. It does not summarize or re-read them. The workflow's existing verified
+receipt and archived-answer checks run before presentation, and sealed files
+remain immutable. No legacy approval or eight-facet scientific-analysis object
+is fabricated. Existing/frozen issues must continue with their original
+implementation; changed implementation bytes require a fresh issue.
+
+Focused checks:
+
+```bash
+python -m pytest tests/test_paper_first.py tests/test_paper_first_editorial.py -q
+```
+
+These tests verify default routing, exact content/crop preservation, receipt/hash
+failure, honest no-figure and empty states, and static responsive controls.
+Actual browser appearance and interactions are a separate verification gate;
+static CSS tests are not a claim of visual QA.
+
 A paper manifest is a JSON list containing `key`, `title`, `version`, `source_date`, `url`, `pdf_url`, `pdf_path`, and preferably `pdf_sha256`. Source dates must fall within the preceding three calendar months through the issue date. Inputs and implementation bytes are frozen at initialization. A changed implementation must use a new issue; the old source is needed to resume an old issue.
 
 Formal publication is not inferred from bibliographic metadata. Without a verified primary snapshot the report says formal publication is unconfirmed. An optional `publication` object requires `venue`, `url`, `evidence_path` and an exact `quote`; the host is responsible for obtaining the actual primary publisher/proceedings evidence. Author and affiliation statements are limited to source support; group history and correspondence stay unknown unless explicit.

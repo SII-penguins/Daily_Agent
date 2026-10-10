@@ -222,6 +222,7 @@ def _probe_config(config: AppConfig, sample_limit: int) -> AppConfig:
         sources["openreview"]["venues"] = (sources["openreview"].get("venues") or [])[:1]
     if isinstance(sources.get("pmlr"), dict):
         sources["pmlr"]["max_results_per_volume"] = per_query
+        sources["pmlr"].update(max_detail_pages=1, max_index_pages=1, max_metadata_requests=2, metadata_cache_enabled=False)
         sources["pmlr"]["volumes"] = (sources["pmlr"].get("volumes") or [])[:1]
     if isinstance(sources.get("neurips"), dict):
         sources["neurips"]["max_results_per_year"] = per_query
@@ -230,7 +231,10 @@ def _probe_config(config: AppConfig, sample_limit: int) -> AppConfig:
     if isinstance(sources.get("nature"), dict):
         sources["nature"]["max_articles_per_feed"] = per_query
         sources["nature"]["max_detail_pages"] = 1
+        sources["nature"].update(metadata_cache_enabled=False, max_metadata_requests=2)
         sources["nature"]["feeds"] = (sources["nature"].get("feeds") or [])[:1]
+    if isinstance(sources.get("crossref"), dict):
+        sources["crossref"]["preferred_max_requests"] = 1
     return replace(config, sources=sources)
 
 
