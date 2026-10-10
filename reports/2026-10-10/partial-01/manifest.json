@@ -1,0 +1,340 @@
+{
+  "schema_version": 1,
+  "report_date": "2026-10-10",
+  "edition": "partial-01",
+  "format": "portable_html_with_local_assets",
+  "acceptance": {
+    "status": "qualified_partial",
+    "papers": 3,
+    "repositories": 0,
+    "full_target_met": false,
+    "scope": "Three independently reviewed papers with complete native-text coverage, selected-image CORE checks and independent scientific-argument review; not independent experimental reproduction or peer-review certification"
+  },
+  "source_code": {
+    "repository": "https://github.com/SII-penguins/Daily_Agent",
+    "commit": "60c1396fedc0f75138c6142bb81a83137b85f4a8",
+    "scope": "Frozen scientific/runtime source; operational host adapters are separate"
+  },
+  "public_variant": {
+    "embedded_licensed_crops": 10,
+    "source_linked_selections_without_image": 5,
+    "total_reviewed_selections_in_sealed_edition": 15,
+    "omitted": [
+      "full reading notes",
+      "per-chunk verbatim quotations",
+      "long author-source quotations",
+      "raw operational records",
+      "private delivery and storage identifiers",
+      "full PDFs"
+    ],
+    "sealed_private_source_modified": false
+  },
+  "papers": [
+    {
+      "key": "qufig",
+      "title": "QUFIG: GNN-Based Prediction of Quantum Fault Injection Vulnerabilities with Gate-Level Precision",
+      "url": "https://arxiv.org/abs/2610.01777",
+      "official_html": "https://arxiv.org/html/2610.01777v1",
+      "authors": [
+        "Shihan Zhao",
+        "Qiying Li",
+        "Ben Dong",
+        "Qian Wang",
+        "Yuntao Liu"
+      ],
+      "license": "arXiv non-exclusive distribution license",
+      "license_url": "https://arxiv.org/licenses/nonexclusive-distrib/1.0/license.html",
+      "images": "source_links_only"
+    },
+    {
+      "key": "ra-vla",
+      "title": "RA-VLA: Retrieval-Augmented VLA for Test-Time Adaptation",
+      "url": "https://arxiv.org/abs/2608.25585v2",
+      "official_html": "https://arxiv.org/html/2608.25585v2",
+      "authors": [
+        "Sanghwan Jang",
+        "Minjin Jeon",
+        "Minsoo Kim",
+        "Seongjin Choi",
+        "Dongha Kim",
+        "Hwanjo Yu"
+      ],
+      "license": "CC BY 4.0",
+      "license_url": "https://creativecommons.org/licenses/by/4.0/",
+      "images": "licensed_crops",
+      "copyright_notice": "Copyright 2026 by the author(s)."
+    },
+    {
+      "key": "cross-embodiment",
+      "title": "Cross-Embodiment Robot Foundation World Models with Latent Actions",
+      "url": "https://arxiv.org/abs/2610.10846v1",
+      "official_html": "https://arxiv.org/html/2610.10846v1",
+      "authors": [
+        "Huang Huang",
+        "Sriram Yenamandra",
+        "Arjun Majumdar",
+        "Elie Aljalbout",
+        "Tushar Nagarajan",
+        "Tsung-Yen Yang",
+        "Akshara Rai",
+        "Michael Rabbat",
+        "Li Fei-Fei",
+        "Jiajun Wu",
+        "Tingfan Wu",
+        "Franziska Meier"
+      ],
+      "license": "CC BY 4.0",
+      "license_url": "https://creativecommons.org/licenses/by/4.0/",
+      "images": "licensed_crops"
+    }
+  ],
+  "figure_sources": [
+    {
+      "paper": "qufig",
+      "selection_index": 1,
+      "source_page_url": "https://arxiv.org/pdf/2610.01777#page=5",
+      "caption": "2 · 原文第 5 页 · 图2：从量子电路、依赖图和节点嵌入，到共享 GNN 表示、分故障预测头及脆弱门优先选择的完整流程。 条件：保留原图所有模块名称、门与量子比特标记、箭头、消息传递放大框和完整图注；原图说明在固定预算下选择门—故障对，供后续详细模拟、缓解或安全审计。",
+      "distribution": "source_links_only"
+    },
+    {
+      "paper": "qufig",
+      "selection_index": 2,
+      "source_page_url": "https://arxiv.org/pdf/2610.01777#page=7",
+      "caption": "5 · 原文第 7 页 · 图5：MaxCut 上恢复目标与门检查成本的关系。 条件：数据集为 MaxCut；横轴 Recovery target (%) 为 4%、8%、12%、16%、20%，纵轴 Required gates inspected (%)；保留 QuFIG、Random、Depth-early、Depth-late 四条曲线与图例，以及说明正向和逆向深度遍历的完整图注。该纵轴是所需检查门的比例，不能当作准确率。",
+      "distribution": "source_links_only"
+    },
+    {
+      "paper": "qufig",
+      "selection_index": 3,
+      "source_page_url": "https://arxiv.org/pdf/2610.01777#page=7",
+      "caption": "6 · 原文第 7 页 · 图6：QASMbench 上恢复目标与门检查成本的关系。 条件：数据集为 QASMbench；横轴 Recovery target (%) 为 4%、8%、12%、16%、20%，纵轴 Required gates inspected (%)；保留 QuFIG、Random、Depth-early、Depth-late 四条曲线、图例和完整图注。与图5保留为独立数据集结果，不合并曲线或外推未显示的恢复目标。",
+      "distribution": "source_links_only"
+    },
+    {
+      "paper": "qufig",
+      "selection_index": 4,
+      "source_page_url": "https://arxiv.org/pdf/2610.01777#page=7",
+      "caption": "V · 原文第 7 页 · 表V：GCN、GAT、GIN、SAGE 在 QASMbench 和 MaxCut 上的骨干比较。 条件：保留完整表题、两组数据集表头、全部四个骨干行，以及 MAE↓、AUPRC↑ 的方向标记和原始数值；MAE 与 AUPRC 是不同指标，不将加粗值改写为所有指标上的统一最优。",
+      "distribution": "source_links_only"
+    },
+    {
+      "paper": "qufig",
+      "selection_index": 5,
+      "source_page_url": "https://arxiv.org/pdf/2610.01777#page=3",
+      "caption": "unnumbered: ΔF, ΔE, I · 原文第 3 页 · 未编号公式：由保真度损失、应用目标相对偏差构造门—故障影响分数。 条件：保留理想电路 C₀、注入故障电路、ΔF(g,e)、ΔE(g,e) 与 I(g,e)=ΔF(g,e)+λΔE(g,e) 的原式及相邻定义；应用目标偏差以 MaxCut 为例，ε 用于避免数值不稳定；没有应用专属目标时原文令 λ=0，仅使用保真度损失。该裁剪展示定义，不构成实测效果证据。",
+      "distribution": "source_links_only"
+    },
+    {
+      "paper": "ra-vla",
+      "selection_index": 1,
+      "source_page_url": "https://arxiv.org/pdf/2608.25585v2#page=4",
+      "caption": "2 · 原文第 4 页 · 图2：RA-VLA的实际框架。保留检索缓冲区、专家片段与当前观测、冻结VLM、可训练检索器和动作解码器，以及完整原图图注。 条件：原图用冻结/训练图标区分组件；检索器经训练、VLA策略经微调。图注描述以任务相关专家片段支持未见任务适应，本图不是实验成绩。",
+      "distribution": "licensed_crops",
+      "path": "assets/ra-vla-01-368657351a75.png",
+      "sha256": "368657351a759f0469478820771c1e98c3b180056444a3b5ef66b1800eecb01c",
+      "bytes": 102043,
+      "width": 982,
+      "height": 514,
+      "license": "CC BY 4.0",
+      "license_url": "https://creativecommons.org/licenses/by/4.0/",
+      "changes": "Unmodified approved PNG crop extracted from the sealed report; Chinese commentary supplied separately"
+    },
+    {
+      "paper": "ra-vla",
+      "selection_index": 2,
+      "source_page_url": "https://arxiv.org/pdf/2608.25585v2#page=8",
+      "caption": "5 · 原文第 8 页 · 图5：检索片段数增大时的推理延迟及组件分解。保留RICL和RA-VLA两面板、横纵轴、秒单位、ViT+Retrieval/LLM/Action Head图例与完整图注。 条件：生成单个动作块，动作头4步去噪，1,000次推理取平均；横轴K覆盖1至8，纵轴为Latency (seconds)。该图注未注明硬件，不能把邻页的检索单组件计时条件直接移植至此。",
+      "distribution": "licensed_crops",
+      "path": "assets/ra-vla-02-9849ac147439.png",
+      "sha256": "9849ac147439b3d1c4c29ad2f39eedac77e16ab0668a2a93923af086bca8499a",
+      "bytes": 48242,
+      "width": 482,
+      "height": 364,
+      "license": "CC BY 4.0",
+      "license_url": "https://creativecommons.org/licenses/by/4.0/",
+      "changes": "Unmodified approved PNG crop extracted from the sealed report; Chinese commentary supplied separately"
+    },
+    {
+      "paper": "ra-vla",
+      "selection_index": 3,
+      "source_page_url": "https://arxiv.org/pdf/2608.25585v2#page=7",
+      "caption": "3 · 原文第 7 页 · 图3：真实机器人叠盒任务的定性执行对照。完整保留RAEA、RICL_R、RA-VLA三行、正确/错误动作标记、任务文字与图注。 条件：任务为把小盒放到大盒上；图注说明各方法使用作者动作感知检索器。所展示的RAEA拾错物体、RICL_R放置失败、RA-VLA完成放置属于示例轨迹，不能作为全体任务成功率。",
+      "distribution": "licensed_crops",
+      "path": "assets/ra-vla-03-7eb620f3ba03.png",
+      "sha256": "7eb620f3ba033b68a21df1c06358ca943a5bde9517b65939fe49edd1ae65f844",
+      "bytes": 601365,
+      "width": 982,
+      "height": 538,
+      "license": "CC BY 4.0",
+      "license_url": "https://creativecommons.org/licenses/by/4.0/",
+      "changes": "Unmodified approved PNG crop extracted from the sealed report; Chinese commentary supplied separately"
+    },
+    {
+      "paper": "ra-vla",
+      "selection_index": 4,
+      "source_page_url": "https://arxiv.org/pdf/2608.25585v2#page=6",
+      "caption": "1 · 原文第 6 页 · 表1：LIBERO四个留出任务套件的适应表现。保留现成与动作感知检索器分组、全部基线、四套件列、平均列、最佳标记与完整表注。 条件：每次评估完全未见的任务套件，每个留出任务3条专家示范作上下文。比较现成SigLIP 2与作者的SigLIP 2动作感知检索器；表内保留原始小数，表注的百分比表述与小数显示未改写。",
+      "distribution": "licensed_crops",
+      "path": "assets/ra-vla-04-338a24e6f531.png",
+      "sha256": "338a24e6f531ddc37193d0a852b76ab683cb51daeb763538cd5f817936cdc32f",
+      "bytes": 76251,
+      "width": 982,
+      "height": 322,
+      "license": "CC BY 4.0",
+      "license_url": "https://creativecommons.org/licenses/by/4.0/",
+      "changes": "Unmodified approved PNG crop extracted from the sealed report; Chinese commentary supplied separately"
+    },
+    {
+      "paper": "ra-vla",
+      "selection_index": 5,
+      "source_page_url": "https://arxiv.org/pdf/2608.25585v2#page=6",
+      "caption": "2 · 原文第 6 页 · 表2：真实UR5e四任务的子目标及整体成功率。保留任务分组、拾取/触碰子目标、Success列、Average列、所有方法及完整表注。 条件：每个留出任务4条专家示范；基线采用作者的SigLIP 2动作感知检索器。子目标成功与完整任务成功分别呈现，不以拾取或触碰成绩代替最终成功率。",
+      "distribution": "licensed_crops",
+      "path": "assets/ra-vla-05-bfcb7c7e4f0d.png",
+      "sha256": "bfcb7c7e4f0db4863df0831bf6444feca105f2eb963a0e6f2c127c7d761b2e3c",
+      "bytes": 56395,
+      "width": 982,
+      "height": 230,
+      "license": "CC BY 4.0",
+      "license_url": "https://creativecommons.org/licenses/by/4.0/",
+      "changes": "Unmodified approved PNG crop extracted from the sealed report; Chinese commentary supplied separately"
+    },
+    {
+      "paper": "cross-embodiment",
+      "selection_index": 1,
+      "source_page_url": "https://arxiv.org/pdf/2610.10846v1#page=2",
+      "caption": "1 · 原文第 2 页 · 图1：LAC-WM预训练与新具身微调框架，保留模块、箭头、阶段颜色及完整原图注。 条件：预训练区以有标签跨具身观测经IDM构成统一潜在动作空间，FDM预测下一观测，运动解码器监督显式运动；微调区用动作投影器接收未见机器人的原始动作。框架图本身不证明性能。",
+      "distribution": "licensed_crops",
+      "path": "assets/cross-embodiment-01-0c844898b319.png",
+      "sha256": "0c844898b319b9401d1e45cdc0e19b9875e404248f0bb1ce540bcb570348aae3",
+      "bytes": 249979,
+      "width": 980,
+      "height": 414,
+      "license": "CC BY 4.0",
+      "license_url": "https://creativecommons.org/licenses/by/4.0/",
+      "changes": "Unmodified approved PNG crop extracted from the sealed report; Chinese commentary supplied separately"
+    },
+    {
+      "paper": "cross-embodiment",
+      "selection_index": 2,
+      "source_page_url": "https://arxiv.org/pdf/2610.10846v1#page=7",
+      "caption": "4 · 原文第 7 页 · 图4：LAC-WM与EAC-WM在不同预训练具身数及样本量下的子目标距离与任务成功率，保留三面板、数值标签、颜色图例、横轴及原图注。 条件：横轴同时从1具身/50k到2具身/100k、3具身/150k，依次EgoDex、加入Agibot、再加入Droid；因此不能仅凭此图分离具身数与数据量效应。δf、δfg越低越好，S.R.越高越好且以百分比标注；保留低绝对成功率，不把相对增幅当百分点。",
+      "distribution": "licensed_crops",
+      "path": "assets/cross-embodiment-02-d636100d4463.png",
+      "sha256": "d636100d44638e85d01146f10975e71e56ad84439938cb2f108972ec37907845",
+      "bytes": 57239,
+      "width": 478,
+      "height": 310,
+      "license": "CC BY 4.0",
+      "license_url": "https://creativecommons.org/licenses/by/4.0/",
+      "changes": "Unmodified approved PNG crop extracted from the sealed report; Chinese commentary supplied separately"
+    },
+    {
+      "paper": "cross-embodiment",
+      "selection_index": 3,
+      "source_page_url": "https://arxiv.org/pdf/2610.10846v1#page=7",
+      "caption": "5 · 原文第 7 页 · 图5：分别控制轨迹数量或具身数量的扩展比较，保留全部三面板、图例、横轴、百分比标签和原图注。 条件：前两设置为2具身/24k及3具身/24k，固定总轨迹数、从EgoDex+Droid增加Agibot；后两设置为3具身/24k及3具身/150k，固定具身数增加轨迹。δf、δfg越低越好，S.R.越高越好；此组条件与图4不同，不能混用数值。",
+      "distribution": "licensed_crops",
+      "path": "assets/cross-embodiment-03-89ac756da2b9.png",
+      "sha256": "89ac756da2b91aea6f2c331d25bc466b12f070d055a6adeb1e6bbb0b209aad99",
+      "bytes": 52452,
+      "width": 478,
+      "height": 278,
+      "license": "CC BY 4.0",
+      "license_url": "https://creativecommons.org/licenses/by/4.0/",
+      "changes": "Unmodified approved PNG crop extracted from the sealed report; Chinese commentary supplied separately"
+    },
+    {
+      "paper": "cross-embodiment",
+      "selection_index": 4,
+      "source_page_url": "https://arxiv.org/pdf/2610.10846v1#page=5",
+      "caption": "3 · 原文第 5 页 · 图3：跨具身动作迁移的定性生成结果，保留Reference、EAE、IDM w.o. MD、IDM行标签、左右迁移方向、轨迹线、伪影标记与完整图注。 条件：左侧机器人到人类、右侧人类到机器人；蓝色参考轨迹在初始位置之外对齐，红圈为图中伪影提示。此图比较生成视频的运动形态，不是性能曲线、成功率统计或真实硬件迁移验证。",
+      "distribution": "licensed_crops",
+      "path": "assets/cross-embodiment-04-263701b34abb.png",
+      "sha256": "263701b34abb6c2083161f26102a4644fcd538ec10fcf6517751182721992661",
+      "bytes": 913817,
+      "width": 980,
+      "height": 648,
+      "license": "CC BY 4.0",
+      "license_url": "https://creativecommons.org/licenses/by/4.0/",
+      "changes": "Unmodified approved PNG crop extracted from the sealed report; Chinese commentary supplied separately"
+    },
+    {
+      "paper": "cross-embodiment",
+      "selection_index": 5,
+      "source_page_url": "https://arxiv.org/pdf/2610.10846v1#page=8",
+      "caption": "2 · 原文第 8 页 · 表2：VLA候选动作经三种世界模型筛选及VLA-only对照的完整规划结果，保留两个测试划分、平均行、五项指标及三种子均值±标准差图注。 条件：S.R.C为接触、S.R.L为抬起、S.R为完整任务成功率；平均EAC-WM的S.R为0.15±0.04，LAC-WM为0.22±0.02，即约7个百分点、相对46.7%，绝对成功率仍低。图注说明三随机种子；VLA-only与WM筛选的比较需结合原文中图像子目标可用性差异，不能把δf/δfg当作公平的唯一结论。",
+      "distribution": "licensed_crops",
+      "path": "assets/cross-embodiment-05-f1b68492da28.png",
+      "sha256": "f1b68492da2896b5f1ff32e5977d63514c0a79d31997a164218230f1a00116eb",
+      "bytes": 111133,
+      "width": 980,
+      "height": 462,
+      "license": "CC BY 4.0",
+      "license_url": "https://creativecommons.org/licenses/by/4.0/",
+      "changes": "Unmodified approved PNG crop extracted from the sealed report; Chinese commentary supplied separately"
+    }
+  ],
+  "files": [
+    {
+      "path": "ATTRIBUTION.md",
+      "bytes": 2486,
+      "sha256": "365577f7d1af94897bb8e9cf92758044506cea1877d4ef402a5fcad62913a73c"
+    },
+    {
+      "path": "assets/cross-embodiment-01-0c844898b319.png",
+      "bytes": 249979,
+      "sha256": "0c844898b319b9401d1e45cdc0e19b9875e404248f0bb1ce540bcb570348aae3"
+    },
+    {
+      "path": "assets/cross-embodiment-02-d636100d4463.png",
+      "bytes": 57239,
+      "sha256": "d636100d44638e85d01146f10975e71e56ad84439938cb2f108972ec37907845"
+    },
+    {
+      "path": "assets/cross-embodiment-03-89ac756da2b9.png",
+      "bytes": 52452,
+      "sha256": "89ac756da2b91aea6f2c331d25bc466b12f070d055a6adeb1e6bbb0b209aad99"
+    },
+    {
+      "path": "assets/cross-embodiment-04-263701b34abb.png",
+      "bytes": 913817,
+      "sha256": "263701b34abb6c2083161f26102a4644fcd538ec10fcf6517751182721992661"
+    },
+    {
+      "path": "assets/cross-embodiment-05-f1b68492da28.png",
+      "bytes": 111133,
+      "sha256": "f1b68492da2896b5f1ff32e5977d63514c0a79d31997a164218230f1a00116eb"
+    },
+    {
+      "path": "assets/ra-vla-01-368657351a75.png",
+      "bytes": 102043,
+      "sha256": "368657351a759f0469478820771c1e98c3b180056444a3b5ef66b1800eecb01c"
+    },
+    {
+      "path": "assets/ra-vla-02-9849ac147439.png",
+      "bytes": 48242,
+      "sha256": "9849ac147439b3d1c4c29ad2f39eedac77e16ab0668a2a93923af086bca8499a"
+    },
+    {
+      "path": "assets/ra-vla-03-7eb620f3ba03.png",
+      "bytes": 601365,
+      "sha256": "7eb620f3ba033b68a21df1c06358ca943a5bde9517b65939fe49edd1ae65f844"
+    },
+    {
+      "path": "assets/ra-vla-04-338a24e6f531.png",
+      "bytes": 76251,
+      "sha256": "338a24e6f531ddc37193d0a852b76ab683cb51daeb763538cd5f817936cdc32f"
+    },
+    {
+      "path": "assets/ra-vla-05-bfcb7c7e4f0d.png",
+      "bytes": 56395,
+      "sha256": "bfcb7c7e4f0db4863df0831bf6444feca105f2eb963a0e6f2c127c7d761b2e3c"
+    },
+    {
+      "path": "index.html",
+      "bytes": 86102,
+      "sha256": "4963b59b8e26503916b6dc1d8710d66155bee0d8efd8356b9dd081b9774797ca"
+    }
+  ]
+}

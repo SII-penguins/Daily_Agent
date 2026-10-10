@@ -1,5 +1,18 @@
 {
   "schema_version": 1,
   "artifact_kind": "daily_agent_public_html_archive",
-  "editions": []
+  "editions": [
+    {
+      "report_date": "2026-10-10",
+      "edition": "partial-01",
+      "path": "reports/2026-10-10/partial-01/index.html",
+      "manifest": "reports/2026-10-10/partial-01/manifest.json",
+      "acceptance_status": "qualified_partial",
+      "papers": 3,
+      "repositories": 0,
+      "embedded_images": 10,
+      "source_linked_figures": 5,
+      "external_delivery": "not_asserted_by_this_archive"
+    }
+  ]
 }

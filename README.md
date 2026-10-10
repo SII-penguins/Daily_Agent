@@ -1,15 +1,16 @@
 # Daily Agent report artifacts
 
-This branch stores accepted, public-safe HTML daily editions and their required assets. Application code, workflow contracts, configuration templates, and tests live on `main`.
+Application code and workflow contracts live on `main`. This branch stores accepted public-safe HTML editions, local assets and integrity manifests.
 
-## Current archive
+## Archive
 
-No report edition has been published to this branch yet. An empty catalog does not mean that no report exists elsewhere, and it does not claim generation or delivery success.
+- [2026-10-10 · qualified partial edition](reports/2026-10-10/partial-01/index.html): three papers, no repositories; ten CC BY 4.0 crops and five source-linked selections
+- [Machine-readable catalog](catalog.json)
 
-Future accepted editions use `reports/YYYY-MM-DD/EDITION/index.html`, relative assets, and a small SHA256 integrity manifest. Existing edition paths remain immutable; an authorized correction receives a new edition identifier.
+Download the edition directory and open `index.html` with its `assets` directory alongside it for offline reading. GitHub’s file viewer displays HTML source rather than the private reading site.
 
-## Privacy and recovery
+## Privacy, licensing and recovery
 
-This branch inherits the repository's public visibility. It is not a private operational backup. Do not store credentials, private runtime state, queue/worker/conversation IDs, Library receipts, private Site URLs, full PDFs or unlicensed source material here. A commit confirms repository persistence only, not message delivery or scientific acceptance.
+This branch is public. It contains no private operational snapshots, message/storage identities, full paper PDFs or reading-note collections. Original dated editions are immutable; corrections require a new edition identifier. A repository commit proves persistence, not external delivery.
 
-See [source and restoration instructions](https://github.com/SII-penguins/Daily_Agent/blob/main/docs/github-persistence.md). Complete operational recovery uses a separately retained, verified private source/state checkpoint pair.
+Figure reuse and omissions are documented in each edition’s `ATTRIBUTION.md`; the application-code license does not relicense third-party figures. Complete operational recovery requires the separately retained private source/state checkpoints. See [source and restoration instructions](https://github.com/SII-penguins/Daily_Agent/blob/main/docs/github-persistence.md).
