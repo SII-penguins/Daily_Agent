@@ -29,6 +29,14 @@ def test_quality_check_reports_full_profile_when_keys_and_dependencies_are_ready
         "run_budget_seconds": 180,
     }
     config.sources["selection"] = {"top_candidates_for_llm": 50}
+    # The current discovery defaults intentionally retain only an eligible
+    # current-year PMLR volume. This synthetic full-profile test must provide
+    # its own second eligible-volume premise; do not weaken the legacy gate or
+    # reintroduce expired proceedings merely to make a readiness test green.
+    config.sources["pmlr"]["volumes"] = [
+        {"venue": "Fixture current volume A", "url": "https://example.org/pmlr/a/"},
+        {"venue": "Fixture current volume B", "url": "https://example.org/pmlr/b/"},
+    ]
     monkeypatch.setenv("SERPAPI_API_KEY", "serpapi-test")
     monkeypatch.setenv("IEEE_XPLORE_API_KEY", "ieee-test")
     monkeypatch.setenv("SEMANTIC_SCHOLAR_API_KEY", "s2-test")
@@ -486,3 +494,12 @@ def test_mcp_quality_check_can_bypass_full_profile_guard(monkeypatch):
 
     assert output == "exit_code=0"
     assert seen["args"] == ["quality", "check", "--root", "/tmp/daily-agent", "--require-full", "--no-enforce-full"]
+
+
+def test_current_single_volume_default_keeps_conservative_quality_warning():
+    from daily_agent.quality import run_quality_check
+    config = load_config(ROOT)
+    assert len(config.sources["pmlr"]["volumes"]) == 1
+    check = {item.key: item for item in run_quality_check(config).checks}["source_limits"]
+    assert check.status == "partial"
+    assert "pmlr.volumes_count=1 < 2" in check.detail

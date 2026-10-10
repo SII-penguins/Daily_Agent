@@ -76,19 +76,17 @@ def test_crossref_targets_configured_journal_and_filters_preprints(monkeypatch):
     cfg.sources['crossref']={'enabled':True,'max_queries_per_domain':1,'preferred_queries_per_domain':1,
         'preferred_journals':[{'name':'Nature','issn':'1476-4687'}]}
     calls=[]
-    class Client:
-        def __init__(self,**kwargs): pass
-        def __enter__(self): return self
-        def __exit__(self,*args): pass
-        def get(self,url,**kwargs):
-            calls.append((url,kwargs['params']))
-            works=[{'DOI':'10.1/nature','title':['Quantum method'],'container-title':['Nature'],'type':'journal-article'},
-                   {'DOI':'10.1/preprint','title':['Preprint'],'type':'posted-content'}] if '/journals/' in url else []
-            return httpx.Response(200,request=httpx.Request('GET',url),json={'message':{'items':works}})
-    monkeypatch.setattr('daily_agent.connectors.crossref.httpx.Client',Client)
+    def handler(request):
+        calls.append(request.url)
+        works=[{'DOI':'10.1/nature','title':['Quantum method'],'container-title':['Nature'],'type':'journal-article'},
+               {'DOI':'10.1/preprint','title':['Preprint'],'type':'posted-content'}] if '/journals/' in request.url.path else []
+        return httpx.Response(200,json={'message':{'items':works}})
+    real=httpx.Client
+    monkeypatch.setattr('daily_agent.connectors.crossref.httpx.Client',lambda **kwargs: real(transport=httpx.MockTransport(handler),**kwargs))
     results=fetch_crossref(cfg)
     assert len(results)==1 and results[0].doi=='10.1/nature'
-    assert calls[1][0].endswith('/journals/1476-4687/works') and 'type:journal-article' in calls[1][1]['filter']
+    assert calls[0].path.endswith('/journals/1476-4687/works') and 'type:journal-article' in calls[0].params['filter']
+    assert calls[1].path=='/works'
 
 
 def test_indexed_arxiv_gets_same_preprint_penalty():

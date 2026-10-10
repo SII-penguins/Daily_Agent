@@ -1,3 +1,4 @@
+from contextlib import contextmanager
 from datetime import datetime, timezone
 from html import escape
 from pathlib import Path
@@ -82,7 +83,12 @@ def fake_client(monkeypatch, responses):
             if isinstance(result, httpx.Response):
                 return result
             status, body = result
-            return httpx.Response(status, text=body, request=httpx.Request("GET", url))
+            return httpx.Response(status, text=body, headers={"content-type": "application/rss+xml" if url.endswith(".rss") else "text/html"}, request=httpx.Request("GET", url))
+
+        @contextmanager
+        def stream(self, method, url, **kwargs):
+            assert method == "GET" and kwargs["follow_redirects"] is False
+            yield self.get(url)
 
     monkeypatch.setattr("daily_agent.connectors.nature.httpx.Client", Client)
     return calls
@@ -109,7 +115,7 @@ def test_matching_primary_landing_is_verified_without_fulltext_claim(monkeypatch
         "verified": True, "method": "publisher_landing_citation_metadata",
         "url": URL, "title": TITLE, "venue": VENUE, "doi": DOI, "published_at": "2026-10-07",
     }
-    assert item.raw["abstract_source"] == "publisher_rss"
+    assert item.raw["abstract_source"] == "publisher_rss_summary"
     assert "paper_text_status" not in item.raw
     assert "paper_document" not in item.raw
     assert item.pdf_url is None
@@ -200,7 +206,7 @@ def test_date_and_topic_filters_apply_before_landing_budget(monkeypatch):
                {"title": TITLE, "url": URL, "date": "2025-01-01"},
                {"title": TITLE, "url": URL}]
     calls = fake_client(monkeypatch, {FEED: (200, rss(entries)), URL: (200, landing())})
-    monkeypatch.setattr("daily_agent.connectors.nature.passes_topic_gate", lambda item, cfg: item.title == TITLE)
+    monkeypatch.setattr("daily_agent.connectors.nature.discovery_relevant", lambda item, cfg: item.title == TITLE)
     [item] = fetch_nature(config(max_detail_pages=1), TARGET)
     assert item.url == URL
     assert calls == [FEED, URL]
@@ -224,10 +230,11 @@ def test_unverified_fallback_can_be_disabled_without_hiding_failure(monkeypatch)
 
 def test_missing_landing_doi_and_date_do_not_inherit_rss_verification(monkeypatch):
     fake_client(monkeypatch, {FEED: (200, rss()), URL: (200, landing(doi=None, date=None))})
-    [item] = fetch_nature(config(), TARGET)
-    assert item.raw["primary_landing_verified"] is True
-    assert item.doi is None and item.published_at is None
-    assert item.raw["primary_verification"]["doi"] is None
+    with pytest.raises(PartialSourceError) as caught:
+        fetch_nature(config(), TARGET)
+    [item] = caught.value.partial_items
+    assert item.raw["primary_landing_verified"] is False
+    assert item.raw["primary_verification"]["verified"] is False
     assert item.raw["rss_metadata"]["doi"] == DOI
 
 

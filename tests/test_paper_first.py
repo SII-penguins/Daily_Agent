@@ -588,3 +588,23 @@ def test_formal_venue_requires_snapshot_and_explicit_independent_review(tmp_path
     else:
         with pytest.raises(ValueError, match="zero-qualified"):
             workflow.render(root, seal=True)
+
+
+def test_restored_editorial_contract_stays_in_two_paper_sized_prompts(tmp_path):
+    root = _issue(tmp_path)
+    state = _state(root)
+    meta = state["inputs"][0]
+    record = state["papers"]["alpha"]
+    reader = workflow._reader_prompt(root, meta, record)
+    assert "Claims c1-c6 are the visible core" in reader
+    assert "450-850 Chinese characters" in reader
+    assert "why it works" in reader and "novelty versus" in reader
+    assert "decisive counterevidence" in reader
+    assert "not eight separate checklists" in reader
+    assert "No facts from outside this source" in reader
+    record["draft"] = workflow._put(root, workflow._bytes(_draft()))
+    reviewer = workflow._review_prompt(root, meta, record)
+    assert "ONE independent review, not separate jobs" in reviewer
+    assert "All decisive negative evidence" in reviewer
+    assert "Character count alone is guidance" in reviewer
+    assert "Do not rewrite prose under PASS" in reviewer

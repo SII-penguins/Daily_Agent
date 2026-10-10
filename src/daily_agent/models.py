@@ -64,6 +64,15 @@ def _evidence_from_item(item: "DigestItem") -> dict[str, Any]:
                 "journal_ref": item.raw.get("journal_ref"),
                 "primary_verification": item.raw.get("primary_verification"),
                 "primary_landing_verified": item.raw.get("primary_landing_verified"),
+                "publication_date": item.published_at,
+                "publication_date_precision": item.raw.get("publication_date_precision"),
+                "publication_date_basis": item.raw.get("publication_date_basis"),
+                "publication_date_source_url": item.raw.get("publication_date_source_url"),
+                "publication_stage": item.raw.get("publication_stage"),
+                "abstract_source": item.raw.get("abstract_source"),
+                "abstract_status": item.raw.get("abstract_status"),
+                "official_metadata_status": item.raw.get("official_metadata_status"),
+                "metadata_evidence": item.raw.get("metadata_evidence"),
                 "citation_count": item.raw.get("citation_count") or item.raw.get("cited_by_count"),
             }
         }

@@ -36,11 +36,29 @@ def _same_title(left, right):
     return bool(title and title != "untitled" and title == normalize(right))
 
 
+def non_arxiv_doi(value):
+    """Exact publication identifier only; repository DOI is a separate alias."""
+    value = re.sub(r"^(?:https?://(?:dx\.)?doi\.org/|doi:\s*)", "",
+                   str(value or "").strip(), flags=re.I).casefold()
+    return value if value.startswith("10.") and "/" in value and not value.startswith("10.48550/arxiv.") else None
+
+
+def publication_dois(item):
+    sources = (item.raw.get('evidence') or {}).get('sources', {})
+    values = [item.doi, (item.raw.get('primary_verification') or {}).get('doi')]
+    for evidence in sources.values():
+        if isinstance(evidence, dict):
+            values.extend([evidence.get('doi'), (evidence.get('primary_verification') or {}).get('doi')])
+    return {doi for value in values if (doi := non_arxiv_doi(value))}
+
+
 def publication_evidence(item):
     raw = item.raw
     sources = (raw.get('evidence') or {}).get('sources', {})
     records = [(item.source, {**raw, 'doi': item.doi, 'url': item.url, 'title': item.title})] + list(sources.items())
     formal, metadata = [], []
+    conflicting_dois = sorted(publication_dois(item))
+    identity_conflict = len(conflicting_dois) > 1
     preprint_found = item.source == 'arxiv' or bool(item.arxiv_id) or 'arxiv' in sources
     for source, evidence in records:
         if not isinstance(evidence, dict):
@@ -66,7 +84,7 @@ def publication_evidence(item):
             and proof.get('url') == official_url and _same_title(proof.get('title'), item.title)
             and proof.get('venue') == venue and bool(venue)
             and status == 'published')
-        confirmed = bool(official_url and _same_title(evidence.get('title'), item.title) and (
+        confirmed = bool(not identity_conflict and official_url and _same_title(evidence.get('title'), item.title) and (
             nature_verified or source in {'pmlr', 'neurips'}
             or source == 'openreview' and status == 'accepted'
             or source == 'ieee' and venue and types & {'journal-article', 'proceedings-article', 'journalarticle', 'conference', 'article', 'review'}))
@@ -80,6 +98,8 @@ def publication_evidence(item):
               and venue and types & {'journal-article', 'proceedings-article', 'journalarticle', 'conference', 'article', 'review'}
               or source in {'pmlr', 'neurips', 'nature'} or source == 'openreview' and status == 'accepted'):
             record['basis'] = 'unverified_publication_metadata'
+            if identity_conflict:
+                record['reason'] = 'conflicting_publication_doi'
             if record not in metadata:
                 metadata.append(record)
     if formal:
@@ -88,8 +108,11 @@ def publication_evidence(item):
         status, verification = 'metadata_only', 'unverified_metadata'
     else:
         status, verification = ('preprint_only' if preprint_found else 'unconfirmed'), 'unverified'
-    return {'status': status, 'verification': verification, 'records': formal,
-            'metadata_records': metadata, 'has_preprint': preprint_found}
+    result = {'status': status, 'verification': verification, 'records': formal,
+              'metadata_records': metadata, 'has_preprint': preprint_found}
+    if identity_conflict:
+        result['identity_conflicts'] = {'reason': 'conflicting_publication_doi', 'dois': conflicting_dois}
+    return result
 
 
 def publication_scores(item, settings=None):

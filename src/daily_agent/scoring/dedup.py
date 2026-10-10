@@ -3,27 +3,52 @@ from __future__ import annotations
 import re
 
 from daily_agent.models import DigestItem
+from daily_agent.scoring.publication import publication_dois
 
 
 def deduplicate_items(items: list[DigestItem]) -> list[DigestItem]:
     merged: dict[str, DigestItem] = {}
-    identity_index: dict[str, str] = {}
+    # One weak title/year key may identify several incompatible DOI clusters.
+    # Retain each mapping so a later DOI-less row cannot bridge them arbitrarily.
+    identity_index: dict[str, list[str]] = {}
     for item in items:
         _ensure_multisource_raw(item)
         keys = _identity_keys(item)
-        key = next((identity_index[value] for value in keys if value in identity_index), item.canonical_key())
-        if key not in merged:
+        matches = list(dict.fromkeys(key for value in keys for key in identity_index.get(value, [])))
+        strong = list(dict.fromkeys(key for value in keys if not value.startswith("title:")
+                                   for key in identity_index.get(value, [])))
+        compatible = [key for key in (strong or matches)
+                      if not _publication_identity_conflict(merged[key], item)]
+        # A strong exact identifier may disambiguate a weak title collision.
+        # A title alone cannot select between conflicting candidate identities.
+        key = compatible[0] if len(compatible) == 1 and (strong or len(matches) == 1) else None
+        if key is None:
+            key = item.canonical_key()
+            if key in merged:
+                suffix = 1
+                while f"{key}#identity-conflict-{suffix}" in merged:
+                    suffix += 1
+                key = f"{key}#identity-conflict-{suffix}"
             merged[key] = item
-            for value in keys:
-                identity_index[value] = key
-            continue
-        merged[key] = _merge_items(merged[key], item)
-        for value in _identity_keys(merged[key]):
-            identity_index[value] = key
+        else:
+            merged[key] = _merge_items(merged[key], item)
+        for value in _merge_lists(keys, _identity_keys(merged[key])):
+            destinations = identity_index.setdefault(value, [])
+            if key not in destinations:
+                destinations.append(key)
     return list(merged.values())
 
 
+def _publication_identity_conflict(existing: DigestItem, incoming: DigestItem) -> bool:
+    if existing.item_type != "paper" or incoming.item_type != "paper":
+        return False
+    left, right = publication_dois(existing), publication_dois(incoming)
+    return len(left) > 1 or len(right) > 1 or bool(left and right and left != right)
+
+
 def _merge_items(existing: DigestItem, incoming: DigestItem) -> DigestItem:
+    if _publication_identity_conflict(existing, incoming):
+        raise ValueError("Contradictory publication DOIs cannot be merged")
     _ensure_multisource_raw(existing)
     _ensure_multisource_raw(incoming)
 
@@ -161,6 +186,15 @@ def _ensure_multisource_raw(item: DigestItem) -> None:
             "journal_ref": item.raw.get("journal_ref"),
             "primary_verification": item.raw.get("primary_verification"),
             "primary_landing_verified": item.raw.get("primary_landing_verified"),
+                "publication_date": item.published_at,
+                "publication_date_precision": item.raw.get("publication_date_precision"),
+                "publication_date_basis": item.raw.get("publication_date_basis"),
+                "publication_date_source_url": item.raw.get("publication_date_source_url"),
+                "publication_stage": item.raw.get("publication_stage"),
+                "abstract_source": item.raw.get("abstract_source"),
+                "abstract_status": item.raw.get("abstract_status"),
+                "official_metadata_status": item.raw.get("official_metadata_status"),
+                "metadata_evidence": item.raw.get("metadata_evidence"),
         },
     )
 
