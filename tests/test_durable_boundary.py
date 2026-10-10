@@ -144,3 +144,30 @@ def test_wrong_token_and_recovery_fence_block_settlement(batch):
     with pytest.raises(StateCorrupt, match='fenced'):
         boundary.settle_boundary(root, token)
     assert read_json(root/boundary.BOUNDARY)['phase'] == 'executing'
+
+
+def test_settlement_accepts_optional_null_without_changing_it(batch):
+    root=batch['root'];ready(batch);token=boundary.begin_boundary(root,'generate')
+    path=root/'data/scientific-analysis'/('a'*64)/'writer-repair.json'
+    path.parent.mkdir(parents=True);path.write_bytes(b'null\n')
+    boundary.settle_boundary(root,token)
+    assert boundary.boundary_status(root)['phase']=='settled'
+    assert path.read_bytes()==b'null\n'
+    receipt,archive=committed(batch)
+    boundary.verify_boundary_checkpoint(root,receipt,archive)
+    assert path.read_bytes()==b'null\n'
+
+
+@pytest.mark.parametrize('relative',[
+    'data/state/cloud-generation.json',
+    'data/state/cloud-generation-budgets/2026-10-10.json',
+    'data/state/cloud-delivery/2026-10-10.json',
+    'data/state/writer-repair.json',
+])
+def test_settlement_rejects_required_null_and_preserves_executing(batch,relative):
+    root=batch['root'];ready(batch);token=boundary.begin_boundary(root,'generate')
+    path=root/relative;path.parent.mkdir(parents=True,exist_ok=True);path.write_bytes(b'null\n')
+    before=(root/boundary.BOUNDARY).read_bytes()
+    with pytest.raises(StateCorrupt,match='Null workflow record'):boundary.settle_boundary(root,token)
+    assert (root/boundary.BOUNDARY).read_bytes()==before
+    assert path.read_bytes()==b'null\n'

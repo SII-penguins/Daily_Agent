@@ -182,10 +182,16 @@ def settle_boundary(root, token):
         marker = _load(root)
         if marker is None or marker['phase'] != 'executing' or marker['token'] != token:
             raise StateCorrupt('No matching executing boundary')
-        from daily_agent.durable_recovery import active_state_record, retired_evidence
+        from daily_agent.durable_recovery import active_state_record, retired_evidence, state_record_value, RecoveryBlocked
         retired = retired_evidence(root)
         for path in sorted(root.rglob('*.json')):
-            if path != root/BOUNDARY and str(path) not in retired and active_state_record(path, read_json(path)):
+            if path == root/BOUNDARY or str(path) in retired:
+                continue
+            try:
+                value = state_record_value(root, path)
+            except RecoveryBlocked as exc:
+                raise StateCorrupt(str(exc)) from exc
+            if active_state_record(path, value):
                 raise StateCorrupt('Active attempt or reservation blocks boundary settlement')
         marker['phase'] = 'settled'
         atomic_json(root/BOUNDARY, marker)

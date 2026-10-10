@@ -328,6 +328,23 @@ def retired_evidence(root):
     return frozen
 
 
+def state_record_value(root, path):
+    """Read scan evidence; only the scientific no-repair receipt may be null.
+
+    Scientific analysis deliberately writes this optional receipt as JSON null
+    when no local repair was needed. All other null records remain corrupt,
+    including controller, budget and delivery journals. Never rewrite the bytes.
+    """
+    root, path = Path(root), Path(path)
+    value = decode(path.read_bytes())
+    relative = path.relative_to(root).parts
+    optional_repair = (len(relative) == 4 and relative[:2] == ('data', 'scientific-analysis')
+                       and _hash(relative[2]) and relative[3] == 'writer-repair.json')
+    if value is None and not optional_repair:
+        raise RecoveryBlocked('Null workflow record: ' + str(path))
+    return value
+
+
 def active_state_record(path, value):
     """Interpret live controller fields, never embedded history as an owner."""
     path = Path(path)
@@ -366,7 +383,7 @@ def inspect_recovery(root):
         if path.name == FENCE:
             continue
         try:
-            value = decode(path.read_bytes())
+            value = state_record_value(root, path)
         except (RecoveryBlocked, OSError):
             active.append({'path': str(path.relative_to(root)), 'reason': 'unreadable_json'})
             continue
