@@ -1,0 +1,81 @@
+{
+  "schema": "public-research-supplement-v1",
+  "edition_id": "2026-10-10-supplement-01",
+  "date": "2026-10-10",
+  "title": "2026-10-10 研究日报 · 补充版",
+  "source_commit": "5e2f589ba73d11d34ed69ecb6194e318578cf60e",
+  "report_sha256": "9bae15844e229028d8c26e8111475b5b8979ba2544a77bb74c06b0c8642c7499",
+  "papers": 8,
+  "repositories": 2,
+  "paper_sources": [
+    {
+      "title": "Stochastic Reconfiguration as Statistical Filtering for Overparameterized Neural Quantum States",
+      "url": "https://arxiv.org/abs/2609.23334v1",
+      "source_date": "2026-09-20",
+      "figure_license": "CC BY 4.0",
+      "figures_embedded": true
+    },
+    {
+      "title": "AG-CoT: Verified Algorithmic Traces for LLM Program Synthesis on Clifford Circuits",
+      "url": "https://arxiv.org/abs/2609.33192",
+      "source_date": "2026-09-27",
+      "figure_license": "CC BY 4.0",
+      "figures_embedded": true
+    },
+    {
+      "title": "Spiking neural networks for streaming qubit readout",
+      "url": "https://arxiv.org/abs/2610.02129",
+      "source_date": "2026-10-01",
+      "figure_license": "CC BY 4.0",
+      "figures_embedded": true
+    },
+    {
+      "title": "Advantage of Sample Complexity in Quantum PAC Learning Requires Inverse Access to State-Preparation Unitaries",
+      "url": "https://arxiv.org/abs/2609.38403v1",
+      "source_date": "2026-09-29",
+      "figure_license": "arXiv non-exclusive distribution license; public reuse not established",
+      "figures_embedded": false
+    },
+    {
+      "title": "Neural Fourier Surrogates for Data Reuploading Quantum Neural Networks",
+      "url": "https://arxiv.org/abs/2610.00841v1",
+      "source_date": "2026-09-30",
+      "figure_license": "arXiv non-exclusive distribution license; public reuse not established",
+      "figures_embedded": false
+    },
+    {
+      "title": "Defeating Barren Plateaus with Task-Aligned Symmetry",
+      "url": "https://arxiv.org/abs/2607.12100v1",
+      "source_date": "2026-07-13",
+      "figure_license": "arXiv non-exclusive distribution license; public reuse not established",
+      "figures_embedded": false
+    },
+    {
+      "title": "DriveWorld-VLA: Unified Latent-Space World Modeling with Vision–Language–Action for Autonomous Driving",
+      "url": "https://proceedings.mlr.press/v306/jia26f.html",
+      "source_date": "2026-09-29",
+      "figure_license": "CC BY 4.0",
+      "figures_embedded": true
+    },
+    {
+      "title": "WebWorld: A Large-Scale World Model for Web Agent Training",
+      "url": "https://proceedings.mlr.press/v306/xiao26o.html",
+      "source_date": "2026-09-29",
+      "figure_license": "CC BY 4.0",
+      "figures_embedded": true
+    }
+  ],
+  "repository_sources": [
+    {
+      "title": "Quantax：可扩展的 JAX 神经量子态实验工具箱",
+      "url": "https://github.com/ChenAo-Phys/quantax",
+      "source_commit": "81616bf2b73db8d5dee674e54905f36f7b6a4253"
+    },
+    {
+      "title": "stable-worldmodel：把世界模型训练与 MPC 评测接到同一套接口",
+      "url": "https://github.com/galilai-group/stable-worldmodel",
+      "source_commit": "21446f1ede6d5284e981bd7b47f432b994e6d812"
+    }
+  ],
+  "editorial_selection_note": "ZX-QAS deferred after fullreading against predeclared selection criteria; its completed evidence is preserved privately."
+}
