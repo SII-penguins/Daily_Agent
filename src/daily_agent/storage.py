@@ -27,6 +27,8 @@ HEALTH_STATE_NAME = "health.json"
 
 
 def ensure_storage_dirs(config: AppConfig) -> None:
+    from daily_agent.workflow_state import assert_mutation_allowed
+    assert_mutation_allowed(config.root)
     for path in [config.reports_dir, config.selected_dir, config.state_dir, config.logs_dir, materials_dir(config)]:
         path.mkdir(parents=True, exist_ok=True)
 
@@ -554,6 +556,10 @@ def daily_html_report_path(config: AppConfig, run_date: date) -> Path:
 
 
 def write_daily_report(config: AppConfig, run_date: date, daily_markdown: str) -> Path:
+    from daily_agent.workflow_state import assert_issue_allowed
+    assert_issue_allowed(config.root, run_date)
+    from daily_agent.workflow_state import assert_mutation_allowed
+    assert_mutation_allowed(config.root)
     ensure_storage_dirs(config)
     path = daily_report_path(config, run_date)
     path.write_text(daily_markdown.rstrip() + "\n", encoding="utf-8")
@@ -561,6 +567,10 @@ def write_daily_report(config: AppConfig, run_date: date, daily_markdown: str) -
 
 
 def write_daily_html_report(config: AppConfig, run_date: date, daily_html: str) -> Path:
+    from daily_agent.workflow_state import assert_issue_allowed
+    assert_issue_allowed(config.root, run_date)
+    from daily_agent.workflow_state import assert_mutation_allowed
+    assert_mutation_allowed(config.root)
     ensure_storage_dirs(config)
     path = daily_html_report_path(config, run_date)
     title = f"Daily Agent 日报｜{run_date.isoformat()}"
@@ -570,6 +580,10 @@ def write_daily_html_report(config: AppConfig, run_date: date, daily_html: str) 
 
 
 def write_weekly_report(config: AppConfig, run_date: date, daily_markdown: str) -> Path:
+    from daily_agent.workflow_state import assert_issue_allowed
+    assert_issue_allowed(config.root, run_date)
+    from daily_agent.workflow_state import assert_mutation_allowed
+    assert_mutation_allowed(config.root)
     ensure_storage_dirs(config)
     path = weekly_report_path(config, run_date)
     marker = _date_marker(run_date)
@@ -591,6 +605,10 @@ def write_weekly_report(config: AppConfig, run_date: date, daily_markdown: str) 
 
 
 def write_weekly_html_report(config: AppConfig, run_date: date, daily_html: str) -> Path:
+    from daily_agent.workflow_state import assert_issue_allowed
+    assert_issue_allowed(config.root, run_date)
+    from daily_agent.workflow_state import assert_mutation_allowed
+    assert_mutation_allowed(config.root)
     ensure_storage_dirs(config)
     path = weekly_html_report_path(config, run_date)
     marker = _date_marker(run_date)
@@ -607,6 +625,11 @@ def write_weekly_html_report(config: AppConfig, run_date: date, daily_html: str)
 
 
 def cleanup_retention(config: AppConfig, today: date | None = None) -> None:
+    from daily_agent.workflow_state import assert_mutation_allowed
+    assert_mutation_allowed(config.root)
+    from daily_agent.workflow_state import _recovery_scopes
+    if _recovery_scopes(config.root):
+        return  # A new issue has no authority to prune historical evidence.
     today = today or date.today()
     selected_keep_weeks = int(config.delivery.get("retention", {}).get("selected_keep_weeks", 2))
     markdown_keep_days = int(config.delivery.get("retention", {}).get("weekly_markdown_keep_days", 30))
@@ -981,6 +1004,9 @@ def _retained_delivery_artifacts(config: AppConfig) -> set[Path]:
 
 def _delete_old_files(paths: Iterable[Path], cutoff: date, protected: set[Path] | None = None) -> None:
     for path in paths:
+        from daily_agent.workflow_state import _recovery_scopes, assert_mutation_allowed
+        if _recovery_scopes(path):continue
+        assert_mutation_allowed(path)
         if path.resolve() in (protected or set()):
             continue
         try:
@@ -993,6 +1019,9 @@ def _delete_old_files(paths: Iterable[Path], cutoff: date, protected: set[Path] 
 
 def _delete_old_date_dirs(paths: Iterable[Path], cutoff: date, protected: set[Path] | None = None) -> None:
     for path in paths:
+        from daily_agent.workflow_state import _recovery_scopes, assert_mutation_allowed
+        if _recovery_scopes(path):continue
+        assert_mutation_allowed(path)
         if not path.is_dir():
             continue
         dir_date = _parse_date(path.name)

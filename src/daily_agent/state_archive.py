@@ -26,6 +26,7 @@ def _files(root):
     for path in sorted(root.rglob('*')):
         if path.is_symlink():raise ValueError('State snapshot refuses symlinks')
         if not path.is_file() or path.suffix=='.lock':continue
+        if path.parent == root and path.name in {'STATE-MANIFEST.json', '.daily-agent-recovery.json'}:continue
         name=path.name.lower()
         if name in {'auth.json','secrets.toml','credentials.json','.env'} or name.startswith('.env.') or name.endswith(('.pem','.key')):
             raise ValueError('Credential-like file present; keep credentials outside state archives')
@@ -36,7 +37,9 @@ def snapshot(root,output):
     config=_config(root);root=config.root;output=Path(output).resolve()
     if output.is_relative_to(root):raise ValueError('Archive must be outside the state root')
     output.parent.mkdir(parents=True,exist_ok=True)
+    _files(root)  # Reject credential-like names before any JSON inspection.
     with ExitStack() as stack:
+        stack.enter_context(exclusive_lock(config.state_dir/'cloud-dispatch.lock'))
         stack.enter_context(exclusive_lock(config.state_dir/'cloud-generation.lock'))
         stack.enter_context(exclusive_lock(config.state_dir/'pipeline.lock'))
         stack.enter_context(queue_lock(root/'data/writer-queue/queue.lock'))
@@ -44,6 +47,23 @@ def snapshot(root,output):
         if generation and generation.get('running'):raise StateCorrupt('Running generation cannot be snapshotted safely')
         for journal in sorted((config.state_dir/'cloud-delivery').glob('*.json')):
             stack.enter_context(exclusive_lock(journal.with_suffix('.lock')))
+        # Revisions and batch execution have independent mutation leases. Take
+        # them nonblocking; never wait while holding a conflicting lock order.
+        held = {config.state_dir/'cloud-dispatch.lock', config.state_dir/'cloud-generation.lock',
+                config.state_dir/'pipeline.lock', root/'data/writer-queue/queue.lock'}
+        held.update(p.with_suffix('.lock') for p in (config.state_dir/'cloud-delivery').glob('*.json'))
+        for lock in sorted(root.rglob('*.lock')):
+            if lock not in held:
+                stack.enter_context(exclusive_lock(lock))
+        from daily_agent.durable_recovery import retired_evidence, active_state_record
+        retired = retired_evidence(root)
+        for path in sorted(root.rglob('*.json')):
+            if str(path) in retired:continue
+            # The write-ahead intent is precisely what this snapshot must save.
+            if path.name == '.daily-agent-boundary.json':continue
+            value=read_json(path)
+            if active_state_record(path,value):
+                raise StateCorrupt('Active revision/controller cannot be snapshotted; settle or reconcile ownership first')
         files=_files(root);sizes=sum(path.stat().st_size for path in files)
         if sizes>MAX_BYTES:raise ValueError('State archive exceeds supported 2 GiB bound')
         manifest={'schema_version':1,'profile':'cloud-public-chatgpt-v1','created_at':datetime.now(timezone.utc).isoformat(),'source_root':str(root),'files':{}}
@@ -69,7 +89,7 @@ def verify(archive):
     with zipfile.ZipFile(archive) as source:
         infos=source.infolist();names=[v.filename for v in infos]
         if len(names)!=len(set(names)) or sum(v.file_size for v in infos)>MAX_BYTES:raise StateCorrupt('Invalid/oversize state archive')
-        try:manifest=json.loads(source.read('STATE-MANIFEST.json'))
+        try:manifest=__import__('daily_agent.durable_recovery',fromlist=['decode']).decode(source.read('STATE-MANIFEST.json'))
         except (KeyError,ValueError) as exc:raise StateCorrupt('Missing state manifest') from exc
         if manifest.get('schema_version')!=1 or manifest.get('profile')!='cloud-public-chatgpt-v1' or not isinstance(manifest.get('files'),dict):raise StateCorrupt('Invalid state manifest')
         if set(names)!=set(manifest['files'])|{'STATE-MANIFEST.json'}:raise StateCorrupt('Unexpected archive members')
@@ -101,10 +121,17 @@ def restore(archive,target,expected_sha256):
         config=_config(staging)
         generation=read_json(config.state_dir/'cloud-generation.json')
         if generation and generation.get('running'):raise StateCorrupt('Archive retains active-process evidence; operator reconciliation required')
+        from daily_agent.durable_recovery import _write_json, FENCE
+        _write_json(staging/FENCE, {'schema_version':1, 'status':'blocked',
+            'reason':'local_archive_restore', 'receipts':{'local_archive_sha256':expected_sha256},
+            'original_state_root':manifest.get('source_root'),
+            'requires':['verify_library_source_and_state', 'verify_previous_executor_stopped',
+                        'reconcile_claim_owners', 'inspect_unresolved_delivery',
+                        'verify_site_archive_owner', 'revalidate_absolute_paths']})
         os.rename(staging,target)
     finally:
         if staging.exists():shutil.rmtree(staging)
-    return {'root':str(target),'files':len(manifest['files']),'restored':True,'warning':'Accepted/uncertain deliveries retained; verify remote state before any send. Restore evidence caches at original root or revalidate any absolute source paths.', 'original_root':manifest.get('source_root')}
+    return {'root':str(target),'files':len(manifest['files']),'restored':True,'mutation_blocked':True,'warning':'Accepted/uncertain deliveries retained; verify remote state before any send. Restore evidence caches at original root or revalidate any absolute source paths.', 'original_root':manifest.get('source_root')}
 
 def main():
     p=argparse.ArgumentParser(description=__doc__);p.add_argument('action',choices=['snapshot','verify','restore']);p.add_argument('--root');p.add_argument('--archive',required=True);p.add_argument('--sha256');a=p.parse_args()

@@ -83,6 +83,12 @@ Allocated capacity per frozen material:
 - Paper primary writer: `draft`, `rewrite`, `presentation`, `scientific_writer`,
   `scientific_review`, `author_research`, `author_review` each ordinal 0;
   `semantic` ordinals 0 and 1
+- Native-policy PDF only: `native_visual_selection` ordinal 0;
+  `semantic_overflow` ordinals 0 and 1 (one additional <=8-page complete-field
+  pack per existing initial/rewrite review); `scientific_writer` ordinal 1
+  (one local missing-number correction). Strict-policy slots are unchanged.
+  These are finite exact-input slots in the original `primary_writer` pool,
+  not a new time allocation or a way to retry a sealed job
 - Repository primary writer: its own material-bound `draft` ordinal 0
 
 The author's original eligible ordered subset is frozen once with
@@ -127,7 +133,8 @@ It does not call a model or repair assets. Scientific analysis
 and author research remain additive as today: their result envelopes are
 retained as opaque data, not trusted positive approvals. Consumers must use the
 existing science/author validation before reusing those claims (as rendering
-already does with `reviewed_analysis`); no new scientific/author gate is invented. The callback argument is
+already does with `reviewed_analysis`); new native daily-selection contracts require independent scientific analysis;
+strict historical contracts retain their existing gate. The callback argument is
 an explicit trusted integration/test seam, not a model-supplied approval flag.
 
 ## Integration boundary
@@ -162,3 +169,14 @@ binds the actual active queue generation, and clamps timeout to the local stage
 remainder. Pending responses propagate through finally settlement. A replaced
 active generation cannot reuse an occupied finite slot; unsupported expired-job
 retries fail closed rather than gaining capacity. No new backend is enabled.
+
+### Required science in new native contracts
+
+Native contract settings include `native_qualification_contract` with exact
+`schema_version: 1` and boolean `require_scientific_analysis: true`. Journal
+validation rejects missing, false, numeric or string substitutes, even after
+outer checksums are recomputed. Final completion uses `_supported`, which
+requires native CORE plus exact independently reviewed science. The separate
+CORE draft cache grants no completion rights. Source marker schema 2 and live
+configuration cannot be deleted or weakened to bypass noncloud/cloud selection
+or ready-report revalidation. No old sealed record or strict contract is migrated.

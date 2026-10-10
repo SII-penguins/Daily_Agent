@@ -14,7 +14,7 @@ sys.path.insert(0,str(ROOT/'src'))
 from daily_agent.config import load_config
 from daily_agent.editorial import _llm_writer_command,_llm_writer_settings,_decode_model_json,draft_report_items,review_draft,approve_publication
 from daily_agent.models import MaterialRecord,RunStatus
-from daily_agent.reading import audit_reading
+from daily_agent.source_evidence_policy import audit_reading
 from daily_agent.paper_document import extract_document,attach_document,build_document,atomic_json
 from daily_agent.rendering.notes import write_reading_notes
 from daily_agent.rendering.markdown import render_daily_markdown

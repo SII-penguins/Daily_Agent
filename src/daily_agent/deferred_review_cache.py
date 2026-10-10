@@ -18,7 +18,9 @@ from daily_agent.paper_document import atomic_json, digest, evidence_settings, l
 SCHEMA = 1
 # Changes to these evidence/review implementations invalidate aggregate reuse.
 PROTOCOL_FILES = ('reading.py', 'visual_reading.py', 'visual_fidelity.py',
-                  'paper_document.py', 'editorial.py', 'rendering/composition.py')
+                  'paper_document.py', 'editorial.py', 'rendering/composition.py',
+                  'visual_inventory.py', 'paper_visual_assets.py', 'rendering/notes.py',
+                  'source_evidence_policy.py', 'native_visual_evidence.py', 'native_claim_review.py')
 
 
 def _root(config):
@@ -40,7 +42,11 @@ def _identity(config, record):
     # Deliberately exclude score, topic weights, tags, quotas, issue date,
     # publication history and scheduling budgets. Bind actual evidence, not
     # merely a caller-supplied content_hash.
-    return digest([SCHEMA, _protocol(), _settings(config), version_identity(record),
+    from daily_agent.source_evidence_policy import expected_record_policy, NATIVE
+    extra = ({'selection': record.raw.get('paper_visual_selection'),
+              'visual_settings': config.sources.get('report_writing', {})}
+             if expected_record_policy(config, record) == NATIVE else None)
+    return digest([SCHEMA, _protocol(), _settings(config), extra, version_identity(record),
                    record.title, record.abstract, record.authors, record.doi,
                    record.paper_document, record.raw.get('citation_context')])
 
@@ -111,6 +117,8 @@ def _assets(config, record, *, save=False):
         if save:
             blob = _root(config) / 'blobs' / sha
             if not blob.is_file() or hashlib.sha256(blob.read_bytes()).hexdigest() != sha:
+                from daily_agent.workflow_state import assert_mutation_allowed
+                assert_mutation_allowed(config.root)
                 blob.parent.mkdir(parents=True, exist_ok=True)
                 with tempfile.NamedTemporaryFile(dir=blob.parent, delete=False) as handle:
                     handle.write(content)
@@ -131,6 +139,8 @@ def _repair_assets(config, manifest):
         blob = _root(config) / 'blobs' / sha
         if not blob.is_file() or hashlib.sha256(blob.read_bytes()).hexdigest() != sha:
             return False
+        from daily_agent.workflow_state import assert_mutation_allowed
+        assert_mutation_allowed(config.root)
         path.parent.mkdir(parents=True, exist_ok=True)
         with tempfile.NamedTemporaryFile(dir=path.parent, delete=False) as handle:
             handle.write(blob.read_bytes())
@@ -139,9 +149,38 @@ def _repair_assets(config, manifest):
     return True
 
 
-def _supported(record, draft):
+def _repair_native_assets(config, manifest, record):
+    from daily_agent.workflow_state import assert_mutation_allowed
+    assert_mutation_allowed(config.root)
+    """Restore missing derived PNGs only; never overwrite source/queue history."""
+    from daily_agent.source_evidence_policy import _source_valid
+    if not _source_valid(record) or not isinstance(manifest, dict):
+        return False
+    missing = {}
+    for name, expected in manifest.items():
+        path = _local(config, name)
+        if path is None or not isinstance(expected, str):
+            return False
+        if path.is_file():
+            if hashlib.sha256(path.read_bytes()).hexdigest() != expected:
+                return False
+        elif path.suffix.lower() == '.png':
+            missing[name] = expected
+        else:
+            return False
+    return _repair_assets(config, missing)
+
+
+def _supported(record, draft, *, config=None):
     """Re-run mechanical checks before trusting the exact independent review."""
-    from daily_agent.reading import audit_reading, verify_draft
+    from daily_agent.source_evidence_policy import (audit_reading, verify_draft,
+        record_policy, expected_record_policy, NATIVE, native_review_supported)
+    if config is not None and record_policy(record) != expected_record_policy(config, record):
+        return False
+    if record_policy(record) == NATIVE:
+        return native_review_supported(record, draft)
+    if record_policy(record) != 'strict_fidelity_v1':
+        return False
     if record.paper_document.get('identity') != version_identity(record):
         return False
     verification = draft.verification
@@ -165,6 +204,22 @@ def _supported(record, draft):
     return audit_reading([material.to_dict()])['all_passed']
 
 
+def _core_cache_supported(record, draft, *, config=None):
+    """Intermediate draft reuse only; never call this for selection or completion."""
+    from daily_agent.source_evidence_policy import (record_policy, expected_record_policy,
+        NATIVE, native_quality)
+    if config is not None and record_policy(record) != expected_record_policy(config, record):
+        return False
+    if record_policy(record) != NATIVE:
+        return _supported(record, draft, config=config)
+    if not native_quality(record, draft):
+        return False
+    if 'scientific_analysis' in draft.draft_fields:
+        from daily_agent.scientific_analysis import scientific_analysis_valid
+        return scientific_analysis_valid(record, draft)
+    return True
+
+
 def _load(config, record):
     if record.item_type != 'paper' or not record.paper_document:
         return None
@@ -181,8 +236,20 @@ def _load(config, record):
         candidate.paper_document = payload['paper_document']
         candidate.reading = payload['reading']
         candidate.paper_text_status = payload['paper_text_status']
+        from daily_agent.source_evidence_policy import record_policy, NATIVE
+        if record_policy(candidate) == NATIVE:
+            if payload.get('cache_role') != 'native_core_evidence_intermediate':
+                return None
+            saved_selection = payload.get('paper_visual_selection')
+            current_selection = record.raw.get('paper_visual_selection')
+            if current_selection is not None and current_selection != saved_selection:
+                return None
+            candidate.raw['paper_visual_selection'] = deepcopy(saved_selection)
+            candidate.detail = deepcopy(payload['draft']['draft_fields'])
         draft = EditorialDraft.from_dict(payload['draft'])
-        if (draft.key != record.key or not _supported(candidate, draft)
+        if record_policy(candidate) == NATIVE and not _repair_native_assets(config, payload['assets'], candidate):
+            return None
+        if (draft.key != record.key or not _core_cache_supported(candidate, draft, config=config)
                 or not _repair_assets(config, payload['assets']) or _assets(config, candidate) is None):
             return None
         return candidate, draft
@@ -206,9 +273,13 @@ def reusable_enrichment(config, record):
         candidate = deepcopy(record)
         candidate.paper_document = payload['paper_document']
         candidate.reading = payload['reading']
+        from daily_agent.source_evidence_policy import expected_record_policy, NATIVE
+        repair = (_repair_native_assets(config, payload['assets'], candidate)
+                  if expected_record_policy(config, record) == NATIVE
+                  else _repair_assets(config, payload['assets']))
         return (candidate.paper_document.get('identity') == version_identity(record)
                 and candidate.paper_document.get('document_kind') == 'full_text'
-                and _repair_assets(config, payload['assets']) and _assets(config, candidate) is not None)
+                and repair and _assets(config, candidate) is not None)
     except (KeyError, TypeError, ValueError, OSError, AttributeError):
         return False
 
@@ -227,7 +298,11 @@ def draft_report_items(config, shortlist, use_llm, original, *, execution=None):
             record.paper_document = candidate.paper_document
             record.paper_text_status = candidate.paper_text_status
             record.reading = candidate.reading
-            if newer_assets is not None:
+            from daily_agent.source_evidence_policy import record_policy, NATIVE
+            if record_policy(candidate) == NATIVE:
+                record.raw['paper_visual_selection'] = deepcopy(candidate.raw.get('paper_visual_selection'))
+                record.detail = deepcopy(candidate.detail)
+            elif newer_assets is not None:
                 record.reading['paper_visual_assets'] = newer_assets
         else:
             pending.append(record)
@@ -237,7 +312,7 @@ def draft_report_items(config, shortlist, use_llm, original, *, execution=None):
     by_key = {r.key: r for r in pending}
     for draft in computed:
         record = by_key.get(draft.key)
-        if record is None or record.item_type != 'paper' or not _supported(record, draft):
+        if record is None or record.item_type != 'paper' or not _core_cache_supported(record, draft, config=config):
             continue
         assets = _assets(config, record, save=True)
         if assets is None:
@@ -246,7 +321,11 @@ def draft_report_items(config, shortlist, use_llm, original, *, execution=None):
         enrichment = sorted({enrichment_keys[record.key], _enrichment_identity(config, record)})
         payload = {'schema_version': SCHEMA, 'input_keys': keys, 'enrichment_keys': enrichment,
                    'paper_document': record.paper_document, 'reading': record.reading,
-                   'paper_text_status': record.paper_text_status, 'draft': draft.to_dict(), 'assets': assets}
+                   'paper_text_status': record.paper_text_status, 'draft': draft.to_dict(), 'assets': assets,
+                   'paper_visual_selection': deepcopy(record.raw.get('paper_visual_selection'))}
+        from daily_agent.source_evidence_policy import record_policy, NATIVE
+        if record_policy(record) == NATIVE:
+            payload['cache_role'] = 'native_core_evidence_intermediate'
         envelope = {'sha256': digest(payload), 'payload': payload}
         for key in keys:
             atomic_json(_root(config) / 'reviews' / (key + '.json'), envelope)

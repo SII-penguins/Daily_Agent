@@ -287,12 +287,17 @@ def _stage_is_completed(state: dict[str, Any], stage: str, root: Path, run_date:
 
 def run_scheduled_stage(root: str | Path, stage: str, run_date: date | None = None,
                         *, executor: _StageExecutor | None = None) -> ScheduleStageResult:
+    from daily_agent.workflow_state import assert_issue_allowed
+    if run_date is not None: assert_issue_allowed(Path(root), run_date)
+    from daily_agent.workflow_state import assert_mutation_allowed
+    assert_mutation_allowed(Path(root))
     """One bounded controller, durable command checkpoints, and an independent sealed delivery."""
     if stage not in _SCHEDULE_STAGES:
         raise ValueError(f"Unsupported schedule stage: {stage}")
     root = Path(root).resolve()
     config = _config(root)
     day = run_date or _now().astimezone(ZoneInfo(config.delivery.get("report", {}).get("timezone", "Asia/Shanghai"))).date()
+    assert_issue_allowed(root, day)
     path = _state_path(root, day)
     policy = _policy(root)
     required = ("delivery",) if stage == "delivery" else _SCHEDULE_STAGES[:_SCHEDULE_STAGES.index(stage) + 1]
@@ -576,6 +581,10 @@ def inspect_schedule_state(root: str | Path, run_date: date) -> dict[str, Any]:
 
 def repair_schedule_state(root: str | Path, run_date: date, stage: str | None = None,
                           *, reset_budget: bool = False) -> dict[str, Any]:
+    from daily_agent.workflow_state import assert_issue_allowed
+    if run_date is not None: assert_issue_allowed(Path(root), run_date)
+    from daily_agent.workflow_state import assert_mutation_allowed
+    assert_mutation_allowed(Path(root))
     """Locked local reconciliation; never clears ambiguous external delivery evidence."""
     root = Path(root).resolve()
     path = _state_path(root, run_date)
@@ -773,6 +782,26 @@ def _approved_items(rows):
     return items
 
 
+def _validate_native_approvals(rows, config=None):
+    """New native artifacts cannot inherit a review over different final prose."""
+    from daily_agent.source_evidence_policy import (audit_reading, record_policy,
+        expected_record_policy, STRICT, NATIVE)
+    native = []
+    for row in rows:
+        material = row.get('material', {})
+        if material.get('item_type') != 'paper':
+            continue
+        actual = record_policy(material)
+        expected = expected_record_policy(config, material) if config is not None else actual
+        if actual != STRICT or expected == NATIVE:
+            if actual != NATIVE or (config is not None and actual != expected):
+                raise StageFailure('Native source policy mismatch at report seal', kind='invalid_artifact')
+            native.append(row)
+    if native and not audit_reading(native)['all_passed']:
+        raise StageFailure('Native report fields or source evidence no longer match independent review',
+                           kind='invalid_artifact')
+
+
 def validate_ready_report(config, run_date: date) -> dict:
     """Readiness is validated content and approval identity, never mere file existence."""
     path = _ready_path(config, run_date)
@@ -783,6 +812,7 @@ def validate_ready_report(config, run_date: date) -> dict:
             or payload.get("schema_version", 1) not in {1, 2, 3}):
         raise StageFailure("Invalid ready-report manifest", kind="invalid_artifact")
     items = _approved_items(payload.get("approval"))
+    _validate_native_approvals(payload["approval"])
     try:
         report = Path(payload["report"]).resolve()
         report.relative_to(config.reports_dir.resolve())
@@ -829,6 +859,8 @@ def _read_outbox(config, run_date, payload):
 
 
 def seal_ready_report(config, run_date, *, _ready_lock_held=False):
+    from daily_agent.workflow_state import assert_issue_allowed
+    assert_issue_allowed(config.root, run_date)
     """Freeze immutable bytes and approval identity. Never replace a sent/in-flight issue."""
     day = run_date.isoformat()
     report = config.reports_dir / f"daily-agent-{day}.md"
@@ -851,6 +883,7 @@ def seal_ready_report(config, run_date, *, _ready_lock_held=False):
             outbox = _read_outbox(config, run_date, previous)
             if receipt or outbox:
                 return previous
+        _validate_native_approvals(rows, config)
         frozen = config.reports_dir / f"daily-agent-{day}.{checksum}.ready.md"
         atomic_bytes(frozen, content)
         payload = {"schema_version": 3, "date": day, "report": str(frozen.resolve()),
@@ -870,6 +903,8 @@ def seal_ready_report(config, run_date, *, _ready_lock_held=False):
 
 
 def _reconcile_publication(config, run_date, payload, receipt):
+    from daily_agent.workflow_state import assert_issue_allowed
+    assert_issue_allowed(config.root, run_date)
     if receipt.get("publication_reconciled"):
         return
     from daily_agent.storage import (mark_materials_published, write_published_index, write_selected,
@@ -886,6 +921,10 @@ def _reconcile_publication(config, run_date, payload, receipt):
 
 
 def deliver_ready_report(config, run_date, *, delivery_mode: str | None = None):
+    from daily_agent.workflow_state import assert_issue_allowed
+    assert_issue_allowed(config.root, run_date)
+    from daily_agent.workflow_state import assert_mutation_allowed
+    assert_mutation_allowed(config.root)
     """Outbox plus receipt: a lost acknowledgement requires reconciliation, not a blind resend."""
     from daily_agent.delivery.feishu import deliver_weekly_report, preflight_delivery
     path = _ready_path(config, run_date)
@@ -935,6 +974,10 @@ def deliver_ready_report(config, run_date, *, delivery_mode: str | None = None):
 
 
 def resolve_delivery_outcome(config, run_date, outcome: str, note: str):
+    from daily_agent.workflow_state import assert_issue_allowed
+    assert_issue_allowed(config.root, run_date)
+    from daily_agent.workflow_state import assert_mutation_allowed
+    assert_mutation_allowed(config.root)
     """Explicit operator-confirmed remote outcome. This function never sends a message."""
     if outcome not in {"sent", "not-sent"} or not note.strip():
         raise ValueError("Supply sent/not-sent and a note describing the remote evidence")

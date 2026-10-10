@@ -94,10 +94,14 @@ def run_pipeline(
     # A scheduling-only lock cannot protect manual callers against concurrent writes.
     from daily_agent.workflow_state import exclusive_lock
     config = load_config(root)
+    from daily_agent.workflow_state import assert_mutation_allowed
+    assert_mutation_allowed(config.root)
     external = not dry_run and delivery_mode != "local"
     from contextlib import ExitStack
     from daily_agent.scheduling import _ready_path
     day = run_date or date.today()
+    from daily_agent.workflow_state import assert_issue_allowed
+    assert_issue_allowed(config.root, day)
     with ExitStack() as locks:
         cloud = bool(config.delivery.get('cloud', {}).get('profile'))
         if cloud:
@@ -430,7 +434,7 @@ def _replay_eligible_keys(config, day, batch, library):
 def _process_incremental_batch(config, day, batch, plan, batch_id,
                                library, previous_records, previous_drafts, previous_reviews, *, use_llm,
                                eligible_keys=None):
-    """Finish each material before admitting the next; journal precedes views.
+    """Visit frozen materials once, yielding only queue waits to later siblings.
 
     Completed results regain no permanent quota/publication rights. Every replay
     revalidates the existing base evidence and rebuilds ordinary projections.
@@ -441,41 +445,64 @@ def _process_incremental_batch(config, day, batch, plan, batch_id,
     from daily_agent.scientific_analysis import analyze_papers
     from daily_agent.models import EditorialDraft, EditorialReview
     from daily_agent.incremental_issue import PROTOCOL
+    from daily_agent.parent_writer import PendingResponse, QueueCapacityPending
+    from daily_agent.batch_dispatch import PendingBatchResponse, publish_wait_set
+    from daily_agent.terminal_fidelity import TerminalFidelityRejected
     records, drafts, reviews = [], [], []
+    suspended = {}
+    capacity_wait = False
     validator = existing_review_validator(config)
     with Execution(plan.folder, batch_id, [candidate(r) for r in batch], config,
                    protocol=PROTOCOL, issue_state='generating') as execution:
         for original in batch:
             if eligible_keys is not None and original.key not in eligible_keys:
                 continue
-            completed = execution.completed(original.key, validator=validator)
-            if completed is not None:
-                record = MaterialRecord.from_dict(completed['record'])
-                draft = EditorialDraft.from_dict(completed['draft'])
-                review = EditorialReview.from_dict(completed['review'])
-            else:
-                record = original
-                enrich_selected_author_contexts([record], config, execution=execution)
-                generated = draft_report_items(config, [record], use_llm=use_llm, execution=execution)
-                if len(generated) != 1 or generated[0].key != record.key:
-                    raise ValueError('Singleton writer returned a different material')
-                draft = generated[0]
-                analyze_papers(config, [record], [draft], use_llm=use_llm, execution=execution)
-                review = review_draft(config, [draft], use_llm=use_llm)[0]
-                assets = _assets(config, record, save=False)
-                if review.verdict == 'PASS' and assets is not None:
-                    # PASS alone does not qualify a completion; this invokes the
-                    # same mechanical/independent-review/asset checks as reuse.
-                    payload = {'material': record.key, 'record': record.to_dict(),
-                               'draft': draft.to_dict(), 'review': review.to_dict(), 'asset_hashes': assets}
-                    if validator(payload):
-                        sha = execution.prepare_completion(record.key, record=payload['record'],
-                            draft=payload['draft'], review=payload['review'],
-                            science=record.reading.get('scientific_analysis', {}),
-                            evidence={'reading': record.reading,
-                                      'author': record.raw.get('author_research_evidence', {})},
-                            asset_hashes=assets)
-                        execution.commit_completion(record.key, sha, validator=validator)
+            try:
+                completed = execution.completed(original.key, validator=validator)
+                if completed is not None:
+                    record = MaterialRecord.from_dict(completed['record'])
+                    draft = EditorialDraft.from_dict(completed['draft'])
+                    review = EditorialReview.from_dict(completed['review'])
+                else:
+                    record = original
+                    enrich_selected_author_contexts([record], config, execution=execution)
+                    generated = draft_report_items(config, [record], use_llm=use_llm, execution=execution)
+                    if len(generated) != 1 or generated[0].key != record.key:
+                        raise ValueError('Singleton writer returned a different material')
+                    draft = generated[0]
+                    analyze_papers(config, [record], [draft], use_llm=use_llm, execution=execution)
+                    review = review_draft(config, [draft], use_llm=use_llm)[0]
+                    assets = _assets(config, record, save=False)
+                    if review.verdict == 'PASS' and assets is not None:
+                        # PASS alone does not qualify a completion; this invokes the
+                        # same mechanical/independent-review/asset checks as reuse.
+                        payload = {'material': record.key, 'record': record.to_dict(),
+                                   'draft': draft.to_dict(), 'review': review.to_dict(), 'asset_hashes': assets}
+                        if validator(payload):
+                            sha = execution.prepare_completion(record.key, record=payload['record'],
+                                draft=payload['draft'], review=payload['review'],
+                                science=record.reading.get('scientific_analysis', {}),
+                                evidence={'reading': record.reading,
+                                          'author': record.raw.get('author_research_evidence', {})},
+                                asset_hashes=assets)
+                            execution.commit_completion(record.key, sha, validator=validator)
+            except TerminalFidelityRejected as rejected:
+                if rejected.material != original.key:
+                    raise ValueError('Terminal rejection belongs to a different material')
+                # Negative-only observation: retain the failed record for audit,
+                # without writer/science calls or any completion/publication right.
+                draft = EditorialDraft(record.key, record.item_type, record.title, {},
+                    writer_notes=str(rejected), verification=record.reading['verification'])
+                review = EditorialReview(record.key, 'FAIL', issues=[str(rejected)])
+            except PendingResponse as pending:
+                # Only queue suspension yields to the next frozen sibling.
+                # Corruption, cancellation and ordinary failures still propagate.
+                if isinstance(pending, QueueCapacityPending):
+                    capacity_wait = True
+                else:
+                    suspended[original.key] = {'job_id': pending.job_id, 'expired': bool(getattr(pending, 'expired', False))}
+                publish_wait_set(config, execution, suspended)
+                continue
             records.append(record); drafts.append(draft); reviews.append(review)
             library[record.key] = record
             # These two views are rebuildable, and either write may be interrupted.
@@ -484,6 +511,13 @@ def _process_incremental_batch(config, day, batch, plan, batch_id,
                 previous_drafts + drafts, previous_reviews + reviews)
             approved = approve_publication(config, all_records, all_drafts, all_reviews)
             write_editorial_artifacts(config, day, all_records, all_drafts, all_reviews, approved)
+        jobs = publish_wait_set(config, execution, suspended)
+        if jobs:
+            waiting = PendingBatchResponse(batch_id, jobs)
+            waiting.queue_capacity = capacity_wait and not waiting.expired
+            raise waiting
+        if capacity_wait:
+            raise QueueCapacityPending()
     return records, drafts, reviews
 
 def _fallback_window_steps(config: AppConfig, target_dt: datetime | None = None) -> list[tuple[int, int]]:

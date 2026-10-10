@@ -120,3 +120,7 @@ Set topics, quotas, timezone, schedules and delivery in your private runtime con
 ## 许可
 
 [MIT](LICENSE)
+
+## GitHub 持久化与恢复
+
+Public code, documentation and synthetic examples belong here. Personal reports and non-secret runtime configuration belong in a separate private repository. Never publish personal reports to this repository or its branches. See [repository separation](docs/github-persistence.md).

@@ -29,8 +29,18 @@ is permitted. Changing scientific editorial policy invalidates interpretation an
 
 A failure or rejected review produces a visible gap and preserves the qualified
 paper's prior approval. One attempt is made per exact source/protocol/config;
+a native-only missing-numeric-token response may receive one local correction
+in `scientific_writer` ordinal 1. Its precise claim IDs and missing tokens are
+provided to the writer, and all other claims plus every claim ID/kind/facet
+must remain unchanged. The original and corrected response receipts are both
+retained, and the corrected analysis still needs complete independent pixel
+review. This correction shares the original issue budget and does not reread
+the source. Response schema/semantic failures are local to the paper, while
+actual JSON/transport errors retain existing global circuit behavior;
 resumable queue requests wait for an independent response, while an expired
-request becomes a failed analysis instead of permanently blocking publication.
+request becomes a failed analysis. Under the new native daily-selection
+contract, failed/incomplete analysis keeps CORE reusable but blocks complete
+selection; the historical strict optional-analysis behavior is unchanged.
 Unsupported interpretation is never rendered. Optional settings live under
 `sources.scientific_analysis`: enabled (default true), timeout_seconds (180,
 bounded to 1–600), max_input_chars (380000). Setting enabled false exposes the
@@ -74,3 +84,13 @@ boundary, so typography, grouping and label wording do not trigger model work.
 Regression tests cover a newly added semantic helper, a transitive imported
 validator, real prose-policy changes, presentation changes and unchanged full
 reading/visual reuse. Renderer code never rewrites approved scientific claims.
+
+### Partial completion is explicit
+
+Stored outcomes distinguish `completion_scope=core_only` from
+`core_and_scientific_analysis`. New native selection, completion and ready
+gates enforce the required independent science from actual proof, not this
+mutable label. A CORE-only item is an intermediate, not a complete daily entry. A failed addition carries bounded diagnostics
+and the exact local-repair attempt count; it does not gain a scientific PASS
+from the prior CORE approval. Replaying an exact failed attempt does not spawn
+another repair. Unsupported prose is never attached to published fields.

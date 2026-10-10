@@ -12,6 +12,7 @@ from html import escape
 from urllib.parse import urlsplit
 
 from daily_agent.models import ApprovedItem
+from daily_agent.author_context import safe_author_uncertainties
 from daily_agent.rendering.composition import paper_paragraphs, featured_keys, reader_text
 from daily_agent.rendering.notes import reading_label, card_gaps
 from daily_agent.rendering.markdown import _prefix_label
@@ -70,9 +71,10 @@ def _research_context(material):
     for author in authors:
         if not isinstance(author, dict):
             continue
-        roles = [dict(first_author='第一署名作者', corresponding_author='通讯作者', co_first_author='共同第一作者', lead_author='主要作者').get(r, '') for r in author.get('roles', [])]
+        roles = [dict(first_author='第一署名作者', corresponding_author='通讯作者', co_first_author='共同第一作者', lead_author='主要作者').get(r, '') for r in author.get('roles', [])] if author.get('status') == 'verified_primary' else []
         roles = ' · '.join(r for r in roles if r)
-        lines = ['<strong>' + text(author.get('name', '姓名未记录')) + '</strong>（' + text(roles or '角色未核验') + '）']
+        identity = '' if author.get('status') == 'verified_primary' else '元数据，未独立核实；'
+        lines = ['<strong>' + text(author.get('name', '姓名未记录')) + '</strong>（' + text(identity + (roles or '角色未核验')) + '）']
         for institution in author.get('institutions', []):
             if isinstance(institution, dict):
                 lines.append('机构：' + text(institution.get('name')) + ' · ' + text({'verified_primary':'原始来源已核验','source_metadata_unverified':'来源元数据 · 关系未独立核验'}.get(institution.get('status'),'未核验')) + ' ' + link('机构来源', institution.get('source_url')))
@@ -97,7 +99,7 @@ def _research_context(material):
     for line in context.get('research_lines', []):
         if isinstance(line, dict):
             blocks.append('<div class="reading-block"><h4>' + ('历史研究背景' if line.get('scope') == 'historical_background' else '本文研究方向') + '</h4><p>' + text(line.get('text')) + ' ' + link('来源', line.get('source_url')) + '</p></div>')
-    for uncertainty in context.get('uncertainties', []):
+    for uncertainty in safe_author_uncertainties(context):
         blocks.append(paragraph('待核验', uncertainty))
     return '<details class="context-details"><summary>作者、机构与研究背景</summary><div class="details-body">' + ''.join(blocks) + '</div></details>'
 
@@ -116,6 +118,9 @@ def _publication_label(material):
 
 def _paper(item, rank, featured):
     from daily_agent.paper_visual_assets import visual_assets_html
+    from daily_agent.rendering.notes import native_render_allowed
+    if not native_render_allowed(item):
+        return '<article class="paper-card"><h3>'+text(item.title)+'</h3><p>当前内容与独立核验的证据不一致，未展示未验证结论或原图说明</p></article>'
     visuals = visual_assets_html(item.material)
     figure_jump = ''
     if '<figure ' in visuals:
@@ -178,6 +183,8 @@ def _repo(item, rank):
 
 def render_editorial_html(items: list[ApprovedItem], run_date: date, *, kind='report', coverage='', excluded_count=0, approval_sha256='', body_sha256='', identity='') -> str:
     """Return a complete standalone document; exact source text remains inspectable."""
+    from daily_agent.rendering.notes import assert_native_renderable
+    assert_native_renderable(items)
     papers = sum(i.item_type == 'paper' for i in items)
     repos = sum(i.item_type == 'repo' for i in items)
     featured = featured_keys(items)

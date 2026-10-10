@@ -3,7 +3,7 @@ from __future__ import annotations
 
 from datetime import date
 from daily_agent.paper_document import version_identity
-from daily_agent.reading import audit_reading
+from daily_agent.source_evidence_policy import audit_reading
 from daily_agent.scoring.dedup import _identity_keys
 
 

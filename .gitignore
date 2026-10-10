@@ -51,3 +51,12 @@ secret.md
 # Local connector attachments, research snapshots, and unrelated assets
 .cc-connect/
 sources/
+
+# Private operational checkpoints and transport receipts
+/production-state/
+/repair-evidence/
+/verification/
+/STATE-ORIGIN.json
+/STATE-MANIFEST.json
+/*library-receipts*.json
+/*recovery-registry*.json

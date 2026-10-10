@@ -84,6 +84,8 @@ def candidate(record):
 def _contract(candidates, config, protocol):
     if not isinstance(protocol, str) or not protocol:
         raise ExecutionConflict('An explicit execution protocol is required')
+    from daily_agent.source_evidence_policy import configured_policy
+    configured_policy(config)  # Unknown modes cannot create a fresh ledger.
     reading = config.sources['reading']
     writer = config.sources['llm_writer']
     budgets = {'native': reading['run_budget_seconds'], 'repaired': reading['run_budget_seconds'],
@@ -116,9 +118,13 @@ def _contract(candidates, config, protocol):
         keys.append(c['key'])
     if len(set(keys)) != len(keys):
         raise ExecutionConflict('Duplicate candidate key')
+    settings = {'reading': deepcopy(reading), 'llm_writer': deepcopy(writer),
+                'author_context': deepcopy(author)}
+    if configured_policy(config) == 'native_claim_evidence_v1':
+        from daily_agent.source_evidence_policy import native_qualification_contract
+        settings['native_qualification_contract'] = native_qualification_contract()
     return {'protocol': protocol, 'candidates': frozen, 'budgets': budgets, 'chunk_limit': limit,
-            'settings': {'reading': deepcopy(reading), 'llm_writer': deepcopy(writer),
-                         'author_context': deepcopy(author)}}
+            'settings': settings}
 
 
 def _author_keys(contract):
@@ -137,19 +143,27 @@ def _slots(contract, repaired_bindings=None, author_candidates=None):
     for c in contract['candidates']:
         key = c['key']
         if c['kind'] == 'paper':
-            for phase in ('native', 'repaired'):
+            native_policy = (contract['settings']['reading'].get('source_evidence_policy') == 'native_claim_evidence_v1'
+                             and c['input'].get('paper_document', {}).get('source_type') == 'pdf')
+            for phase in (('native',) if native_policy else ('native', 'repaired')):
                 binding = (repaired_bindings or {}).get(key) if phase == 'repaired' else None
                 chunks = binding['chunks'] if binding else c['chunks']
                 for chunk in chunks[:contract['chunk_limit']]:
                     add(key, phase, 'chunk:' + str(chunk), 2)
-            for page in c['required_pages']:
+            for page in ([] if native_policy else c['required_pages']):
                 add(key, 'visual', 'page:' + str(page), 1)
-            for page in c['pages']:
+            for page in ([] if native_policy else c['pages']):
                 for role in ('transcribe', 'review'):
                     add(key, 'fidelity', role + ':' + str(page), 2)
             counts = {'draft': 1, 'rewrite': 1, 'semantic': 2, 'presentation': 1,
                       'scientific_writer': 1, 'scientific_review': 1,
                       'author_research': 1, 'author_review': 1}
+            if native_policy:
+                counts['native_visual_selection'] = 1
+                # One material-local numeric-locator correction. The original
+                # primary_writer pool/deadline and exact-input slots still bind.
+                counts['scientific_writer'] = 2
+                counts['semantic_overflow'] = 2
         else:
             # Repository primary work has its own material-bound slot.
             counts = {'draft': 1}
@@ -161,7 +175,7 @@ def _slots(contract, repaired_bindings=None, author_candidates=None):
     return slots
 
 
-def _lineage(frozen, record):
+def _lineage(frozen, record, contract=None):
     """Only declared downstream output fields may differ from enriched input."""
     if not isinstance(record, dict) or not isinstance(frozen['input'], dict):
         return False
@@ -176,6 +190,18 @@ def _lineage(frozen, record):
     if not isinstance(raw_before, dict) or not isinstance(raw_after, dict):
         return False
     author_fields = {'research_context', 'author_research_sources', 'author_research_evidence'}
+    native_mode = ((contract or {}).get('settings', {}).get('reading', {}).get('source_evidence_policy')
+                   == 'native_claim_evidence_v1'
+                   and original.get('paper_document', {}).get('source_type') == 'pdf')
+    if native_mode and raw_after.get('paper_visual_selection') != raw_before.get('paper_visual_selection'):
+        from daily_agent.native_visual_evidence import verified_native_visual_evidence
+        from daily_agent.models import MaterialRecord
+        try:
+            if not verified_native_visual_evidence(MaterialRecord.from_dict(record)):
+                return False
+        except (ValueError, TypeError, KeyError, OSError, AttributeError):
+            return False
+        author_fields = author_fields | {'paper_visual_selection'}
     if ({k: v for k, v in raw_before.items() if k not in author_fields}
             != {k: v for k, v in raw_after.items() if k not in author_fields}):
         return False
@@ -245,6 +271,9 @@ class Execution:
         self._poisoned = False
 
     def __enter__(self):
+        from daily_agent.workflow_state import assert_mutation_allowed, assert_scope_admission
+        assert_scope_admission(self.folder)
+        assert_mutation_allowed(self.folder)
         with self._mutex:
             if self._lease is not None:
                 raise ExecutionConflict('Execution already owns a lease')
@@ -299,6 +328,13 @@ class Execution:
             if set(s) - {'repaired_bindings', 'author_candidates'} != {'schema', 'batch_id', 'contract', 'pools', 'reservations', 'settlements',
                           'operations', 'writer_circuit', 'completed'} or type(s['schema']) is not int or s['schema'] != SCHEMA:
                 raise ValueError('schema')
+            settings = s['contract']['settings']
+            if settings['reading'].get('source_evidence_policy') == 'native_claim_evidence_v1':
+                if settings['reading'].get('require_scientific_analysis', True) is not True:
+                    raise ValueError('native frozen reading qualification setting')
+                from daily_agent.source_evidence_policy import valid_native_qualification_contract
+                if not valid_native_qualification_contract(settings.get('native_qualification_contract')):
+                    raise ValueError('native qualification contract')
             if set(s['pools']) != set(POOLS):
                 raise ValueError('pools')
             for name in ('reservations', 'settlements', 'operations', 'completed'):
@@ -443,7 +479,7 @@ class Execution:
             if not isinstance(value, dict):
                 raise ExecutionConflict('Invalid repaired record')
             frozen = next((c for c in self.contract['candidates'] if c['key'] == value.get('key')), None)
-            if frozen is None or not _lineage(frozen, value):
+            if frozen is None or not _lineage(frozen, value, self.contract):
                 raise ExecutionConflict('Repaired record changed frozen input lineage')
             binding = _repaired_binding(frozen, value.get('paper_document'))
             bindings = self._state.get('repaired_bindings', {})
@@ -534,37 +570,81 @@ class Execution:
 
     def admit(self, material, phase, substep, ordinal, exact_input, *, queue_job_id=None,
               retry_generation=None, queue_role=None):
-        """Return the same finite admission on resume; inputs/generation are immutable.
+        """Preserve the original single-slot API and exact admission identity."""
+        return self.admit_many([(material, phase, substep, ordinal)], exact_input,
+            queue_job_id=queue_job_id, retry_generation=retry_generation, queue_role=queue_role)[0]
 
-        queue_role is recorded verbatim (not renamed to the accounting phase).
-        A deliberate new attempt must consume another preallocated ordinal.
+    def existing_operation(self, operation):
+        """Read-only exact slot lookup; absence grants no operation admission."""
+        with self._mutex:
+            self._require()
+            return deepcopy(self._state['operations'].get(digest(list(operation))))
+
+    def admit_many(self, operations, exact_input, *, queue_job_id=None,
+                   retry_generation=None, queue_role=None):
+        """Atomically bind up to four original reading slots to one actual job.
+
+        Every member retains its own frozen ordinal. Preflight all members before
+        one write; a conflicting, duplicate or new member cannot extend a bound
+        group. Single-slot callers retain the original stage behavior.
         """
         with self._mutex:
             self._require()
+            if (not isinstance(operations, (list, tuple)) or not 1 <= len(operations) <= 4
+                    or any(not isinstance(op, (list, tuple)) or len(op) != 4
+                           or any(not isinstance(v, str) or not v for v in op[:3])
+                           or type(op[3]) is not int for op in operations)):
+                raise ExecutionConflict('One to four explicit finite operations required')
+            identities = [list(op) for op in operations]
+            material, phase = identities[0][:2]
+            if any(op[:2] != [material, phase] for op in identities):
+                raise ExecutionConflict('A grouped job must retain one material and phase')
+            if len(identities) > 1 and phase not in {'native', 'repaired'}:
+                raise ExecutionConflict('Only reading chunks support grouped transport')
             if phase not in self._windows:
                 raise ExecutionConflict('Admission requires a reserved active stage')
             if phase == 'primary_writer' and self._state['writer_circuit'] is not None:
                 raise WriterCircuitOpen('Original batch writer circuit is open')
             if not _generation(queue_job_id, retry_generation):
                 raise ExecutionConflict('Stable queue job or explicit retry generation required')
+            if len(identities) > 1 and not queue_job_id:
+                raise ExecutionConflict('Grouped transport requires an actual queue job')
             if self.remaining(phase) <= 0:
                 raise BudgetExhausted('Local stage deadline exhausted')
-            if type(ordinal) is not int:
-                raise ExecutionConflict('Invalid operation ordinal')
-            identity = [material, phase, substep, ordinal]
-            slot = digest(identity)
-            if slot not in _slots(self.contract, self._state.get('repaired_bindings'),
-                                  self._state.get('author_candidates')):
-                raise BudgetExhausted('Operation slot outside frozen topology')
-            op = {'identity': identity, 'protocol': self.contract['protocol'],
-                  'input_sha256': digest(exact_input), 'queue_job_id': queue_job_id,
-                  'retry_generation': retry_generation, 'queue_role': queue_role}
-            previous = self._state['operations'].get(slot)
-            if previous is not None and previous != op:
-                raise ExecutionConflict('Existing operation input/job/protocol conflict')
-            self._state['operations'][slot] = op
+            available = _slots(self.contract, self._state.get('repaired_bindings'),
+                               self._state.get('author_candidates'))
+            if len(identities) > 1:
+                if len({tuple(op[:3]) for op in identities}) != len(identities):
+                    raise ExecutionConflict('A chunk cannot occupy multiple ordinals in one group')
+                topology_order = {slot: index for index, slot in enumerate(available)}
+                positions = [topology_order.get(digest(op), -1) for op in identities]
+                if all(index >= 0 for index in positions) and positions != sorted(positions):
+                    raise ExecutionConflict('Grouped operations must preserve frozen topology order')
+            proposed, existing = {}, []
+            for identity in identities:
+                slot = digest(identity)
+                if slot in proposed:
+                    raise ExecutionConflict('Duplicate grouped operation')
+                if slot not in available:
+                    raise BudgetExhausted('Operation slot outside frozen topology')
+                op = {'identity': identity, 'protocol': self.contract['protocol'],
+                      'input_sha256': digest(exact_input), 'queue_job_id': queue_job_id,
+                      'retry_generation': retry_generation, 'queue_role': queue_role}
+                previous = self._state['operations'].get(slot)
+                if previous is not None and previous != op:
+                    raise ExecutionConflict('Existing operation input/job/protocol conflict')
+                existing.append(previous is not None)
+                proposed[slot] = op
+            if queue_job_id is not None and phase in {'native', 'repaired'}:
+                bound = {slot for slot, op in self._state['operations'].items()
+                         if op['queue_job_id'] == queue_job_id and op['identity'][:2] == [material, phase]}
+                if bound and bound != set(proposed):
+                    raise ExecutionConflict('A bound group cannot acquire new members or lose existing members')
+            if len(identities) > 1 and any(existing) and not all(existing):
+                raise ExecutionConflict('A bound group cannot acquire new members')
+            self._state['operations'].update(proposed)
             self._save()
-            return slot
+            return tuple(proposed)
 
     def writer_failure(self, kind, detail=''):
         """Call only for an actual backend/JSON/schema failure, never PendingResponse."""
@@ -581,7 +661,7 @@ class Execution:
         with self._mutex:
             self._require()
             frozen = next((c for c in self.contract['candidates'] if c['key'] == material), None)
-            if frozen is None or not _lineage(frozen, record) or not isinstance(asset_hashes, dict) or not all(_hash(v) for v in asset_hashes.values()):
+            if frozen is None or not _lineage(frozen, record, self.contract) or not isinstance(asset_hashes, dict) or not all(_hash(v) for v in asset_hashes.values()):
                 raise ExecutionConflict('Unknown material or invalid asset manifest')
             binding = self._state.get('repaired_bindings', {}).get(material)
             if binding is not None and record.get('paper_document') != binding['document']:
@@ -629,7 +709,7 @@ class Execution:
                 or type(payload['schema']) is not int or payload['schema'] != SCHEMA or payload['batch_id'] != self.batch_id
                 or payload['material'] != material or payload['input_sha256'] != frozen['input_sha256']
                 or payload['protocol'] != self.contract['protocol']
-                or not _lineage(frozen, payload['record'])
+                or not _lineage(frozen, payload['record'], self.contract)
                 or (binding is not None and payload['record'].get('paper_document') != binding['document'])
                 or not isinstance(payload['asset_hashes'], dict)
                 or not all(_hash(v) for v in payload['asset_hashes'].values())):
@@ -652,8 +732,9 @@ class Execution:
 def existing_review_validator(config):
     """Read-only adapter for existing base qualification; no model or repairs.
 
-    Science and author research remain additive, as in the current pipeline.
-    Their full results are retained but do not invent a new base acceptance gate.
+    Native daily-selection contracts require independently validated scientific
+    analysis. CORE-only work remains reusable in the separate draft cache.
+    Historical strict contracts retain their existing acceptance behavior.
     """
     def validate(envelope):
         from daily_agent.deferred_review_cache import _assets, _supported
@@ -666,7 +747,7 @@ def existing_review_validator(config):
             if (not (envelope['material'] == record.key == draft.key == review.key)
                     or record.item_type != draft.item_type or review.verdict != 'PASS'):
                 return False
-            if record.item_type == 'paper' and not _supported(record, draft):
+            if record.item_type == 'paper' and not _supported(record, draft, config=config):
                 return False
             if record.item_type not in {'paper', 'repo'}:
                 return False

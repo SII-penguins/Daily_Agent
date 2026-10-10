@@ -1,0 +1,1283 @@
+{
+  "description": "Synthetic recreations of failure shapes; not immutable real model responses.",
+  "rewrite": {
+    "chunks": [
+      {
+        "id": "c0001",
+        "kind": "method",
+        "offset": 0,
+        "page": 1,
+        "section": "Synthetic source",
+        "text": "Uncited synthetic source chunk c0001."
+      },
+      {
+        "id": "c0002",
+        "kind": "method",
+        "offset": 0,
+        "page": 1,
+        "section": "Synthetic source",
+        "text": "Synthetic support for the problem field, reference 1, under controlled fixture conditions."
+      },
+      {
+        "id": "c0003",
+        "kind": "method",
+        "offset": 0,
+        "page": 1,
+        "section": "Synthetic source",
+        "text": "Synthetic support for the problem field, reference 0, under controlled fixture conditions."
+      },
+      {
+        "id": "c0004",
+        "kind": "method",
+        "offset": 0,
+        "page": 1,
+        "section": "Synthetic source",
+        "text": "Synthetic support for the problem field, reference 2, under controlled fixture conditions."
+      },
+      {
+        "id": "c0005",
+        "kind": "method",
+        "offset": 0,
+        "page": 1,
+        "section": "Synthetic source",
+        "text": "Uncited synthetic source chunk c0005."
+      },
+      {
+        "id": "c0006",
+        "kind": "method",
+        "offset": 0,
+        "page": 1,
+        "section": "Synthetic source",
+        "text": "Uncited synthetic source chunk c0006."
+      },
+      {
+        "id": "c0007",
+        "kind": "method",
+        "offset": 0,
+        "page": 2,
+        "section": "Synthetic source",
+        "text": "Synthetic support for the possible_use_or_impact field, reference 27, under controlled fixture conditions."
+      },
+      {
+        "id": "c0008",
+        "kind": "method",
+        "offset": 0,
+        "page": 2,
+        "section": "Synthetic source",
+        "text": "Uncited synthetic source chunk c0008."
+      },
+      {
+        "id": "c0009",
+        "kind": "method",
+        "offset": 0,
+        "page": 2,
+        "section": "Synthetic source",
+        "text": "Uncited synthetic source chunk c0009."
+      },
+      {
+        "id": "c0010",
+        "kind": "method",
+        "offset": 0,
+        "page": 2,
+        "section": "Synthetic source",
+        "text": "Uncited synthetic source chunk c0010."
+      },
+      {
+        "id": "c0011",
+        "kind": "method",
+        "offset": 0,
+        "page": 2,
+        "section": "Synthetic source",
+        "text": "Uncited synthetic source chunk c0011."
+      },
+      {
+        "id": "c0012",
+        "kind": "method",
+        "offset": 0,
+        "page": 2,
+        "section": "Synthetic source",
+        "text": "Uncited synthetic source chunk c0012."
+      },
+      {
+        "id": "c0013",
+        "kind": "method",
+        "offset": 0,
+        "page": 3,
+        "section": "Synthetic source",
+        "text": "Uncited synthetic source chunk c0013."
+      },
+      {
+        "id": "c0014",
+        "kind": "method",
+        "offset": 0,
+        "page": 3,
+        "section": "Synthetic source",
+        "text": "Uncited synthetic source chunk c0014."
+      },
+      {
+        "id": "c0015",
+        "kind": "method",
+        "offset": 0,
+        "page": 3,
+        "section": "Synthetic source",
+        "text": "Uncited synthetic source chunk c0015."
+      },
+      {
+        "id": "c0016",
+        "kind": "method",
+        "offset": 0,
+        "page": 3,
+        "section": "Synthetic source",
+        "text": "Uncited synthetic source chunk c0016."
+      },
+      {
+        "id": "c0017",
+        "kind": "method",
+        "offset": 0,
+        "page": 3,
+        "section": "Synthetic source",
+        "text": "Uncited synthetic source chunk c0017."
+      },
+      {
+        "id": "c0018",
+        "kind": "method",
+        "offset": 0,
+        "page": 3,
+        "section": "Synthetic source",
+        "text": "Uncited synthetic source chunk c0018."
+      },
+      {
+        "id": "c0019",
+        "kind": "method",
+        "offset": 0,
+        "page": 4,
+        "section": "Synthetic source",
+        "text": "Synthetic support for the method field, reference 3, under controlled fixture conditions.\nSynthetic support for the method field, reference 4, under controlled fixture conditions.\nSynthetic support for the method_steps field, reference 12, under controlled fixture conditions.\nSynthetic support for the method_steps field, reference 13, under controlled fixture conditions."
+      },
+      {
+        "id": "c0020",
+        "kind": "method",
+        "offset": 0,
+        "page": 4,
+        "section": "Synthetic source",
+        "text": "Synthetic support for the method field, reference 5, under controlled fixture conditions.\nSynthetic support for the why_it_works field, reference 8, under controlled fixture conditions.\nSynthetic support for the novelty_or_difference field, reference 10, under controlled fixture conditions.\nSynthetic support for the novelty_or_difference field, reference 11, under controlled fixture conditions.\nSynthetic support for the method_steps field, reference 14, under controlled fixture conditions.\nSynthetic support for the method_steps field, reference 15, under controlled fixture conditions.\nSynthetic support for the technical_route field, reference 20, under controlled fixture conditions.\nSynthetic support for the possible_use_or_impact field, reference 28, under controlled fixture conditions."
+      },
+      {
+        "id": "c0021",
+        "kind": "method",
+        "offset": 0,
+        "page": 5,
+        "section": "Synthetic source",
+        "text": "Uncited synthetic source chunk c0021."
+      },
+      {
+        "id": "c0022",
+        "kind": "method",
+        "offset": 0,
+        "page": 5,
+        "section": "Synthetic source",
+        "text": "Synthetic support for the method field, reference 6, under controlled fixture conditions.\nSynthetic support for the why_it_works field, reference 9, under controlled fixture conditions.\nSynthetic support for the method_steps field, reference 16, under controlled fixture conditions."
+      },
+      {
+        "id": "c0023",
+        "kind": "method",
+        "offset": 0,
+        "page": 5,
+        "section": "Synthetic source",
+        "text": "Uncited synthetic source chunk c0023."
+      },
+      {
+        "id": "c0024",
+        "kind": "method",
+        "offset": 0,
+        "page": 5,
+        "section": "Synthetic source",
+        "text": "Synthetic support for the method field, reference 7, under controlled fixture conditions.\nSynthetic support for the method_steps field, reference 17, under controlled fixture conditions."
+      },
+      {
+        "id": "c0025",
+        "kind": "method",
+        "offset": 0,
+        "page": 6,
+        "section": "Synthetic source",
+        "text": "Uncited synthetic source chunk c0025."
+      },
+      {
+        "id": "c0026",
+        "kind": "method",
+        "offset": 0,
+        "page": 6,
+        "section": "Synthetic source",
+        "text": "Synthetic support for the method_steps field, reference 18, under controlled fixture conditions.\nSynthetic support for the method_steps field, reference 19, under controlled fixture conditions.\nSynthetic support for the technical_route field, reference 21, under controlled fixture conditions.\nSynthetic support for the technical_route field, reference 22, under controlled fixture conditions."
+      },
+      {
+        "id": "c0027",
+        "kind": "method",
+        "offset": 0,
+        "page": 6,
+        "section": "Synthetic source",
+        "text": "Uncited synthetic source chunk c0027."
+      },
+      {
+        "id": "c0028",
+        "kind": "method",
+        "offset": 0,
+        "page": 6,
+        "section": "Synthetic source",
+        "text": "Uncited synthetic source chunk c0028."
+      },
+      {
+        "id": "c0029",
+        "kind": "method",
+        "offset": 0,
+        "page": 7,
+        "section": "Synthetic source",
+        "text": "Synthetic support for the key_result field, reference 32, under controlled fixture conditions.\nSynthetic support for the key_result field, reference 33, under controlled fixture conditions."
+      },
+      {
+        "id": "c0030",
+        "kind": "method",
+        "offset": 0,
+        "page": 7,
+        "section": "Synthetic source",
+        "text": "Uncited synthetic source chunk c0030."
+      },
+      {
+        "id": "c0031",
+        "kind": "method",
+        "offset": 0,
+        "page": 7,
+        "section": "Synthetic source",
+        "text": "Uncited synthetic source chunk c0031."
+      },
+      {
+        "id": "c0032",
+        "kind": "method",
+        "offset": 0,
+        "page": 7,
+        "section": "Synthetic source",
+        "text": "Synthetic support for the limitations field, reference 23, under controlled fixture conditions.\nSynthetic support for the limitations field, reference 24, under controlled fixture conditions."
+      },
+      {
+        "id": "c0033",
+        "kind": "method",
+        "offset": 0,
+        "page": 8,
+        "section": "Synthetic source",
+        "text": "Uncited synthetic source chunk c0033."
+      },
+      {
+        "id": "c0034",
+        "kind": "method",
+        "offset": 0,
+        "page": 8,
+        "section": "Synthetic source",
+        "text": "Uncited synthetic source chunk c0034."
+      },
+      {
+        "id": "c0035",
+        "kind": "method",
+        "offset": 0,
+        "page": 8,
+        "section": "Synthetic source",
+        "text": "Synthetic support for the key_result field, reference 34, under controlled fixture conditions."
+      },
+      {
+        "id": "c0036",
+        "kind": "method",
+        "offset": 0,
+        "page": 9,
+        "section": "Synthetic source",
+        "text": "Uncited synthetic source chunk c0036."
+      },
+      {
+        "id": "c0037",
+        "kind": "method",
+        "offset": 0,
+        "page": 9,
+        "section": "Synthetic source",
+        "text": "Uncited synthetic source chunk c0037."
+      },
+      {
+        "id": "c0038",
+        "kind": "method",
+        "offset": 0,
+        "page": 9,
+        "section": "Synthetic source",
+        "text": "Synthetic support for the limitations field, reference 25, under controlled fixture conditions."
+      },
+      {
+        "id": "c0039",
+        "kind": "method",
+        "offset": 0,
+        "page": 9,
+        "section": "Synthetic source",
+        "text": "Synthetic support for the possible_use_or_impact field, reference 26, under controlled fixture conditions.\nSynthetic support for the key_result field, reference 29, under controlled fixture conditions."
+      },
+      {
+        "id": "c0040",
+        "kind": "method",
+        "offset": 0,
+        "page": 10,
+        "section": "Synthetic source",
+        "text": "Uncited synthetic source chunk c0040."
+      },
+      {
+        "id": "c0041",
+        "kind": "method",
+        "offset": 0,
+        "page": 10,
+        "section": "Synthetic source",
+        "text": "Uncited synthetic source chunk c0041."
+      },
+      {
+        "id": "c0042",
+        "kind": "method",
+        "offset": 0,
+        "page": 10,
+        "section": "Synthetic source",
+        "text": "Uncited synthetic source chunk c0042."
+      },
+      {
+        "id": "c0043",
+        "kind": "method",
+        "offset": 0,
+        "page": 10,
+        "section": "Synthetic source",
+        "text": "Uncited synthetic source chunk c0043."
+      },
+      {
+        "id": "c0044",
+        "kind": "method",
+        "offset": 0,
+        "page": 11,
+        "section": "Synthetic source",
+        "text": "Uncited synthetic source chunk c0044."
+      },
+      {
+        "id": "c0045",
+        "kind": "method",
+        "offset": 0,
+        "page": 12,
+        "section": "Synthetic source",
+        "text": "Uncited synthetic source chunk c0045."
+      },
+      {
+        "id": "c0046",
+        "kind": "method",
+        "offset": 0,
+        "page": 13,
+        "section": "Synthetic source",
+        "text": "Uncited synthetic source chunk c0046."
+      },
+      {
+        "id": "c0047",
+        "kind": "method",
+        "offset": 0,
+        "page": 13,
+        "section": "Synthetic source",
+        "text": "Uncited synthetic source chunk c0047."
+      },
+      {
+        "id": "c0048",
+        "kind": "method",
+        "offset": 0,
+        "page": 14,
+        "section": "Synthetic source",
+        "text": "Uncited synthetic source chunk c0048."
+      },
+      {
+        "id": "c0049",
+        "kind": "method",
+        "offset": 0,
+        "page": 14,
+        "section": "Synthetic source",
+        "text": "Synthetic support for the key_result field, reference 30, under controlled fixture conditions.\nSynthetic support for the key_result field, reference 31, under controlled fixture conditions."
+      },
+      {
+        "id": "c0050",
+        "kind": "method",
+        "offset": 0,
+        "page": 15,
+        "section": "Synthetic source",
+        "text": "Uncited synthetic source chunk c0050."
+      },
+      {
+        "id": "c0051",
+        "kind": "method",
+        "offset": 0,
+        "page": 16,
+        "section": "Synthetic source",
+        "text": "Uncited synthetic source chunk c0051."
+      },
+      {
+        "id": "c0052",
+        "kind": "method",
+        "offset": 0,
+        "page": 17,
+        "section": "Synthetic source",
+        "text": "Uncited synthetic source chunk c0052."
+      },
+      {
+        "id": "c0053",
+        "kind": "method",
+        "offset": 0,
+        "page": 17,
+        "section": "Synthetic source",
+        "text": "Uncited synthetic source chunk c0053."
+      },
+      {
+        "id": "c0054",
+        "kind": "method",
+        "offset": 0,
+        "page": 17,
+        "section": "Synthetic source",
+        "text": "Uncited synthetic source chunk c0054."
+      },
+      {
+        "id": "c0055",
+        "kind": "method",
+        "offset": 0,
+        "page": 17,
+        "section": "Synthetic source",
+        "text": "Uncited synthetic source chunk c0055."
+      },
+      {
+        "id": "c0056",
+        "kind": "method",
+        "offset": 0,
+        "page": 17,
+        "section": "Synthetic source",
+        "text": "Uncited synthetic source chunk c0056."
+      },
+      {
+        "id": "c0057",
+        "kind": "method",
+        "offset": 0,
+        "page": 17,
+        "section": "Synthetic source",
+        "text": "Uncited synthetic source chunk c0057."
+      },
+      {
+        "id": "c0058",
+        "kind": "method",
+        "offset": 0,
+        "page": 17,
+        "section": "Synthetic source",
+        "text": "Uncited synthetic source chunk c0058."
+      },
+      {
+        "id": "c0059",
+        "kind": "method",
+        "offset": 0,
+        "page": 17,
+        "section": "Synthetic source",
+        "text": "Uncited synthetic source chunk c0059."
+      },
+      {
+        "id": "c0060",
+        "kind": "method",
+        "offset": 0,
+        "page": 17,
+        "section": "Synthetic source",
+        "text": "Uncited synthetic source chunk c0060."
+      },
+      {
+        "id": "c0061",
+        "kind": "method",
+        "offset": 0,
+        "page": 18,
+        "section": "Synthetic source",
+        "text": "Uncited synthetic source chunk c0061."
+      },
+      {
+        "id": "c0062",
+        "kind": "method",
+        "offset": 0,
+        "page": 18,
+        "section": "Synthetic source",
+        "text": "Uncited synthetic source chunk c0062."
+      },
+      {
+        "id": "c0063",
+        "kind": "method",
+        "offset": 0,
+        "page": 18,
+        "section": "Synthetic source",
+        "text": "Uncited synthetic source chunk c0063."
+      },
+      {
+        "id": "c0064",
+        "kind": "method",
+        "offset": 0,
+        "page": 18,
+        "section": "Synthetic source",
+        "text": "Uncited synthetic source chunk c0064."
+      },
+      {
+        "id": "c0065",
+        "kind": "method",
+        "offset": 0,
+        "page": 19,
+        "section": "Synthetic source",
+        "text": "Uncited synthetic source chunk c0065."
+      },
+      {
+        "id": "c0066",
+        "kind": "method",
+        "offset": 0,
+        "page": 19,
+        "section": "Synthetic source",
+        "text": "Uncited synthetic source chunk c0066."
+      },
+      {
+        "id": "c0067",
+        "kind": "method",
+        "offset": 0,
+        "page": 20,
+        "section": "Synthetic source",
+        "text": "Uncited synthetic source chunk c0067."
+      },
+      {
+        "id": "c0068",
+        "kind": "method",
+        "offset": 0,
+        "page": 20,
+        "section": "Synthetic source",
+        "text": "Uncited synthetic source chunk c0068."
+      },
+      {
+        "id": "c0069",
+        "kind": "method",
+        "offset": 0,
+        "page": 20,
+        "section": "Synthetic source",
+        "text": "Uncited synthetic source chunk c0069."
+      },
+      {
+        "id": "c0070",
+        "kind": "method",
+        "offset": 0,
+        "page": 20,
+        "section": "Synthetic source",
+        "text": "Uncited synthetic source chunk c0070."
+      },
+      {
+        "id": "c0071",
+        "kind": "method",
+        "offset": 0,
+        "page": 20,
+        "section": "Synthetic source",
+        "text": "Uncited synthetic source chunk c0071."
+      }
+    ],
+    "draft": {
+      "claim_evidence": [
+        {
+          "chunk_id": "c0003",
+          "conditions": "Synthetic controlled example only",
+          "evidence_kind": "simulation",
+          "field": "problem",
+          "quote": "Synthetic support for the problem field, reference 0, under controlled fixture conditions."
+        },
+        {
+          "chunk_id": "c0002",
+          "conditions": "Synthetic controlled example only",
+          "evidence_kind": "simulation",
+          "field": "problem",
+          "quote": "Synthetic support for the problem field, reference 1, under controlled fixture conditions."
+        },
+        {
+          "chunk_id": "c0004",
+          "conditions": "Synthetic controlled example only",
+          "evidence_kind": "simulation",
+          "field": "problem",
+          "quote": "Synthetic support for the problem field, reference 2, under controlled fixture conditions."
+        },
+        {
+          "chunk_id": "c0019",
+          "conditions": "Synthetic controlled example only",
+          "evidence_kind": "simulation",
+          "field": "method",
+          "quote": "Synthetic support for the method field, reference 3, under controlled fixture conditions."
+        },
+        {
+          "chunk_id": "c0019",
+          "conditions": "Synthetic controlled example only",
+          "evidence_kind": "simulation",
+          "field": "method",
+          "quote": "Synthetic support for the method field, reference 4, under controlled fixture conditions."
+        },
+        {
+          "chunk_id": "c0020",
+          "conditions": "Synthetic controlled example only",
+          "evidence_kind": "simulation",
+          "field": "method",
+          "quote": "Synthetic support for the method field, reference 5, under controlled fixture conditions."
+        },
+        {
+          "chunk_id": "c0022",
+          "conditions": "Synthetic controlled example only",
+          "evidence_kind": "simulation",
+          "field": "method",
+          "quote": "Synthetic support for the method field, reference 6, under controlled fixture conditions."
+        },
+        {
+          "chunk_id": "c0024",
+          "conditions": "Synthetic controlled example only",
+          "evidence_kind": "simulation",
+          "field": "method",
+          "quote": "Synthetic support for the method field, reference 7, under controlled fixture conditions."
+        },
+        {
+          "chunk_id": "c0020",
+          "conditions": "Synthetic controlled example only",
+          "evidence_kind": "simulation",
+          "field": "why_it_works",
+          "quote": "Synthetic support for the why_it_works field, reference 8, under controlled fixture conditions."
+        },
+        {
+          "chunk_id": "c0022",
+          "conditions": "Synthetic controlled example only",
+          "evidence_kind": "simulation",
+          "field": "why_it_works",
+          "quote": "Synthetic support for the why_it_works field, reference 9, under controlled fixture conditions."
+        },
+        {
+          "chunk_id": "c0020",
+          "conditions": "Synthetic controlled example only",
+          "evidence_kind": "simulation",
+          "field": "novelty_or_difference",
+          "quote": "Synthetic support for the novelty_or_difference field, reference 10, under controlled fixture conditions."
+        },
+        {
+          "chunk_id": "c0020",
+          "conditions": "Synthetic controlled example only",
+          "evidence_kind": "simulation",
+          "field": "novelty_or_difference",
+          "quote": "Synthetic support for the novelty_or_difference field, reference 11, under controlled fixture conditions."
+        },
+        {
+          "chunk_id": "c0019",
+          "conditions": "Synthetic controlled example only",
+          "evidence_kind": "simulation",
+          "field": "method_steps",
+          "quote": "Synthetic support for the method_steps field, reference 12, under controlled fixture conditions."
+        },
+        {
+          "chunk_id": "c0019",
+          "conditions": "Synthetic controlled example only",
+          "evidence_kind": "simulation",
+          "field": "method_steps",
+          "quote": "Synthetic support for the method_steps field, reference 13, under controlled fixture conditions."
+        },
+        {
+          "chunk_id": "c0020",
+          "conditions": "Synthetic controlled example only",
+          "evidence_kind": "simulation",
+          "field": "method_steps",
+          "quote": "Synthetic support for the method_steps field, reference 14, under controlled fixture conditions."
+        },
+        {
+          "chunk_id": "c0020",
+          "conditions": "Synthetic controlled example only",
+          "evidence_kind": "simulation",
+          "field": "method_steps",
+          "quote": "Synthetic support for the method_steps field, reference 15, under controlled fixture conditions."
+        },
+        {
+          "chunk_id": "c0022",
+          "conditions": "Synthetic controlled example only",
+          "evidence_kind": "simulation",
+          "field": "method_steps",
+          "quote": "Synthetic support for the method_steps field, reference 16, under controlled fixture conditions."
+        },
+        {
+          "chunk_id": "c0024",
+          "conditions": "Synthetic controlled example only",
+          "evidence_kind": "simulation",
+          "field": "method_steps",
+          "quote": "Synthetic support for the method_steps field, reference 17, under controlled fixture conditions."
+        },
+        {
+          "chunk_id": "c0026",
+          "conditions": "Synthetic controlled example only",
+          "evidence_kind": "simulation",
+          "field": "method_steps",
+          "quote": "Synthetic support for the method_steps field, reference 18, under controlled fixture conditions."
+        },
+        {
+          "chunk_id": "c0026",
+          "conditions": "Synthetic controlled example only",
+          "evidence_kind": "simulation",
+          "field": "method_steps",
+          "quote": "Synthetic support for the method_steps field, reference 19, under controlled fixture conditions."
+        },
+        {
+          "chunk_id": "c0020",
+          "conditions": "Synthetic controlled example only",
+          "evidence_kind": "simulation",
+          "field": "technical_route",
+          "quote": "Synthetic support for the technical_route field, reference 20, under controlled fixture conditions."
+        },
+        {
+          "chunk_id": "c0026",
+          "conditions": "Synthetic controlled example only",
+          "evidence_kind": "simulation",
+          "field": "technical_route",
+          "quote": "Synthetic support for the technical_route field, reference 21, under controlled fixture conditions."
+        },
+        {
+          "chunk_id": "c0026",
+          "conditions": "Synthetic controlled example only",
+          "evidence_kind": "simulation",
+          "field": "technical_route",
+          "quote": "Synthetic support for the technical_route field, reference 22, under controlled fixture conditions."
+        },
+        {
+          "chunk_id": "c0032",
+          "conditions": "Synthetic controlled example only",
+          "evidence_kind": "simulation",
+          "field": "limitations",
+          "quote": "Synthetic support for the limitations field, reference 23, under controlled fixture conditions."
+        },
+        {
+          "chunk_id": "c0032",
+          "conditions": "Synthetic controlled example only",
+          "evidence_kind": "simulation",
+          "field": "limitations",
+          "quote": "Synthetic support for the limitations field, reference 24, under controlled fixture conditions."
+        },
+        {
+          "chunk_id": "c0038",
+          "conditions": "Synthetic controlled example only",
+          "evidence_kind": "simulation",
+          "field": "limitations",
+          "quote": "Synthetic support for the limitations field, reference 25, under controlled fixture conditions."
+        },
+        {
+          "chunk_id": "c0039",
+          "conditions": "Synthetic controlled example only",
+          "evidence_kind": "simulation",
+          "field": "possible_use_or_impact",
+          "quote": "Synthetic support for the possible_use_or_impact field, reference 26, under controlled fixture conditions."
+        },
+        {
+          "chunk_id": "c0007",
+          "conditions": "Synthetic controlled example only",
+          "evidence_kind": "simulation",
+          "field": "possible_use_or_impact",
+          "quote": "Synthetic support for the possible_use_or_impact field, reference 27, under controlled fixture conditions."
+        },
+        {
+          "chunk_id": "c0020",
+          "conditions": "Synthetic controlled example only",
+          "evidence_kind": "simulation",
+          "field": "possible_use_or_impact",
+          "quote": "Synthetic support for the possible_use_or_impact field, reference 28, under controlled fixture conditions."
+        },
+        {
+          "chunk_id": "c0039",
+          "conditions": "Synthetic controlled example only",
+          "evidence_kind": "simulation",
+          "field": "key_result",
+          "quote": "Synthetic support for the key_result field, reference 29, under controlled fixture conditions."
+        },
+        {
+          "chunk_id": "c0049",
+          "conditions": "Synthetic controlled example only",
+          "evidence_kind": "simulation",
+          "field": "key_result",
+          "quote": "Synthetic support for the key_result field, reference 30, under controlled fixture conditions."
+        },
+        {
+          "chunk_id": "c0049",
+          "conditions": "Synthetic controlled example only",
+          "evidence_kind": "simulation",
+          "field": "key_result",
+          "quote": "Synthetic support for the key_result field, reference 31, under controlled fixture conditions."
+        },
+        {
+          "chunk_id": "c0029",
+          "conditions": "Synthetic controlled example only",
+          "evidence_kind": "simulation",
+          "field": "key_result",
+          "quote": "Synthetic support for the key_result field, reference 32, under controlled fixture conditions."
+        },
+        {
+          "chunk_id": "c0029",
+          "conditions": "Synthetic controlled example only",
+          "evidence_kind": "simulation",
+          "field": "key_result",
+          "quote": "Synthetic support for the key_result field, reference 33, under controlled fixture conditions."
+        },
+        {
+          "chunk_id": "c0035",
+          "conditions": "Synthetic controlled example only",
+          "evidence_kind": "simulation",
+          "field": "key_result",
+          "quote": "Synthetic support for the key_result field, reference 34, under controlled fixture conditions."
+        }
+      ],
+      "draft_fields": {
+        "confidence": "high",
+        "evidence_from_source": "Synthetic bounded field description.",
+        "key_result": "Synthetic bounded field description.",
+        "limitations": "Synthetic bounded field description.",
+        "method": "Synthetic bounded field description.",
+        "method_steps": [
+          "Synthetic controlled method step."
+        ],
+        "novelty_or_difference": "Synthetic bounded field description.",
+        "possible_use_or_impact": "Synthetic bounded field description.",
+        "problem": "Synthetic bounded field description.",
+        "technical_route": "Synthetic bounded field description.",
+        "why_it_works": "Synthetic bounded field description."
+      },
+      "evidence_used": [],
+      "key": "fixture:synthetic-rewrite",
+      "writer_notes": []
+    },
+    "read_chunk_ids": [
+      "c0001",
+      "c0002",
+      "c0003",
+      "c0004",
+      "c0005",
+      "c0006",
+      "c0007",
+      "c0008",
+      "c0009",
+      "c0010",
+      "c0011",
+      "c0012",
+      "c0013",
+      "c0014",
+      "c0015",
+      "c0016",
+      "c0017",
+      "c0018",
+      "c0019",
+      "c0020",
+      "c0021",
+      "c0022",
+      "c0023",
+      "c0024",
+      "c0025",
+      "c0026",
+      "c0027",
+      "c0028",
+      "c0029",
+      "c0030",
+      "c0031",
+      "c0032",
+      "c0033",
+      "c0034",
+      "c0035",
+      "c0036",
+      "c0037",
+      "c0038",
+      "c0039",
+      "c0040",
+      "c0041",
+      "c0042",
+      "c0043",
+      "c0044",
+      "c0045",
+      "c0046",
+      "c0047",
+      "c0048",
+      "c0049",
+      "c0050",
+      "c0051",
+      "c0052",
+      "c0053",
+      "c0054",
+      "c0055",
+      "c0056",
+      "c0057",
+      "c0058",
+      "c0059",
+      "c0060",
+      "c0061",
+      "c0062",
+      "c0063",
+      "c0064",
+      "c0065",
+      "c0066",
+      "c0067",
+      "c0068",
+      "c0069",
+      "c0070",
+      "c0071"
+    ]
+  },
+  "scientific": {
+    "analysis": {
+      "paragraphs": [
+        {
+          "claims": [
+            {
+              "evidence": [
+                {
+                  "chunk_id": "c0003",
+                  "conditions": "Synthetic controlled example only",
+                  "evidence_kind": "simulation",
+                  "quote": "Synthetic evidence for insight claim A reference A supports only the controlled fixture."
+                },
+                {
+                  "chunk_id": "c0012",
+                  "conditions": "Synthetic controlled example only",
+                  "evidence_kind": "simulation",
+                  "quote": "Synthetic evidence for insight claim A reference B supports only the controlled fixture."
+                }
+              ],
+              "facets": [
+                "precise_problem",
+                "bottleneck"
+              ],
+              "id": "synthetic_interface_question",
+              "kind": "interpretation",
+              "text": "Synthetic bounded interpretation of a controlled fixture."
+            },
+            {
+              "evidence": [
+                {
+                  "chunk_id": "c0021",
+                  "conditions": "Synthetic controlled example only",
+                  "evidence_kind": "simulation",
+                  "quote": "Synthetic evidence for insight claim B reference A supports only the controlled fixture."
+                },
+                {
+                  "chunk_id": "c0020",
+                  "conditions": "Synthetic controlled example only",
+                  "evidence_kind": "simulation",
+                  "quote": "Synthetic evidence for insight claim B reference B supports only the controlled fixture."
+                },
+                {
+                  "chunk_id": "c0012",
+                  "conditions": "Synthetic controlled example only",
+                  "evidence_kind": "simulation",
+                  "quote": "Synthetic evidence for insight claim B reference C supports only the controlled fixture."
+                }
+              ],
+              "facets": [
+                "valuable_insight",
+                "minimal_idea"
+              ],
+              "id": "synthetic_interface_insight",
+              "kind": "interpretation",
+              "text": "Synthetic bounded interpretation of a controlled fixture."
+            }
+          ],
+          "id": "insight"
+        },
+        {
+          "claims": [
+            {
+              "evidence": [
+                {
+                  "chunk_id": "c0048",
+                  "conditions": "Synthetic controlled example only",
+                  "evidence_kind": "simulation",
+                  "quote": "Synthetic evidence for explanation claim A reference A supports only the controlled fixture."
+                },
+                {
+                  "chunk_id": "c0048",
+                  "conditions": "Synthetic controlled example only",
+                  "evidence_kind": "simulation",
+                  "quote": "Synthetic evidence for explanation claim A reference B supports only the controlled fixture."
+                }
+              ],
+              "facets": [
+                "complexity"
+              ],
+              "id": "synthetic_complexity",
+              "kind": "interpretation",
+              "text": "Synthetic bounded interpretation of a controlled fixture."
+            },
+            {
+              "evidence": [
+                {
+                  "chunk_id": "c0044",
+                  "conditions": "Synthetic controlled example only",
+                  "evidence_kind": "simulation",
+                  "quote": "Synthetic evidence for explanation claim B reference A supports only the controlled fixture."
+                },
+                {
+                  "chunk_id": "c0045",
+                  "conditions": "Synthetic controlled example only",
+                  "evidence_kind": "simulation",
+                  "quote": "Synthetic evidence for explanation claim B reference B supports only the controlled fixture."
+                },
+                {
+                  "chunk_id": "c0048",
+                  "conditions": "Synthetic controlled example only",
+                  "evidence_kind": "simulation",
+                  "quote": "Synthetic evidence for explanation claim B reference C supports only the controlled fixture."
+                }
+              ],
+              "facets": [
+                "decisive_evidence"
+              ],
+              "id": "synthetic_decisive_values",
+              "kind": "author_claim",
+              "text": "Synthetic bounded interpretation of a controlled fixture."
+            },
+            {
+              "evidence": [
+                {
+                  "chunk_id": "c0044",
+                  "conditions": "Synthetic controlled example only",
+                  "evidence_kind": "simulation",
+                  "quote": "Synthetic evidence for explanation claim C reference A supports only the controlled fixture."
+                },
+                {
+                  "chunk_id": "c0045",
+                  "conditions": "Synthetic controlled example only",
+                  "evidence_kind": "simulation",
+                  "quote": "Synthetic evidence for explanation claim C reference B supports only the controlled fixture."
+                }
+              ],
+              "facets": [
+                "complexity",
+                "valuable_insight"
+              ],
+              "id": "synthetic_component_interaction",
+              "kind": "interpretation",
+              "text": "Synthetic bounded interpretation of a controlled fixture. The test horizon is 3s."
+            }
+          ],
+          "id": "explanation"
+        },
+        {
+          "claims": [
+            {
+              "evidence": [
+                {
+                  "chunk_id": "c0012",
+                  "conditions": "Synthetic controlled example only",
+                  "evidence_kind": "simulation",
+                  "quote": "Synthetic evidence for argument claim A reference A supports only the controlled fixture."
+                },
+                {
+                  "chunk_id": "c0048",
+                  "conditions": "Synthetic controlled example only",
+                  "evidence_kind": "simulation",
+                  "quote": "Synthetic evidence for argument claim A reference B supports only the controlled fixture."
+                },
+                {
+                  "chunk_id": "c0049",
+                  "conditions": "Synthetic controlled example only",
+                  "evidence_kind": "simulation",
+                  "quote": "Synthetic evidence for argument claim A reference C supports only the controlled fixture."
+                }
+              ],
+              "facets": [
+                "narrative"
+              ],
+              "id": "synthetic_paper_narrative",
+              "kind": "interpretation",
+              "text": "Synthetic bounded interpretation of a controlled fixture."
+            },
+            {
+              "evidence": [
+                {
+                  "chunk_id": "c0043",
+                  "conditions": "Synthetic controlled example only",
+                  "evidence_kind": "simulation",
+                  "quote": "Synthetic evidence for argument claim B reference A supports only the controlled fixture."
+                },
+                {
+                  "chunk_id": "c0043",
+                  "conditions": "Synthetic controlled example only",
+                  "evidence_kind": "simulation",
+                  "quote": "Synthetic evidence for argument claim B reference B supports only the controlled fixture."
+                }
+              ],
+              "facets": [
+                "unresolved"
+              ],
+              "id": "synthetic_scope_boundary",
+              "kind": "interpretation",
+              "text": "Synthetic bounded interpretation of a controlled fixture."
+            },
+            {
+              "evidence": [
+                {
+                  "chunk_id": "c0020",
+                  "conditions": "Synthetic controlled example only",
+                  "evidence_kind": "simulation",
+                  "quote": "Synthetic evidence for argument claim C reference A supports only the controlled fixture."
+                },
+                {
+                  "chunk_id": "c0044",
+                  "conditions": "Synthetic controlled example only",
+                  "evidence_kind": "simulation",
+                  "quote": "Synthetic evidence for argument claim C reference B supports only the controlled fixture."
+                },
+                {
+                  "chunk_id": "c0049",
+                  "conditions": "Synthetic controlled example only",
+                  "evidence_kind": "simulation",
+                  "quote": "Synthetic evidence for argument claim C reference C supports only the controlled fixture."
+                }
+              ],
+              "facets": [
+                "unresolved"
+              ],
+              "id": "synthetic_next_question",
+              "kind": "unresolved",
+              "text": "Synthetic bounded interpretation of a controlled fixture."
+            }
+          ],
+          "id": "argument"
+        }
+      ],
+      "schema_version": 1
+    },
+    "chunks": [
+      {
+        "id": "c0003",
+        "kind": "method",
+        "offset": 0,
+        "page": 1,
+        "section": "Synthetic source",
+        "text": "Synthetic evidence for insight claim A reference A supports only the controlled fixture."
+      },
+      {
+        "id": "c0012",
+        "kind": "method",
+        "offset": 0,
+        "page": 3,
+        "section": "Synthetic source",
+        "text": "Synthetic evidence for insight claim A reference B supports only the controlled fixture.\nSynthetic evidence for insight claim B reference C supports only the controlled fixture.\nSynthetic evidence for argument claim A reference A supports only the controlled fixture."
+      },
+      {
+        "id": "c0020",
+        "kind": "method",
+        "offset": 0,
+        "page": 4,
+        "section": "Synthetic source",
+        "text": "Synthetic evidence for insight claim B reference B supports only the controlled fixture.\nSynthetic evidence for argument claim C reference A supports only the controlled fixture."
+      },
+      {
+        "id": "c0021",
+        "kind": "method",
+        "offset": 0,
+        "page": 4,
+        "section": "Synthetic source",
+        "text": "Synthetic evidence for insight claim B reference A supports only the controlled fixture."
+      },
+      {
+        "id": "c0043",
+        "kind": "method",
+        "offset": 0,
+        "page": 7,
+        "section": "Synthetic source",
+        "text": "Synthetic evidence for argument claim B reference A supports only the controlled fixture.\nSynthetic evidence for argument claim B reference B supports only the controlled fixture."
+      },
+      {
+        "id": "c0044",
+        "kind": "method",
+        "offset": 0,
+        "page": 8,
+        "section": "Synthetic source",
+        "text": "Synthetic evidence for explanation claim B reference A supports only the controlled fixture.\nSynthetic evidence for explanation claim C reference A supports only the controlled fixture.\nSynthetic evidence for argument claim C reference B supports only the controlled fixture."
+      },
+      {
+        "id": "c0045",
+        "kind": "method",
+        "offset": 0,
+        "page": 8,
+        "section": "Synthetic source",
+        "text": "Synthetic evidence for explanation claim B reference B supports only the controlled fixture.\nSynthetic evidence for explanation claim C reference B supports only the controlled fixture."
+      },
+      {
+        "id": "c0048",
+        "kind": "method",
+        "offset": 0,
+        "page": 8,
+        "section": "Synthetic source",
+        "text": "Synthetic evidence for explanation claim A reference A supports only the controlled fixture.\nSynthetic evidence for explanation claim A reference B supports only the controlled fixture.\nSynthetic evidence for explanation claim B reference C supports only the controlled fixture.\nSynthetic evidence for argument claim A reference B supports only the controlled fixture."
+      },
+      {
+        "id": "c0049",
+        "kind": "method",
+        "offset": 0,
+        "page": 8,
+        "section": "Synthetic source",
+        "text": "Synthetic evidence for argument claim A reference C supports only the controlled fixture.\nSynthetic evidence for argument claim C reference C supports only the controlled fixture."
+      }
+    ],
+    "read_chunk_ids": [
+      "c0001",
+      "c0002",
+      "c0003",
+      "c0004",
+      "c0005",
+      "c0006",
+      "c0007",
+      "c0008",
+      "c0009",
+      "c0010",
+      "c0011",
+      "c0012",
+      "c0013",
+      "c0014",
+      "c0015",
+      "c0016",
+      "c0017",
+      "c0018",
+      "c0019",
+      "c0020",
+      "c0021",
+      "c0022",
+      "c0023",
+      "c0024",
+      "c0025",
+      "c0026",
+      "c0027",
+      "c0028",
+      "c0029",
+      "c0030",
+      "c0031",
+      "c0032",
+      "c0033",
+      "c0034",
+      "c0035",
+      "c0036",
+      "c0037",
+      "c0038",
+      "c0039",
+      "c0040",
+      "c0041",
+      "c0042",
+      "c0043",
+      "c0044",
+      "c0045",
+      "c0046",
+      "c0047",
+      "c0048",
+      "c0049",
+      "c0050",
+      "c0051",
+      "c0052",
+      "c0053",
+      "c0054",
+      "c0055",
+      "c0056",
+      "c0057",
+      "c0058",
+      "c0059",
+      "c0060",
+      "c0061",
+      "c0062",
+      "c0063",
+      "c0064",
+      "c0065",
+      "c0066",
+      "c0067"
+    ]
+  }
+}

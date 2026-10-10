@@ -22,6 +22,40 @@ PRIMARY_HOSTS = ("arxiv.org", "proceedings.mlr.press", "openreview.net", "nature
                  "science.org", "acm.org", "ieee.org", "springer.com", "springeropen.com",
                  "sciencedirect.com", "cell.com", "neurips.cc", "aps.org", "quantum-journal.org")
 
+# Only these program-generated notices may reach a reader. Model-authored
+# "uncertainties" can contain positive claims and are audit data, not evidence.
+AUTHOR_CONTEXT_NOTICES = frozenset({
+    "本批作者/课题组研究预算不足，待后续核实",
+    "部分作者/课题组证据未通过独立核验，未采用",
+    "作者/课题组扩展研究尚未完成独立核验，保留已有来源与不确定性",
+    "作者/课题组提议来源均未通过证据校验，未进入独立核验",
+    "作者/课题组研究未提供可核验证据，保留已有来源与未知项",
+    "作者/机构/课题组仍有未核实事项；仅采用通过核验的结构化证据",
+    "部分作者的 ORCID 存在冲突，需人工核对",
+})
+
+
+def safe_author_uncertainties(context):
+    """Derive unknowns from structured context, never relay unbound prose.
+
+    This is also a rendering boundary for stored contexts from older runs. Raw
+    proposal/reviewer observations remain in author_research_evidence for audit.
+    """
+    authors = [a for a in context.get("authors", []) or [] if isinstance(a, dict)]
+    notices = []
+    if not authors:
+        notices.append("作者名单尚未核实")
+    if not any(a.get("status") == "verified_primary" and
+               "corresponding_author" in a.get("roles", []) for a in authors):
+        notices.append("通讯作者尚未核实；不按末位作者推定")
+    if not any(isinstance(i, dict) and i.get("status") == "verified_primary" for i in context.get("institutions", []) or []):
+        notices.append("机构归属尚未核实")
+    if not any(isinstance(g, dict) and g.get("status") == "verified_official" for g in context.get("labs", []) or []):
+        notices.append("具体课题组尚未核实；机构相同不等于同一课题组")
+    notices.extend(value for value in context.get("uncertainties", []) or []
+                   if isinstance(value, str) and value in AUTHOR_CONTEXT_NOTICES)
+    return list(dict.fromkeys(notices))
+
 
 def _norm(value):
     return re.sub(r"[^\w]", "", str(value).casefold())
@@ -154,7 +188,7 @@ def build_author_context(item, evidence_sources=(), checked_at=None):
                 continue
             # Name conflicts with an existing stable identifier do not merge.
             if a.get("orcid") and row.get("orcid") and a["orcid"] != row["orcid"]:
-                context["uncertainties"].append(f"{a['name']} 的 ORCID 冲突，需人工核对")
+                context["uncertainties"].append("部分作者的 ORCID 存在冲突，需人工核对")
                 continue
             a["status"] = "verified_primary"
             if row.get("orcid"):
@@ -198,6 +232,7 @@ def build_author_context(item, evidence_sources=(), checked_at=None):
         context["uncertainties"].append("机构归属尚未核实")
     if not context["labs"]:
         context["uncertainties"].append("具体课题组尚未核实；机构相同不等于同一课题组")
+    context["uncertainties"] = safe_author_uncertainties(context)
     return context
 
 
@@ -335,8 +370,8 @@ def research_context_lines(context):
     """Renderer-neutral short Markdown lines; never suppress unknown provenance."""
     lines = []
     authors = context.get("authors", [])
-    first = [a["name"] for a in authors if "first_author" in a.get("roles", [])]
-    corresponding = [a["name"] for a in authors if "corresponding_author" in a.get("roles", [])]
+    first = [a["name"] for a in authors if a.get("status") == "verified_primary" and "first_author" in a.get("roles", [])]
+    corresponding = [a["name"] for a in authors if a.get("status") == "verified_primary" and "corresponding_author" in a.get("roles", [])]
     if authors:
         lines.append("作者：" + "、".join(a["name"] + ("（元数据，未独立核实）" if a.get("status") != "verified_primary" else "") for a in authors))
     if first:
@@ -360,7 +395,7 @@ def research_context_lines(context):
         lines.append("作者核验来源：" + "；".join(
             f"[{('论文第 ' + str(ev['page']) + ' 页') if ev.get('page') else '官方元数据'}]({url})（{ev['checked_at'][:10]} 核验）"
             for url, ev in list(provenance.items())[:3]))
-    lines.extend(context.get("uncertainties", []))
+    lines.extend(safe_author_uncertainties(context))
     return lines
 
 

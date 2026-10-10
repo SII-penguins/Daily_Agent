@@ -1,0 +1,208 @@
+{
+  "description": "Synthetic author-evidence rejection and unbound-prose regression cases.",
+  "papers": [
+    {
+      "authors": [
+        "Alice Example",
+        "Bob Example"
+      ],
+      "doi": null,
+      "expected_rejection": "source_size_limit",
+      "key": "pmlr:synthetic-author-1",
+      "paper_document": {
+        "content_hash": "8764438eac5b5f1b10a4a1acfc61a7291fac29b0702a52da7fdc77090f80c99d",
+        "pages": [
+          {
+            "page": 1,
+            "text": "Synthetic Author Evidence 1\nAlice Example, Bob Example\nCorrespondence to: Bob Example\nExample Institute"
+          }
+        ],
+        "source_type": "pdf",
+        "source_url": "https://example.org/fixtures/author-1.pdf",
+        "title_match": true
+      },
+      "proposed": {
+        "papers": [
+          {
+            "key": "pmlr:synthetic-author-1",
+            "sources": [
+              {
+                "author_order_complete": true,
+                "authors": [
+                  {
+                    "institutions": [],
+                    "name": "Alice Example"
+                  },
+                  {
+                    "institutions": [],
+                    "name": "Bob Example"
+                  }
+                ],
+                "checked_at": "2000-01-01",
+                "claims": [
+                  {
+                    "kind": "author",
+                    "quote": "Alice Example",
+                    "subject": "Alice Example"
+                  },
+                  {
+                    "kind": "author",
+                    "quote": "Bob Example",
+                    "subject": "Bob Example"
+                  }
+                ],
+                "excerpt": "Synthetic Author Evidence 1\nAlice Example, Bob Example\nCorrespondence to: Bob Example\nExample Institute",
+                "padding": "Synthetic padding. Synthetic padding. Synthetic padding. Synthetic padding. Synthetic padding. Synthetic padding. Synthetic padding. Synthetic padding. Synthetic padding. Synthetic padding. Synthetic padding. Synthetic padding. Synthetic padding. Synthetic padding. Synthetic padding. Synthetic padding. Synthetic padding. Synthetic padding. Synthetic padding. Synthetic padding. Synthetic padding. Synthetic padding. Synthetic padding. Synthetic padding. Synthetic padding. Synthetic padding. Synthetic padding. Synthetic padding. Synthetic padding. Synthetic padding. Synthetic padding. Synthetic padding. Synthetic padding. Synthetic padding. Synthetic padding. Synthetic padding. Synthetic padding. Synthetic padding. Synthetic padding. Synthetic padding. Synthetic padding. Synthetic padding. Synthetic padding. Synthetic padding. Synthetic padding. Synthetic padding. Synthetic padding. Synthetic padding. Synthetic padding. Synthetic padding. Synthetic padding. Synthetic padding. Synthetic padding. Synthetic padding. Synthetic padding. Synthetic padding. Synthetic padding. Synthetic padding. Synthetic padding. Synthetic padding. Synthetic padding. Synthetic padding. Synthetic padding. Synthetic padding. Synthetic padding. Synthetic padding. Synthetic padding. Synthetic padding. Synthetic padding. Synthetic padding. Synthetic padding. Synthetic padding. Synthetic padding. Synthetic padding. Synthetic padding. Synthetic padding. Synthetic padding. Synthetic padding. Synthetic padding. Synthetic padding. Synthetic padding. Synthetic padding. Synthetic padding. Synthetic padding. Synthetic padding. Synthetic padding. Synthetic padding. Synthetic padding. Synthetic padding. Synthetic padding. Synthetic padding. Synthetic padding. Synthetic padding. Synthetic padding. Synthetic padding. Synthetic padding. Synthetic padding. Synthetic padding. Synthetic padding. Synthetic padding. Synthetic padding. Synthetic padding. Synthetic padding. Synthetic padding. Synthetic padding. Synthetic padding. Synthetic padding. Synthetic padding. Synthetic padding. Synthetic padding. Synthetic padding. Synthetic padding. Synthetic padding. Synthetic padding. Synthetic padding. Synthetic padding. Synthetic padding. Synthetic padding. Synthetic padding. Synthetic padding. Synthetic padding. Synthetic padding. Synthetic padding. Synthetic padding. Synthetic padding. Synthetic padding. Synthetic padding. Synthetic padding. Synthetic padding. Synthetic padding. Synthetic padding. Synthetic padding. Synthetic padding. Synthetic padding. Synthetic padding. Synthetic padding. Synthetic padding. Synthetic padding. Synthetic padding. Synthetic padding. Synthetic padding. Synthetic padding. Synthetic padding. Synthetic padding. Synthetic padding. Synthetic padding. Synthetic padding. Synthetic padding. Synthetic padding. Synthetic padding. Synthetic padding. Synthetic padding. Synthetic padding. Synthetic padding. Synthetic padding. Synthetic padding. Synthetic padding. Synthetic padding. Synthetic padding. Synthetic padding. Synthetic padding. Synthetic padding. Synthetic padding. Synthetic padding. Synthetic padding. Synthetic padding. Synthetic padding. Synthetic padding. Synthetic padding. Synthetic padding. Synthetic padding. Synthetic padding. Synthetic padding. Synthetic padding. Synthetic padding. Synthetic padding. Synthetic padding. Synthetic padding. Synthetic padding. Synthetic padding. Synthetic padding. Synthetic padding. Synthetic padding. Synthetic padding. Synthetic padding. Synthetic padding. Synthetic padding. Synthetic padding. Synthetic padding. Synthetic padding. Synthetic padding. Synthetic padding. Synthetic padding. Synthetic padding. Synthetic padding. Synthetic padding. Synthetic padding. Synthetic padding. Synthetic padding. Synthetic padding. Synthetic padding. Synthetic padding. Synthetic padding. Synthetic padding. Synthetic padding. Synthetic padding. Synthetic padding. Synthetic padding. Synthetic padding. Synthetic padding. Synthetic padding. Synthetic padding. Synthetic padding. Synthetic padding. Synthetic padding. Synthetic padding. Synthetic padding. Synthetic padding. Synthetic padding. Synthetic padding. Synthetic padding. Synthetic padding. Synthetic padding. Synthetic padding. Synthetic padding. Synthetic padding. Synthetic padding. Synthetic padding. Synthetic padding. Synthetic padding. Synthetic padding. Synthetic padding. Synthetic padding. Synthetic padding. Synthetic padding. Synthetic padding. Synthetic padding. Synthetic padding. Synthetic padding. Synthetic padding. Synthetic padding. Synthetic padding. Synthetic padding. Synthetic padding. Synthetic padding. Synthetic padding. Synthetic padding. Synthetic padding. Synthetic padding. Synthetic padding. Synthetic padding. Synthetic padding. Synthetic padding. Synthetic padding. Synthetic padding. Synthetic padding. Synthetic padding. Synthetic padding. Synthetic padding. Synthetic padding. Synthetic padding. Synthetic padding. Synthetic padding. Synthetic padding. Synthetic padding. Synthetic padding. Synthetic padding. Synthetic padding. Synthetic padding. Synthetic padding. Synthetic padding. Synthetic padding. Synthetic padding. Synthetic padding. Synthetic padding. Synthetic padding. Synthetic padding. Synthetic padding. Synthetic padding. Synthetic padding. Synthetic padding. Synthetic padding. Synthetic padding. Synthetic padding. Synthetic padding. Synthetic padding. Synthetic padding. Synthetic padding. Synthetic padding. Synthetic padding. Synthetic padding. Synthetic padding. Synthetic padding. Synthetic padding. Synthetic padding. Synthetic padding. Synthetic padding. Synthetic padding. Synthetic padding. Synthetic padding. ",
+                "page": 1,
+                "review_status": "verified",
+                "source_kind": "paper_pdf",
+                "source_url": "https://example.org/fixtures/author-1.pdf",
+                "title": "Synthetic Author Evidence 1"
+              }
+            ],
+            "uncertainties": []
+          }
+        ]
+      },
+      "retained_context": {
+        "authors": [
+          {
+            "evidence": [],
+            "institutions": [],
+            "name": "Alice Example",
+            "position": 1,
+            "roles": [],
+            "status": "source_metadata"
+          },
+          {
+            "evidence": [],
+            "institutions": [],
+            "name": "Bob Example",
+            "position": 2,
+            "roles": [],
+            "status": "source_metadata"
+          }
+        ],
+        "checked_at": "2000-01-01T00:00:00Z",
+        "institutions": [],
+        "labs": [],
+        "research_lines": [],
+        "schema_version": 1,
+        "uncertainties": [
+          "Synthetic unverified claim: Example Hidden Lab and Fictional Research Group affiliations are confirmed. Project lead is asserted without evidence."
+        ]
+      },
+      "review": {
+        "approved_source_hashes": [],
+        "input_sha256": "b3b85316367b76299160ba1152d487befc5eca13cd8bb1977242c294568b8acc",
+        "uncertainties": {
+          "pmlr:synthetic-author-1": [
+            "Synthetic unverified claim: Example Hidden Lab and Fictional Research Group affiliations are confirmed. Project lead is asserted without evidence."
+          ]
+        }
+      },
+      "title": "Synthetic Author Evidence 1"
+    },
+    {
+      "authors": [
+        "Alice Example",
+        "Bob Example"
+      ],
+      "doi": null,
+      "expected_rejection": "noncontiguous_frozen_excerpt",
+      "key": "pmlr:synthetic-author-2",
+      "paper_document": {
+        "content_hash": "bf9a18d022e26306a502841877919bd7bfbc09911cd5489c8edcf472411c6f70",
+        "pages": [
+          {
+            "page": 1,
+            "text": "Synthetic Author Evidence 2\nAlice Example, Bob Example\nCorrespondence to: Bob Example\nExample Institute"
+          }
+        ],
+        "source_type": "pdf",
+        "source_url": "https://example.org/fixtures/author-2.pdf",
+        "title_match": true
+      },
+      "proposed": {
+        "papers": [
+          {
+            "key": "pmlr:synthetic-author-2",
+            "sources": [
+              {
+                "author_order_complete": true,
+                "authors": [
+                  {
+                    "institutions": [],
+                    "name": "Alice Example"
+                  },
+                  {
+                    "institutions": [],
+                    "name": "Bob Example"
+                  }
+                ],
+                "checked_at": "2000-01-01",
+                "claims": [
+                  {
+                    "kind": "author",
+                    "quote": "Alice Example",
+                    "subject": "Alice Example"
+                  },
+                  {
+                    "kind": "author",
+                    "quote": "Bob Example",
+                    "subject": "Bob Example"
+                  }
+                ],
+                "excerpt": "Alice Example Correspondence to: Bob Example",
+                "page": 1,
+                "review_status": "verified",
+                "source_kind": "paper_pdf",
+                "source_url": "https://example.org/fixtures/author-2.pdf",
+                "title": "Synthetic Author Evidence 2"
+              }
+            ],
+            "uncertainties": []
+          }
+        ]
+      },
+      "retained_context": {
+        "authors": [
+          {
+            "evidence": [],
+            "institutions": [],
+            "name": "Alice Example",
+            "position": 1,
+            "roles": [],
+            "status": "source_metadata"
+          },
+          {
+            "evidence": [],
+            "institutions": [],
+            "name": "Bob Example",
+            "position": 2,
+            "roles": [],
+            "status": "source_metadata"
+          }
+        ],
+        "checked_at": "2000-01-01T00:00:00Z",
+        "institutions": [],
+        "labs": [],
+        "research_lines": [],
+        "schema_version": 1,
+        "uncertainties": [
+          "Synthetic unverified claim: Example Hidden Lab and Fictional Research Group affiliations are confirmed. Project lead is asserted without evidence."
+        ]
+      },
+      "review": {
+        "approved_source_hashes": [],
+        "input_sha256": "c6b6f9e82eb431c4720a666c31ce2ba6f3de33304b143eee8a668d78d191c98e",
+        "uncertainties": {
+          "pmlr:synthetic-author-2": [
+            "Synthetic unverified claim: Example Hidden Lab and Fictional Research Group affiliations are confirmed. Project lead is asserted without evidence."
+          ]
+        }
+      },
+      "title": "Synthetic Author Evidence 2"
+    }
+  ]
+}
