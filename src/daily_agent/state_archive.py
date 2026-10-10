@@ -55,13 +55,16 @@ def snapshot(root,output):
         for lock in sorted(root.rglob('*.lock')):
             if lock not in held:
                 stack.enter_context(exclusive_lock(lock))
-        from daily_agent.durable_recovery import retired_evidence, active_state_record
+        from daily_agent.durable_recovery import retired_evidence, active_state_record, state_record_value, RecoveryBlocked
         retired = retired_evidence(root)
         for path in sorted(root.rglob('*.json')):
             if str(path) in retired:continue
             # The write-ahead intent is precisely what this snapshot must save.
             if path.name == '.daily-agent-boundary.json':continue
-            value=read_json(path)
+            try:
+                value=state_record_value(root,path)
+            except RecoveryBlocked as exc:
+                raise StateCorrupt(str(exc)) from exc
             if active_state_record(path,value):
                 raise StateCorrupt('Active revision/controller cannot be snapshotted; settle or reconcile ownership first')
         files=_files(root);sizes=sum(path.stat().st_size for path in files)
