@@ -89,6 +89,13 @@ def load_config(root: str | Path | None = None) -> AppConfig:
 
     interests = _load_yaml(interests_path)
     sources = _load_yaml(sources_path)
+    source_policy = (sources.get('reading', {}) or {}).get('source_evidence_policy', 'strict_fidelity_v1')
+    if source_policy not in {'strict_fidelity_v1', 'native_claim_evidence_v1'}:
+        raise ValueError('Unknown source evidence policy')
+    if source_policy == 'native_claim_evidence_v1':
+        if sources['reading'].get('require_scientific_analysis', True) is not True:
+            raise ValueError('Native daily selection requires scientific analysis')
+        sources['reading']['require_scientific_analysis'] = True
     delivery = _load_yaml(delivery_path)
     feedback = _load_yaml(feedback_path)
     query_expansion = sources.get("query_expansion", {}) or {}

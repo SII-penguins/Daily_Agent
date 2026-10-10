@@ -66,7 +66,7 @@ def run(root,day):
     drafts=draft_report_items(cfg,records,use_llm=True)
     reviews=review_draft(cfg,drafts,use_llm=True)
     approved=approve_publication(cfg,records,drafts,reviews)
-    from daily_agent.reading import audit_reading
+    from daily_agent.source_evidence_policy import audit_reading
     from daily_agent.storage import write_editorial_artifacts,write_daily_report,write_run_log
     from daily_agent.rendering.markdown import render_daily_markdown
     status=RunStatus(sources=[SourceStatus(name='PMLR official pilot snapshot',ok=True,item_count=1),

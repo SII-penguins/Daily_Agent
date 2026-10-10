@@ -5,11 +5,12 @@ from datetime import date
 
 from daily_agent.insights import build_daily_insights
 from daily_agent.rendering.composition import featured_keys, introduction, paper_paragraphs
-from daily_agent.rendering.notes import reading_label, card_gaps, must_read, result_conditions
+from daily_agent.rendering.notes import reading_label, card_gaps, must_read, result_conditions, assert_native_renderable
 from daily_agent.models import ApprovedItem, RunStatus
 
 
 def render_daily_markdown(items: list[ApprovedItem], run_date: date, status: RunStatus, insight_config: dict | None = None, writing_config: dict | None = None) -> str:
+    assert_native_renderable(items)
     lines: list[str] = [f"# Daily Agent 日报｜{run_date.isoformat()}", ""]
     lines.extend([introduction(items, writing_config), ""])
     ranks = {item.key: index for index, item in enumerate(items, start=1)}
@@ -51,6 +52,7 @@ def _insights_enabled_for_report(insight_config: dict | None) -> bool:
 
 
 def _render_papers(items: list[ApprovedItem], ranks: dict[str, int], run_date: date, writing_config: dict | None = None) -> list[str]:
+    assert_native_renderable(items)
     lines = ["## 最新论文", ""]
     if not items:
         return lines + ["今日未筛选出论文条目。", ""]

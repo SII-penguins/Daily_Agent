@@ -100,6 +100,7 @@ The default schedule intent is **00:10 generation → 05:30 review/recovery → 
 - [Scientific analysis](docs/scientific-analysis.md) · [Original figures/tables](docs/ORIGINAL_SCIENTIFIC_ASSETS.md) · [Author/group evidence](docs/author-research-context.md)
 - [HTML reader and dated archive](docs/html-report-ui.md)
 - [Workflow recovery](docs/workflow-recovery.md) · [Delivery audit](docs/cloud-delivery-audit.md)
+- [GitHub source/artifact branches and restore](docs/github-persistence.md) · [Restart-safe private state](docs/durable-recovery.md)
 - [Reading validation](scripts/VALIDATE_READING.md) · [Writing validation](scripts/VALIDATE_WRITING.md)
 - [Change and validation history](docs/CHANGELOG.md)
 
@@ -113,9 +114,11 @@ scripts/           Evidence and writing validation utilities
 docs/              Guides, technical contracts and dated validation records
 ```
 
+Code and workflow changes belong on `main`; accepted public-safe HTML editions and assets belong on the separate `daily-artifacts` branch. Branches inherit this repository’s public visibility. Complete private runtime snapshots and verified recovery receipts remain outside GitHub. See [persistence and restore](docs/github-persistence.md).
+
 Runtime `data/`, `reports/`, `logs/` and `tmp/` are ignored by Git. They are not automatically backed up; preserve mutable state separately from source code. Local feedback listens on `127.0.0.1`. Private archive access and publication are deployment responsibilities, not guarantees provided by static HTML. Respect source access restrictions; missing evidence stays visible.
 
-As of the [8 October 2026 checkpoint](docs/CHANGELOG.md#2026-10-08), the corrected isolated Site-link pilot has been confirmed. The first scheduled production cycle on 9 October remains pending; a pilot and passing tests do not establish daily production reliability.
+The [8 October 2026 checkpoint](docs/CHANGELOG.md#2026-10-08) records the isolated Site-link pilot. Later native-evidence and restart-recovery work has offline validation, with its boundaries documented in the technical guides. Passing tests, a stored code commit and a pilot do not establish unattended daily production reliability or delivery of a new edition.
 
 ## License
 

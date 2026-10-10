@@ -21,6 +21,14 @@ class PendingResponse(BaseException):
         self.job_id = job_id
         super().__init__(f'Parent-assisted writer response required: {job_id}')
 
+class QueueCapacityPending(PendingResponse):
+    """Global queue backpressure before admission; no invented job identity."""
+    queue_capacity = True
+
+    def __init__(self):
+        super().__init__(None)
+
+
 class ExpiredResponse(PendingResponse):
     expired = True
 
@@ -106,7 +114,11 @@ def _request_contract(root, prompt, image_path, stage):
             'images':images, 'stage':stage or _stage(prompt)}
 
 
-def request(root, prompt, timeout, image_path=None, *, stage=None, execution=None, operation=None):
+def request(root, prompt, timeout, image_path=None, *, stage=None, execution=None, operation=None, operations=None):
+    from daily_agent.workflow_state import assert_scope_admission
+    assert_scope_admission(Path(root))
+    from daily_agent.workflow_state import assert_mutation_allowed
+    assert_mutation_allowed(Path(root))
     """Optionally bind this exact queue generation to an explicit finite operation.
 
     No implicit execution context or new retry generation is created here.
@@ -114,15 +126,25 @@ def request(root, prompt, timeout, image_path=None, *, stage=None, execution=Non
     """
     if not isinstance(prompt,str) or len(prompt)>500000: raise ValueError('Invalid/beyond-budget parent prompt')
     explicit = execution is not None
-    if explicit or operation is not None:
+    if operation is not None and operations is not None:
+        from daily_agent.batch_execution import ExecutionConflict
+        raise ExecutionConflict('Use either one operation or one bounded operation group')
+    members = operations if operations is not None else [operation]
+    if explicit or operation is not None or operations is not None:
         from daily_agent.batch_execution import BudgetExhausted, ExecutionConflict
-        if (not explicit or not isinstance(operation, (tuple, list)) or len(operation) != 4
-                or any(not isinstance(v, str) or not v for v in operation[:3])
-                or type(operation[3]) is not int):
+        if (not explicit or not isinstance(members, (tuple, list)) or not 1 <= len(members) <= 4
+                or any(not isinstance(op, (tuple, list)) or len(op) != 4
+                       or any(not isinstance(v, str) or not v for v in op[:3])
+                       or type(op[3]) is not int for op in members)):
             raise ExecutionConflict('Execution and a finite operation tuple are required together')
         if type(timeout) not in (int, float) or not math.isfinite(timeout) or timeout <= 0:
             raise ExecutionConflict('A positive finite transport timeout is required')
+        operation = members[0]
         phase = operation[1]
+        if any(list(op[:2]) != list(operation[:2]) for op in members):
+            raise ExecutionConflict('Grouped operations must share material and phase')
+        if len(members) > 1 and phase not in {'native', 'repaired'}:
+            raise ExecutionConflict('Only reading phases support grouped operations')
         remaining = execution.remaining(phase)
         if remaining <= 0:
             raise BudgetExhausted('Local stage deadline exhausted')
@@ -136,13 +158,19 @@ def request(root, prompt, timeout, image_path=None, *, stage=None, execution=Non
         if explicit:
             contract = _request_contract(root, prompt, image_path, stage)
         base_id=digest(contract)
-        job_id=_queue_io(explicit, _active_id, folder, base_id);path=folder/f'{job_id}.job.json'
+        job_id=_queue_io(explicit, _active_id, folder, base_id)
+        from daily_agent.claim_quarantine import assert_not_quarantined
+        assert_not_quarantined(root, base_id)
+        assert_not_quarantined(root, job_id)
+        path=folder/f'{job_id}.job.json'
         job=_queue_io(explicit, read_json, path)
         new = job is None
         if job is None:
             if job_id!=base_id:raise StateCorrupt('Active writer generation is missing')
             queued = pending(root, _strict_io=True) if explicit else pending(root)
-            if len(queued) >= 200: raise RuntimeError('Parent writer pending-job budget exhausted')
+            if len(queued) >= 200:
+                if explicit: raise QueueCapacityPending()
+                raise RuntimeError('Parent writer pending-job budget exhausted')
         else:
             validate_job(root, job)
             if digest({key:job[key] for key in contract}) != base_id: raise StateCorrupt('Queued prompt changed')
@@ -152,15 +180,28 @@ def request(root, prompt, timeout, image_path=None, *, stage=None, execution=Non
             if (phase == 'primary_writer' and operation[2] in {'author_research', 'author_review'}
                     and not execution.author_allowed(operation[0])):
                 raise ExecutionConflict('Original batch author eligibility must be bound before transport')
-            execution.admit(*operation, _contract(job) if job is not None else contract,
-                            queue_job_id=job_id, queue_role=contract['stage'])
+            exact = _contract(job) if job is not None else contract
+            if operations is None:
+                execution.admit(*operation, exact, queue_job_id=job_id, queue_role=contract['stage'])
+            else:
+                execution.admit_many(members, exact, queue_job_id=job_id, queue_role=contract['stage'])
             timeout = min(timeout, execution.remaining(phase))
             if timeout <= 0:
                 raise BudgetExhausted('Local stage deadline exhausted')
+        transport_deadline = None
+        if explicit and hasattr(execution, 'transport_deadline'):
+            transport_deadline = execution.transport_deadline()
+            if (not isinstance(transport_deadline, datetime) or transport_deadline.tzinfo is None
+                    or transport_deadline <= datetime.now(timezone.utc)):
+                raise BudgetExhausted('Explicit queue deadline exhausted')
+            if job is not None:
+                expected_expiry = min(datetime.fromisoformat(job['created_at'])+timedelta(hours=6), transport_deadline)
+                if datetime.fromisoformat(job['expires_at']) != expected_expiry:
+                    raise ExecutionConflict('Existing queue generation has a different deadline; no implicit replacement')
         if new:
             now=datetime.now(timezone.utc)
             job={**contract,'job_id':job_id,'input_sha256':job_id,'created_at':now.isoformat(),
-                 'expires_at':(now+timedelta(hours=6)).isoformat(),'call_timeout_seconds':timeout}
+                 'expires_at':min(now+timedelta(hours=6),transport_deadline or now+timedelta(hours=6)).isoformat(),'call_timeout_seconds':timeout}
             _queue_io(explicit, atomic_json, path, job)
             validate_job(root, job)
         answer=_queue_io(explicit, read_json, folder/f'{job_id}.answer.json')
@@ -183,6 +224,12 @@ def request(root, prompt, timeout, image_path=None, *, stage=None, execution=Non
         return answer['response']
 
 def import_response(root, job_id, response, worker_id, *, model='native-assistant', claim_token=None):
+    from daily_agent.workflow_state import assert_scope_admission
+    assert_scope_admission(Path(root))
+    from daily_agent.claim_quarantine import assert_not_quarantined
+    assert_not_quarantined(root, job_id)
+    from daily_agent.workflow_state import assert_mutation_allowed
+    assert_mutation_allowed(Path(root))
     if not worker_id or not model: raise ValueError('Worker/model provenance required')
     folder=_folder(root)
     if len(job_id)!=64 or any(c not in '0123456789abcdef' for c in job_id): raise ValueError('Invalid job ID')
@@ -217,6 +264,12 @@ def import_response(root, job_id, response, worker_id, *, model='native-assistan
 
 
 def claim(root, job_id, worker_id, lease_seconds=900):
+    from daily_agent.workflow_state import assert_scope_admission
+    assert_scope_admission(Path(root))
+    from daily_agent.claim_quarantine import assert_not_quarantined
+    assert_not_quarantined(root, job_id)
+    from daily_agent.workflow_state import assert_mutation_allowed
+    assert_mutation_allowed(Path(root))
     if not worker_id or not math.isfinite(lease_seconds) or not 30<=lease_seconds<=3600:
         raise ValueError('Bounded worker claim required')
     if len(job_id)!=64 or any(c not in '0123456789abcdef' for c in job_id):raise ValueError('Invalid job ID')
@@ -266,6 +319,12 @@ def pending(root, *, include_expired=False, _strict_io=False):
 
 
 def retry_expired(root,job_id,issue_date,reason):
+    from daily_agent.workflow_state import assert_scope_admission
+    assert_scope_admission(Path(root))
+    from daily_agent.claim_quarantine import assert_not_quarantined
+    assert_not_quarantined(root, job_id)
+    from daily_agent.workflow_state import assert_mutation_allowed
+    assert_mutation_allowed(Path(root))
     """Explicit new generation; preserve old evidence and frozen issue budgets."""
     from daily_agent.cloud_workflow import _config,_validate_budget
     if not isinstance(reason,str) or not reason.strip() or len(reason)>500:raise ValueError('Bounded retry reason required')

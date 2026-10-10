@@ -120,3 +120,7 @@ docs/              使用指南、技术约定与带日期的验收记录
 ## 许可
 
 [MIT](LICENSE)
+
+## GitHub 持久化与恢复
+
+代码、流程和 Daily Agent 本体修改提交到 `main`；通过验收且可公开的 HTML 日报和资源保存到独立的 `daily-artifacts` 分支。分支继承仓库的公开可见性，不能当作私密备份。完整运行状态、私有投递记录及恢复凭证继续保存在私有恢复存储中。详见 [分支与恢复说明](docs/github-persistence.md) 和 [重启恢复契约](docs/durable-recovery.md)。GitHub 提交成功不等于已生成、发布或送达新日报。

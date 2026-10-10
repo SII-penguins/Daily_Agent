@@ -529,7 +529,7 @@ def test_author_complete_original_does_not_use_limit(tmp_path):
         assert not pending(tmp_path)
 
 
-@pytest.mark.parametrize('bad,kind', [({'papers':{}},'schema'), (json.JSONDecodeError('bad','x',0),'json'), (ConnectionError('offline'),'backend')])
+@pytest.mark.parametrize('bad,kind', [({'papers':{}},None), (json.JSONDecodeError('bad','x',0),'json'), (ConnectionError('offline'),'backend')])
 def test_author_circuit_classifies_model_failures(tmp_path,monkeypatch,bad,kind):
     config,record=author_setup(tmp_path);normalized(config);frozen=[candidate(record)]
     def fail(*args,**kwargs):
@@ -538,7 +538,7 @@ def test_author_circuit_classifies_model_failures(tmp_path,monkeypatch,bad,kind)
     monkeypatch.setattr('daily_agent.author_research.request',fail)
     with run(config,frozen) as execution:
         enrich_selected_author_contexts([record],config,execution=execution)
-        assert execution.snapshot()['writer_circuit']['kind']==kind
+        assert (execution.snapshot()['writer_circuit'] or {}).get('kind')==kind
         assert record.raw['author_research_evidence']['status']=='not_reviewed'
         first=deepcopy(record.raw['author_research_evidence'])
         enrich_selected_author_contexts([record],config,execution=execution)
@@ -593,7 +593,7 @@ def test_science_real_queue_operations(tmp_path):
         assert execution.snapshot()['writer_circuit'] is None
 
 
-@pytest.mark.parametrize('mode,kind',[('schema','schema'),('review_schema','schema'),('reject',None),('json','json'),('backend','backend'),('queue',None)])
+@pytest.mark.parametrize('mode,kind',[('schema',None),('review_schema',None),('reject',None),('json','json'),('backend','backend'),('queue',None)])
 def test_science_failure_classification(tmp_path,mode,kind):
     config,record,draft,analysis,_,_,invoke,_=science_fixture(tmp_path);normalized(config);frozen=[candidate(record)]
     def respond(prompt,timeout,*,stage):

@@ -14,7 +14,7 @@ def test_state_roundtrip_preserves_accepted_receipt_and_never_overwrites(tmp_pat
     saved=snapshot(root,tmp_path/'state.zip');verify(saved['archive'])
     target=tmp_path/'restored';restore(saved['archive'],target,saved['sha256'])
     assert read_handoff(target,day)['state']=='accepted'
-    with pytest.raises(ValueError):record_transition(target,day,'begin')
+    with pytest.raises(StateCorrupt, match='fenced'):record_transition(target,day,'begin')
     with pytest.raises(FileExistsError):restore(saved['archive'],target,saved['sha256'])
     with pytest.raises(StateCorrupt):restore(saved['archive'],tmp_path/'wrong','bad')
 

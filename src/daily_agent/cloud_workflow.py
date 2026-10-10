@@ -40,6 +40,8 @@ def _now():
 
 
 def init_profile(source: Path, root: Path, writer: str) -> dict:
+    from daily_agent.workflow_state import assert_mutation_allowed
+    assert_mutation_allowed(Path(root))
     source, root = source.resolve(), root.resolve()
     if source == root or (root / 'config').exists():
         raise ValueError('Cloud profile must use a new separate root; existing configuration is never overwritten')
@@ -114,8 +116,8 @@ def _plain_text(markdown):
     return text.strip() + '\n'
 
 
-def _qualifying_rows(rows):
-    from daily_agent.reading import audit_reading
+def _qualifying_rows(rows, *, config=None):
+    from daily_agent.source_evidence_policy import audit_reading
     from daily_agent.scoring.publication import publication_evidence
     from daily_agent.models import DigestItem
     from daily_agent.scheduling import _approved_items
@@ -136,7 +138,15 @@ def _qualifying_rows(rows):
         # Preprints are eligible; publication evidence labels never imply peer review.
         # Full-reading/claim-support checks below remain mandatory.
         raw['publication_evidence'] = evidence
-        if not audits[item.key]['quality_passed']: reason.append('full_reading_or_claim_support_incomplete')
+        if config is not None:
+            from daily_agent.source_evidence_policy import record_policy, expected_record_policy
+            if record_policy(material) != expected_record_policy(config, material):
+                reason.append('source_evidence_policy_mismatch')
+        if not audits[item.key]['quality_passed']:
+            if audits[item.key].get('core_quality_passed') and audits[item.key].get('require_scientific_analysis'):
+                reason.append('required_scientific_analysis_incomplete')
+            else:
+                reason.append('full_reading_or_claim_support_incomplete')
         if reason: excluded.append({'key':item.key, 'reasons':reason})
         else: accepted.append(row)
     return accepted, excluded
@@ -209,7 +219,38 @@ def _check_published_snapshot(config, day, rows, *, kind=None):
         raise ValueError('Prepared report is stale against publication/delivery history; send blocked')
 
 
+def _failure_progress(config, day):
+    """Read-only observed progress; failure is not proof that no work qualified."""
+    try:
+        snapshot = read_json(config.root / 'data/editorial' / str(day) / 'approval.json')
+        if snapshot is None:
+            return '完成和未封版数量尚未核实：尚无可重新核验的审批快照\n'
+        if not isinstance(snapshot, list) or len({row['key'] for row in snapshot}) != len(snapshot):
+            raise ValueError('Invalid approval snapshot')
+        qualified, excluded = _qualifying_rows(snapshot, config=config)
+        papers = sum(row['item_type'] == 'paper' for row in qualified)
+        progress = f'当前审批快照已核验完成 {len(qualified)} 条（{papers} 篇论文、{len(qualified) - papers} 个开源项目）\n'
+        if excluded:
+            progress += f'另有 {len(excluded)} 条审批候选未通过当前交付门槛\n'
+    except Exception as exc:
+        return f'完成和未封版数量尚未核实：审批快照无法重新核验（{type(exc).__name__}）\n'
+    from daily_agent.scheduling import _ready_path, validate_ready_report
+    if not _ready_path(config, day).exists():
+        return progress + f'其中尚未封版 {len(qualified)} 条；本期尚未生成可交付封版\n'
+    try:
+        ready = validate_ready_report(config, day)
+        sealed, _ = _qualifying_rows(ready['approval'], config=config)
+        identity = lambda row: _hash(json.dumps(row, sort_keys=True, ensure_ascii=False).encode())
+        sealed_ids = {identity(row) for row in sealed}
+        unsealed = sum(identity(row) not in sealed_ids for row in qualified)
+        return progress + f'已核验封版 {len(sealed)} 条；当前完成快照中尚未封版 {unsealed} 条\n'
+    except Exception as exc:
+        return progress + f'封版数量尚未核实：现有封版未通过重新核验（{type(exc).__name__}）\n'
+
+
 def prepare_handoff(root, day, conversation, *, failure=None, delivery_format=None):
+    from daily_agent.workflow_state import assert_issue_allowed
+    assert_issue_allowed(Path(root), day)
     """Seal independently validated report bytes; does not send or mark published."""
     config = _config(root)
     if not conversation or not conversation.strip(): raise ValueError('Verified conversation identifier required')
@@ -225,7 +266,7 @@ def prepare_handoff(root, day, conversation, *, failure=None, delivery_format=No
             source_manifest = validate_ready_report(config, day)
             if source_manifest.get('schema_version') != 3:
                 raise StateCorrupt('Cloud delivery requires a current v3 evidence seal; legacy import must be explicitly validated')
-            rows, excluded = _qualifying_rows(source_manifest['approval'])
+            rows, excluded = _qualifying_rows(source_manifest['approval'], config=config)
             _check_reservations(config, day, rows)
         if rows:
             from daily_agent.scheduling import _approved_items
@@ -243,9 +284,14 @@ def prepare_handoff(root, day, conversation, *, failure=None, delivery_format=No
             kind = 'pilot' if config.delivery['cloud'].get('pilot') else 'report'
             if kind == 'pilot': body = '迁移验收样例（非今日新闻，不进入正式发布历史）\n' + body
         else:
-            body = f'Daily Agent 日报状态 · {day.isoformat()}\n本期没有满足全文核验和结论支持要求的内容，暂不推送未经核验的论文\n'
-            if failure: body += f'运行状态：{failure}\n'
-            if excluded: body += f'{len(excluded)} 条候选因证据不足未列入\n'
+            body = f'Daily Agent 日报状态 · {day.isoformat()}\n本期未完成可交付日报\n'
+            if failure is not None:
+                body += _failure_progress(config, day)
+                blocker = str(failure).strip() or '运行未完成，具体阻塞未提供'
+                body += f'阻塞：{blocker}\n'
+            else:
+                body += '本次封版快照中通过当前交付门槛的内容为 0 条\n'
+            if excluded: body += f'{len(excluded)} 条候选未通过当前交付门槛\n'
             kind = 'status'
         body += '来源范围：未启用 Google Scholar、CORE、IEEE 和 Unpaywall；GitHub 与 Semantic Scholar 使用匿名接口，可能限流\n'
         body = _plain_text(body)
@@ -398,6 +444,8 @@ def read_handoff(root, day):
 
 
 def bind_library(root, day, *, file_id, version, verified_file):
+    from daily_agent.workflow_state import assert_issue_allowed
+    assert_issue_allowed(Path(root), day)
     """Bind parent-verified Library export bytes before send; never upload here.
 
     The parent resolves file/version through Library, exports that exact version,
@@ -427,6 +475,10 @@ def bind_library(root, day, *, file_id, version, verified_file):
 
 
 def record_transition(root, day, event, *, attempt_id=None, message_id=None, conversation=None, body=None, attachments=None, observation=None):
+    from daily_agent.workflow_state import assert_issue_allowed
+    assert_issue_allowed(Path(root), day, admission=(event == "begin"))
+    from daily_agent.workflow_state import assert_mutation_allowed
+    assert_mutation_allowed(Path(root))
     # Serialize dispatch across issue dates, not merely within one issue.
     config = _config(root)
     with exclusive_lock(config.state_dir / 'cloud-dispatch.lock'):
@@ -495,6 +547,8 @@ def _record_transition(root, day, event, *, attempt_id=None, message_id=None, co
 
 
 def reconcile_publication(root, day):
+    from daily_agent.workflow_state import assert_issue_allowed
+    assert_issue_allowed(Path(root), day, admission=False)
     config = _config(root)
     path = _path(config, day)
     with exclusive_lock(path.with_suffix('.lock')):
@@ -593,6 +647,10 @@ def _read_generation_attempt(config, day, attempt, namespace, *, settled=False):
 
 
 def run_generation(root, day, timeout, *, worker_module="daily_agent.cloud_workflow"):
+    from daily_agent.workflow_state import assert_issue_allowed
+    assert_issue_allowed(Path(root), day)
+    from daily_agent.workflow_state import assert_mutation_allowed
+    assert_mutation_allowed(Path(root))
     """Persist issue-wide deadline/runtime across resumptions and supervisor restarts."""
     from daily_agent.workflow_runtime import run_process, stop_verified_orphan, process_namespace, CleanupPending
     config = _config(root)
@@ -648,6 +706,13 @@ def run_generation(root, day, timeout, *, worker_module="daily_agent.cloud_workf
             _, previous = _read_generation_attempt(config, old_day, old_attempt, namespace, settled=True)
             previous.update(running=False, cleanup_confirmed_at=_now())
             atomic_json(path, previous)
+        if previous and previous.get('date') == str(day) and previous.get('checkpoint'):
+            from daily_agent.batch_dispatch import validate_response_payload
+            observed = validate_response_payload(previous['checkpoint'], day)
+            if observed is None:
+                raise StateCorrupt('Invalid prior generation checkpoint; operator review required')
+            if observed.get('auto_resume') is False:
+                return 78  # No new child, resume counter, budget reservation or retry authority.
         budget = read_json(budget_path)
         from daily_agent.incremental_issue import issue_dir, can_enroll, enroll, assert_generation_allowed, load_plan, PROTOCOL, has_prior_activity
         # Do not launch or spend a new issue attempt after a publication seal.
@@ -736,6 +801,13 @@ def run_generation(root, day, timeout, *, worker_module="daily_agent.cloud_workf
                 raise  # Retain the active budget for a possibly running child.
             rc = 1  # Popen/log-open failed before any launched-process callback.
         budget, state = _read_generation_attempt(config, day, attempt, namespace)
+        from daily_agent.batch_dispatch import read_response_checkpoint
+        checkpoint = read_response_checkpoint(output_log, output_offset, day) if rc == 75 else None
+        if checkpoint is not None and checkpoint.get('auto_resume') is False:
+            # Persist the stop intent before closing the budget. A crash between
+            # settlement writes must not erase the reason another launch is barred.
+            state['checkpoint'] = checkpoint
+            atomic_json(path, state)
         budget['runtime_seconds'] += max(0,time.monotonic()-started_monotonic,(_clock()-started_at).total_seconds())
         budget['failures'] += int(rc not in {0,75})
         budget.pop('active_started_at',None)
@@ -746,23 +818,19 @@ def run_generation(root, day, timeout, *, worker_module="daily_agent.cloud_workf
         atomic_json(budget_path,budget)
         _, state = _read_generation_attempt(config, day, attempt, namespace, settled=True)
         state.update(running=False,finished_at=_now(),returncode=rc)
-        if rc==75 and output_log.exists() and output_log.stat().st_size>output_offset:
-            with output_log.open('rb') as handle:
-                handle.seek(max(output_offset,output_log.stat().st_size-16384))
-                lines=handle.read().decode('utf-8',errors='replace').splitlines()
-            for line in reversed(lines):
-                try: checkpoint=json.loads(line)
-                except ValueError: continue
-                if (isinstance(checkpoint,dict) and checkpoint.get('state') in {'awaiting_parent_writer','expired_parent_writer'}
-                        and re.fullmatch(r'[0-9a-f]{64}',str(checkpoint.get('job_id','')))):
-                    state['checkpoint']={'state':checkpoint['state'],'job_id':checkpoint['job_id'],'issue_date':str(day)}
-                    break
+        state.pop('checkpoint', None)
+        if checkpoint is not None:
+            state['checkpoint'] = checkpoint
         _read_generation_attempt(config, day, attempt, namespace, settled=True)
         atomic_json(path,state)
         return rc
 
 
 def generate(root, day, *, expected_attempt=None, expected_namespace=None):
+    from daily_agent.workflow_state import assert_issue_allowed
+    assert_issue_allowed(Path(root), day)
+    from daily_agent.workflow_state import assert_mutation_allowed
+    assert_mutation_allowed(Path(root))
     previous = os.environ.get('DAILY_AGENT_DISABLE_EXTERNAL_SECRETS')
     os.environ['DAILY_AGENT_DISABLE_EXTERNAL_SECRETS'] = '1'
     try:
@@ -834,7 +902,8 @@ def main(argv=None):
         try: generate(args.root, day, expected_attempt=args.expected_attempt,
                       expected_namespace=args.expected_namespace)
         except PendingResponse as exc:
-            print(json.dumps({'state':'expired_parent_writer' if getattr(exc,'expired',False) else 'awaiting_parent_writer','job_id':exc.job_id,'issue_date':str(day)}))
+            from daily_agent.batch_dispatch import response_payload
+            print(json.dumps({**response_payload(exc), 'issue_date':str(day)}))
             return 75
         result = {'generated':True}
     elif args.action == 'prepare':
@@ -853,9 +922,18 @@ def main(argv=None):
                 return 75
             if rc == 75:
                 journal=read_json(config.state_dir/'cloud-generation.json') or {}
-                checkpoint=journal.get('checkpoint',{}) if journal.get('date')==str(day) else {}
+                from daily_agent.batch_dispatch import validate_response_payload
+                checkpoint=validate_response_payload(journal.get('checkpoint'), day) if journal.get('date')==str(day) else None
                 print(json.dumps({**({'state':'awaiting_parent_writer'} if not checkpoint else checkpoint),'root':str(config.root),'issue_date':str(day)}))
                 return 75
+            if rc == 78:
+                from daily_agent.batch_dispatch import validate_response_payload
+                journal = read_json(config.state_dir/'cloud-generation.json') or {}
+                checkpoint = validate_response_payload(journal.get('checkpoint'), day)
+                print(json.dumps({**(checkpoint or {}), 'state':'blocked_expired_parent_writer',
+                                  'auto_resume':False, 'recovery_required':'expired_requires_authorized_recovery',
+                                  'root':str(config.root), 'issue_date':str(day)}))
+                return 78
             if rc:
                 print(json.dumps({'state':'generation_failed','returncode':rc,'root':str(config.root)}))
                 return rc

@@ -8,7 +8,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / 'src'))
 from daily_agent.paper_document import atomic_json
 
 
-from daily_agent.reading import audit_reading as audit
+from daily_agent.source_evidence_policy import audit_reading as audit
 
 
 if __name__ == '__main__':

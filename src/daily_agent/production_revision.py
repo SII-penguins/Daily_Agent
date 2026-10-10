@@ -82,12 +82,16 @@ def _parent(root, day, identity):
 
 
 def authorize_revision(root, day, *, parent_identity, authorization, policy,
-                       revision_number=1, carry_keys=None):
+                       revision_number=1, carry_keys=None, presentation_policy=None):
+    from daily_agent.workflow_state import assert_issue_allowed
+    assert_issue_allowed(Path(root), day)
     """Create one explicit authorized revision. Caller owns user-evidence provenance.
 
     A repeated authorization cannot silently create another edition. A missing
     mutable budget after initialization is corruption, never a fresh allowance.
     """
+    if presentation_policy is not None and digest(presentation_policy) != digest(PRESENTATION_POLICY):
+        raise ValueError('Unsupported bounded presentation policy')
     config = _config(root)
     if type(revision_number) is not int or revision_number < 1: raise ValueError('Invalid revision number')
     if (not isinstance(authorization, dict) or set(authorization) != {'source', 'text', 'authorized_at'}
@@ -119,6 +123,8 @@ def authorize_revision(root, day, *, parent_identity, authorization, policy,
                'policy':deepcopy(policy), 'carry_forward':carry,
                'conversation':parent['conversation'],
                'site_project_id':parent['site_binding']['content']['project_id']}
+    if presentation_policy is not None:
+        request['presentation_policy'] = deepcopy(presentation_policy)
     # Stable across retries and independent of initialization wall-clock.
     revision_id = digest(request)
     folder = issue_dir(root, day, revision_id)
@@ -184,6 +190,9 @@ def read_contract(root, day, revision_id):
     c = envelope['payload']
     required = ('edition_type','date','revision_number','parent_identity','authorization','policy',
                 'carry_forward','conversation','site_project_id')
+    if 'presentation_policy' in c:
+        if digest(c['presentation_policy']) != digest(PRESENTATION_POLICY): raise StateCorrupt('Presentation policy changed')
+        required += ('presentation_policy',)
     if (c.get('date') != str(day) or c.get('revision_id') != revision_id
             or c.get('edition_type') != EDITION
             or digest(c['migration_identity'] if c.get('migration_identity') is not None else {k:c[k] for k in required}) != revision_id):
@@ -233,6 +242,10 @@ def _read_budget(root, day, revision_id):
 
 
 def reserve_generation(root, day, revision_id, timeout=900):
+    from daily_agent.workflow_state import assert_issue_allowed
+    assert_issue_allowed(Path(root), day)
+    from daily_agent.workflow_state import assert_mutation_allowed
+    assert_mutation_allowed(Path(root))
     """Reserve a launch under the original issue lock; no subprocess is started."""
     folder = issue_dir(root,day,revision_id)
     with exclusive_lock(folder/'generation.lock'):
@@ -241,8 +254,12 @@ def reserve_generation(root, day, revision_id, timeout=900):
         _assert_not_retired(folder)
         c = read_contract(root,day,revision_id); b = _read_budget(root,day,revision_id)
         if b.get('active_attempt_id'): raise StateCorrupt('Unreconciled revision generation; inspect retained child before recovery')
+        _science_admission_guard(root, day, revision_id)
+        if c.get('presentation_policy') is not None:
+            scoped_config(root,day,revision_id)
+            _presentation_admission_guard(root,day,revision_id,c,b)
         if type(timeout) not in (int,float) or not math.isfinite(timeout) or timeout <= 0: raise ValueError('Invalid timeout')
-        remaining = min((_stamp(b['deadline'])-_now()).total_seconds(), b['max_runtime_seconds']-b['runtime_seconds'])
+        remaining = min((_stamp(b['deadline'])-_now()).total_seconds(), b['max_runtime_seconds']-b['runtime_seconds']-_presentation_charge(folder,c))
         if remaining <= 0 or b['failures'] >= b['max_failures'] or b['resumes'] >= b['max_resumes']:
             raise ValueError('Revision deadline or budget exhausted')
         permitted = min(timeout, c['policy']['per_launch_seconds'], remaining)
@@ -435,10 +452,17 @@ def seal_ready(root, day, revision_id, rows):
         return _seal_ready_unlocked(root,day,revision_id,rows)
 
 
-def _seal_ready_unlocked(root,day,revision_id,rows):
+def _seal_ready_unlocked(root,day,revision_id,rows,*,presentation_owner=None):
     scoped_config(root,day,revision_id)  # New seals bind frozen source/settings.
-    _check_rows(root,day,revision_id,rows)
     c=read_contract(root,day,revision_id)
+    if c.get('presentation_policy') is not None:
+        blocked=presentation_status(root,day,revision_id)
+        if blocked is not None: raise PresentationBlocked(blocked)
+        if not isinstance(presentation_owner,tuple) or len(presentation_owner)!=2:
+            raise StateCorrupt('Presentation seal requires supervised finalizer')
+        assert_active_generation(root,day,revision_id,expected_attempt=presentation_owner[0],expected_namespace=presentation_owner[1])
+        _validate_presentation_final(root,day,revision_id,rows)
+    _check_rows(root,day,revision_id,rows)
     payload={'schema_version':1,'date':str(day),'revision_id':revision_id,
              'contract_sha256':digest(c),'approval':deepcopy(rows),'approval_sha256':digest(rows)}
     _immutable(issue_dir(root,day,revision_id)/'ready.json',{'payload':payload,'sha256':digest(payload)})
@@ -472,7 +496,10 @@ def prepare_handoff(root,day,revision_id):
         if (folder/'handoff.json').exists(): return read_handoff(root,day,revision_id)
         scoped_config(root,day,revision_id)
         c=read_contract(root,day,revision_id); ready=_ready(root,day,revision_id)
-        rows=ready['approval']; items=_check_rows(root,day,revision_id,rows)
+        rows=ready['approval']
+        if c.get('presentation_policy') is not None:
+            _validate_presentation_final(root,day,revision_id,rows,check_budget=False)
+        items=_check_rows(root,day,revision_id,rows)
         papers=sum(i.item_type=='paper' for i in items)
         body=f'Daily Agent 日报 · {day} · 修订版 r{c["revision_number"]}\n{papers} 篇已核验论文 · {len(items)-papers} 个开源项目\n公共来源版（非全源）；仅收录通过证据审核的内容\n'
         approval_sha=_sha(json.dumps(rows,sort_keys=True,ensure_ascii=False).encode())
@@ -566,6 +593,10 @@ def bind_site(root,day,revision_id,*,archive_dir,deployment_file,site_version_fi
 
 
 def record_transition(root,day,revision_id,event,*,attempt_id=None,message_id=None,conversation=None,body=None):
+    from daily_agent.workflow_state import assert_issue_allowed
+    assert_issue_allowed(Path(root), day, admission=(event == "begin"))
+    from daily_agent.workflow_state import assert_mutation_allowed
+    assert_mutation_allowed(Path(root))
     _assert_not_retired(issue_dir(root,day,revision_id))
     config=_config(root); folder=issue_dir(root,day,revision_id)
     with exclusive_lock(config.state_dir/'cloud-dispatch.lock'),exclusive_lock(folder/'handoff.lock'):
@@ -596,6 +627,8 @@ def record_transition(root,day,revision_id,event,*,attempt_id=None,message_id=No
 
 
 def reconcile_publication(root,day,revision_id):
+    from daily_agent.workflow_state import assert_issue_allowed
+    assert_issue_allowed(Path(root), day, admission=False)
     from daily_agent.scheduling import _approved_items
     from daily_agent.storage import mark_materials_published, write_revision_publication
     config=_config(root); folder=issue_dir(root,day,revision_id)
@@ -662,7 +695,369 @@ def assert_active_generation(root,day,revision_id,*,expected_attempt=None,expect
         time.sleep(.01)
 
 
+# New contracts opt in explicitly; historical handoffs and contracts remain readable.
+PRESENTATION_POLICY = {'schema': 1, 'operations_per_paper': 1,
+                       'selection_window_seconds': 600, 'max_crops': 5}
+
+
+def _presentation_read(path):
+    e=read_json(path)
+    if (not isinstance(e,dict) or set(e)!={'payload','sha256'}
+            or not isinstance(e['payload'],dict) or digest(e['payload'])!=e['sha256']):
+        raise StateCorrupt('Presentation evidence missing or corrupt')
+    return e['payload']
+
+
+def _presentation_write(path,payload):
+    _immutable(path,{'payload':payload,'sha256':digest(payload)})
+
+
+def _presentation_charge(folder,c):
+    """Actual elapsed pending windows, conservatively overlapping supervisor time.
+
+    Unclosed windows continue accruing after restart/expiry, never reset. This
+    bounds accepted work, not the physical lifetime of an external native worker.
+    """
+    if c.get('presentation_policy') is None: return 0.
+    total=0.
+    for path in sorted((folder/'presentation/operations').glob('*.json')):
+        op=_presentation_read(path)
+        if (op.get('contract_sha256')!=digest(c) or path.stem!=digest(op.get('key'))
+                or op.get('policy')!=c['presentation_policy']):
+            raise StateCorrupt('Presentation operation contract changed')
+        end=_now()
+        result=folder/'presentation/results'/path.name
+        if result.exists():
+            evidence=_presentation_read(result)
+            if evidence.get('operation_sha256')!=digest(op): raise StateCorrupt('Presentation result operation changed')
+            end=_stamp(evidence['completed_at'])
+        elapsed=(end-_stamp(op['started_at'])).total_seconds()
+        if elapsed<0: raise StateCorrupt('Presentation clock moved backwards')
+        total+=elapsed
+    return total
+
+
+def _committed_presentation_rows(root,day,rid):
+    """Revalidate exact journal references; never admit science or recover leases."""
+    from daily_agent.batch_execution import Execution,candidate,existing_review_validator,_read as ledger_read,digest as ledger_digest
+    from daily_agent.incremental_issue import PROTOCOL
+    from daily_agent.models import MaterialRecord,EditorialDraft,EditorialReview
+    from daily_agent.editorial import approve_publication
+    from daily_agent.material_pool import same_source_version
+    c=read_contract(root,day,rid);config=scoped_config(root,day,rid);folder=issue_dir(root,day,rid)
+    records,drafts,reviews,proofs=[],[],[],{}
+    for index in range(c['max_batches']):
+        path=folder/'batches'/f'{index}.enriched.json'
+        if not path.exists(): continue
+        e=read_json(path)
+        if not isinstance(e,dict) or set(e)!={'payload','sha256'} or digest(e['payload'])!=e['sha256']:
+            raise StateCorrupt('Presentation enriched batch changed')
+        batch=[MaterialRecord.from_dict(r) for r in e['payload']]
+        bid=f'{c.get("logical_issue_id",rid)}:batch:{index}'
+        ex=Execution(folder/'incremental',bid,[candidate(r) for r in batch],config,protocol=PROTOCOL,issue_state='generating')
+        if not ex.folder.exists(): continue
+        with exclusive_lock(ex.folder/'execution.lock'):
+            state=ledger_read(ex.path)
+            if state is None or ledger_read(ex.folder/'initialized.json')!={'batch_id':bid,'contract_sha256':ledger_digest(ex.contract)}:
+                raise StateCorrupt('Missing existing science journal')
+            ex._validate(state)
+            if state['contract']!=ex.contract or state['batch_id']!=bid or state['reservations']:
+                raise StateCorrupt('Science journal is live or changed')
+            # Pure verification avoids __enter__ recovery/save/forfeiture.
+            ex._state=state
+            validator=existing_review_validator(config)
+            for record in batch:
+                sha=state['completed'].get(record.key)
+                if sha is None: continue
+                payload=ex._completion(record.key,sha)
+                if validator(deepcopy(payload)) is not True: raise StateCorrupt('Science completion no longer qualifies')
+                records.append(MaterialRecord.from_dict(payload['record']))
+                drafts.append(EditorialDraft.from_dict(payload['draft']))
+                reviews.append(EditorialReview.from_dict(payload['review']))
+                proofs[record.key]={'batch_id':bid,'completion_sha256':sha}
+    current={r.key:r for r in eligible_candidates(root,day,rid)}
+    eligible=[r for r in records if r.key in current and same_source_version(r,current[r.key])]
+    additions=approve_publication(config,eligible,drafts,reviews)
+    rows=deepcopy(carry_forward_rows(root,day,rid))
+    for item in additions:
+        field,default=('paper_target',8) if item.item_type=='paper' else ('github_target',2)
+        if len(rows)<config.quota.get('max_items',10) and sum(r['item_type']==item.item_type for r in rows)<config.quota.get(field,default):
+            rows.append(item.to_dict())
+    return rows,{r['key']:proofs[r['key']] for r in rows if r['key'] in proofs}
+
+
+def _checkpoint_presentation(root,day,rid):
+    folder=issue_dir(root,day,rid);c=read_contract(root,day,rid)
+    blocked=presentation_status(root,day,rid)
+    if blocked is not None: return blocked
+    rows,proofs=_committed_presentation_rows(root,day,rid)
+    _check_rows(root,day,rid,rows)
+    payload={'schema':1,'state':'awaiting_presentation','revision_id':rid,
+             'contract_sha256':digest(c),'approval':rows,'science':proofs}
+    _presentation_write(folder/'presentation/checkpoint.json',payload)
+    return payload
+
+
+def _presentation_checkpoint(root,day,rid):
+    c=read_contract(root,day,rid);folder=issue_dir(root,day,rid)
+    cp=_presentation_read(folder/'presentation/checkpoint.json')
+    rows,proofs=_committed_presentation_rows(root,day,rid)
+    if cp!={'schema':1,'state':'awaiting_presentation','revision_id':rid,
+            'contract_sha256':digest(c),'approval':rows,'science':proofs}:
+        raise StateCorrupt('Presentation base no longer matches committed science')
+    return cp
+
+
+class _PresentationOperation:
+    """One immutable exact queue operation per selected new paper, no retries."""
+    def __init__(self,root,day,rid,key,attempt,namespace):
+        self.root,self.day,self.rid,self.key=root,day,rid,key
+        self.attempt,self.namespace=attempt,namespace
+        self.folder=issue_dir(root,day,rid);self.c=read_contract(root,day,rid)
+        self.path=self.folder/'presentation/operations'/(digest(key)+'.json')
+        cp=_presentation_read(self.folder/'presentation/checkpoint.json')
+        carry={v['key'] for v in self.c['carry_forward']}
+        if key in carry or not any(r['key']==key and r['item_type']=='paper' for r in cp['approval']):
+            raise StateCorrupt('Presentation operation requires a selected new paper')
+
+    def remaining(self,phase):
+        if phase!='presentation': raise StateCorrupt('Wrong presentation phase')
+        assert_active_generation(self.root,self.day,self.rid,expected_attempt=self.attempt,expected_namespace=self.namespace)
+        b=_read_budget(self.root,self.day,self.rid)
+        remaining=min((_stamp(b['deadline'])-_now()).total_seconds(),
+                      (_stamp(b['active_started_at'])-_now()).total_seconds()+b['active_timeout_seconds'],
+                      b['max_runtime_seconds']-b['runtime_seconds']-_presentation_charge(self.folder,self.c))
+        if self.path.exists(): remaining=min(remaining,(_stamp(_presentation_read(self.path)['deadline'])-_now()).total_seconds())
+        return max(0.,remaining)
+
+    def admit(self,key,phase,substep,ordinal,exact_input,*,queue_job_id,queue_role):
+        if (key,phase,substep,ordinal,queue_role)!=(self.key,'presentation','visual_selection',0,'visual_selection'):
+            raise StateCorrupt('Invalid finite presentation slot')
+        if self.remaining(phase)<=0: raise ValueError('Presentation deadline or budget exhausted')
+        if self.path.exists():
+            op=_presentation_read(self.path)
+            if op['job_id']!=queue_job_id or op['input']!=exact_input:
+                raise StateCorrupt('Presentation operation cannot change job or retry generation')
+            return
+        b=_read_budget(self.root,self.day,self.rid)
+        available=b['max_runtime_seconds']-b['runtime_seconds']-b['active_timeout_seconds']-_presentation_charge(self.folder,self.c)
+        window=min(self.c['presentation_policy']['selection_window_seconds'],available,self.remaining(phase))
+        if window<=0: raise ValueError('Presentation has no unreserved runtime')
+        from datetime import timedelta
+        started=_now()
+        op={'key':key,'contract_sha256':digest(self.c),'policy':self.c['presentation_policy'],
+            'job_id':queue_job_id,'input':exact_input,'started_at':started.isoformat(),
+            'deadline':(started+timedelta(seconds=window)).isoformat()}
+        _presentation_write(self.path,op)
+
+    def transport_deadline(self):
+        return _stamp(_presentation_read(self.path)['deadline'])
+
+
+def _validate_display(base,derived):
+    stripped=deepcopy(derived);original=deepcopy(base)
+    for row in (stripped,original):
+        row['material']['raw'].pop('paper_visual_selection',None)
+        row['material']['reading'].pop('paper_visual_assets',None)
+    if stripped!=original: raise StateCorrupt('Presentation changed scientific fields')
+    from daily_agent.scheduling import _approved_items
+    from daily_agent.paper_visual_assets import verified_assets
+    material=_approved_items([deepcopy(derived)])[0].material
+    state=material.reading.get('paper_visual_assets',{})
+    selection=material.raw.get('paper_visual_selection',{})
+    if (state.get('status') not in {'ready','empty'} or selection.get('selection_policy_version')!=2
+            or len(state.get('assets',[]))>5 or len(verified_assets(material))!=len(state.get('assets',[]))):
+        raise StateCorrupt('Presentation crop/source verification failed')
+    from daily_agent.paper_visual_assets import _source,_plot_coverage
+    _,_,pdf_hash=_source(material)
+    if selection.get('source_pdf_sha256')!=pdf_hash or state.get('source_pdf_sha256')!=pdf_hash:
+        raise StateCorrupt('Presentation source PDF changed')
+    _plot_coverage(selection,selection.get('assets',[]))
+    if state['status']=='empty' and (selection.get('assets') or state.get('assets') or not state.get('gaps')):
+        raise StateCorrupt('Empty presentation lacks explicit gaps')
+
+
+def _validate_presentation_result(root,day,rid,base,result,science):
+    from daily_agent.paper_visual_assets import _candidate_pages
+    folder=issue_dir(root,day,rid);config=scoped_config(root,day,rid)
+    if (set(result)!={'base_sha256','science','row','completed_at','operation_sha256','answer','claim'}
+            or result['base_sha256']!=digest(base) or result['science']!=science):
+        raise StateCorrupt('Presentation result base provenance changed')
+    _validate_display(base,result['row'])
+    path=folder/'presentation/operations'/(digest(base['key'])+'.json')
+    if not path.exists():
+        if (_candidate_pages(base['material']['reading'].get('visual',{}))
+                or result['operation_sha256'] is not None or result['answer'] is not None or result['claim'] is not None):
+            raise StateCorrupt('Presentation selection has no finite operation')
+        return
+    op=_presentation_read(path);answer=result['answer'];claim=result['claim']
+    from daily_agent.parent_writer import _folder as queue_folder,validate_job,_contract,_assert_active,queue_lock,digest as queue_digest
+    q=queue_folder(config.root)
+    with queue_lock(q/'queue.lock',strict_io=True):
+        job=read_json(q/(op['job_id']+'.job.json'));validate_job(config.root,job)
+        _assert_active(q,job)
+        if (queue_digest(_contract(job))!=op['job_id'] or _contract(job)!=op['input']
+                or job['expires_at']!=op['deadline']
+                or read_json(q/(op['job_id']+'.answer.json'))!=answer
+                or read_json(q/(op['job_id']+'.claim.json'))!=claim):
+            raise StateCorrupt('Presentation queue provenance changed')
+    if (result['operation_sha256']!=digest(op) or not isinstance(answer,dict) or not isinstance(claim,dict)
+            or answer.get('job_id')!=op['job_id'] or answer.get('input_sha256')!=op['job_id']
+            or answer.get('response_sha256')!=queue_digest(answer.get('response'))
+            or answer['response']!=result['row']['material']['raw']['paper_visual_selection']
+            or not answer.get('worker_id') or not answer.get('model')
+            or claim.get('job_id')!=op['job_id'] or claim.get('worker_id')!=answer['worker_id'] or not claim.get('token')
+            or not _stamp(op['started_at'])<=_stamp(answer['received_at'])<=_stamp(result['completed_at'])<=_stamp(op['deadline'])
+            or _stamp(answer['received_at'])>=_stamp(claim['expires_at'])):
+        raise StateCorrupt('Presentation answer missing independent provenance or expired')
+
+
+def _validate_presentation_final(root,day,rid,rows,*,check_budget=True):
+    folder=issue_dir(root,day,rid);c=read_contract(root,day,rid)
+    cp=_presentation_checkpoint(root,day,rid)
+    if len(rows)!=len(cp['approval']): raise StateCorrupt('Presentation changed item count')
+    carry={v['key'] for v in c['carry_forward']}
+    for base,row in zip(cp['approval'],rows):
+        if base['key'] in carry or base['item_type']!='paper':
+            if row!=base: raise StateCorrupt('Presentation changed carry/repository row')
+            continue
+        result=_presentation_read(folder/'presentation/results'/(digest(base['key'])+'.json'))
+        if result.get('base_sha256')!=digest(base) or result.get('row')!=row:
+            raise StateCorrupt('Presentation derived evidence changed')
+        _validate_presentation_result(root,day,rid,base,result,cp['science'][base['key']])
+    if not check_budget: return
+    b=_read_budget(root,day,rid)
+    active_elapsed=max(0.,(_now()-_stamp(b['active_started_at'])).total_seconds()) if b.get('active_attempt_id') else 0.
+    if _now()>=_stamp(b['deadline']) or b['runtime_seconds']+active_elapsed+_presentation_charge(folder,c)>=b['max_runtime_seconds']:
+        raise ValueError('Presentation deadline or runtime exhausted')
+
+
+class PresentationBlocked(ValueError):
+    """Durable terminal display failure, requiring an explicit operator decision."""
+    def __init__(self,payload):
+        self.payload=deepcopy(payload)
+        super().__init__(payload['reason'])
+
+
+def presentation_status(root,day,rid):
+    """Read a stable terminal notification; no admission, counters or model work."""
+    c=read_contract(root,day,rid);folder=issue_dir(root,day,rid)
+    path=folder/'presentation/blocked.json';marker=folder/'presentation/blocked-marker.json'
+    if not path.exists():
+        if marker.exists(): raise StateCorrupt('Missing terminal presentation evidence')
+        return None
+    p=_presentation_read(path)
+    expected={'schema','state','revision_id','contract_sha256','reason','detail','blocked_at',
+              'exhausted_at','operations','checkpoint_sha256','auto_resume','notification_key'}
+    if (set(p)!=expected or p['schema']!=1 or p['state']!='presentation_blocked'
+            or p['revision_id']!=rid or p['contract_sha256']!=digest(c) or p['auto_resume'] is not False
+            or p['notification_key']!=digest({k:v for k,v in p.items() if k!='notification_key'})
+            or p['checkpoint_sha256']!=digest(_presentation_read(folder/'presentation/checkpoint.json'))):
+        raise StateCorrupt('Terminal presentation identity changed')
+    expected_marker={'notification_key':p['notification_key'],'blocked_sha256':digest(p)}
+    if marker.exists() and _presentation_read(marker)!=expected_marker:
+        raise StateCorrupt('Terminal presentation marker changed')
+    return p
+
+
+def _block_presentation(root,day,rid,reason,detail,*,exhausted_at=None):
+    previous=presentation_status(root,day,rid)
+    if previous is not None: return previous
+    folder=issue_dir(root,day,rid);c=read_contract(root,day,rid)
+    if (folder/'ready.json').exists(): raise StateCorrupt('Cannot mark a sealed presentation blocked')
+    cp=_presentation_read(folder/'presentation/checkpoint.json')
+    operations=[]
+    for path in sorted((folder/'presentation/operations').glob('*.json')):
+        op=_presentation_read(path)
+        operations.append({'key':op['key'],'job_id':op['job_id'],'operation_sha256':digest(op),
+                           'started_at':op['started_at'],'deadline':op['deadline']})
+    payload={'schema':1,'state':'presentation_blocked','revision_id':rid,'contract_sha256':digest(c),
+             'reason':reason,'detail':detail,'blocked_at':_now().isoformat(),'exhausted_at':exhausted_at,
+             'operations':operations,'checkpoint_sha256':digest(cp),'auto_resume':False}
+    payload['notification_key']=digest(payload)
+    _presentation_write(folder/'presentation/blocked.json',payload)
+    _presentation_write(folder/'presentation/blocked-marker.json',
+                        {'notification_key':payload['notification_key'],'blocked_sha256':digest(payload)})
+    return payload
+
+
+def _presentation_admission_guard(root,day,rid,c,b):
+    blocked=presentation_status(root,day,rid)
+    if blocked is not None: raise PresentationBlocked(blocked)
+    folder=issue_dir(root,day,rid)
+    if c.get('presentation_policy') is None or not (folder/'presentation').exists(): return
+    # Source/checkpoint corruption is not an invitation to run science again.
+    _presentation_read(folder/'presentation/checkpoint.json')
+    for path in sorted((folder/'presentation/operations').glob('*.json')):
+        op=_presentation_read(path)
+        if not (folder/'presentation/results'/path.name).exists() and _now()>=_stamp(op['deadline']):
+            raise PresentationBlocked(_block_presentation(root,day,rid,'selection_expired',
+                'The original finite visual selection window expired; no implicit retry.',exhausted_at=op['deadline']))
+    if _now()>=_stamp(b['deadline']) or b['runtime_seconds']+_presentation_charge(folder,c)>=b['max_runtime_seconds']:
+        raise PresentationBlocked(_block_presentation(root,day,rid,'presentation_budget_exhausted',
+            'The original issue deadline or runtime is exhausted.',exhausted_at=b['deadline'] if _now()>=_stamp(b['deadline']) else _now().isoformat()))
+
+
+def _finalize_presentation(root,day,rid,attempt,namespace):
+    blocked=presentation_status(root,day,rid)
+    if blocked is not None:return blocked
+    from daily_agent.parent_writer import ExpiredResponse
+    from daily_agent.batch_execution import BudgetExhausted
+    try:
+        return _finalize_presentation_work(root,day,rid,attempt,namespace)
+    except ExpiredResponse:
+        return _block_presentation(root,day,rid,'selection_expired',
+                                  'The original queue generation expired; no implicit retry.',exhausted_at=_now().isoformat())
+    except BudgetExhausted:
+        return _block_presentation(root,day,rid,'presentation_budget_exhausted',
+                                  'The frozen presentation window or issue runtime is exhausted.',exhausted_at=_now().isoformat())
+    except (StateCorrupt,ValueError) as exc:
+        return _block_presentation(root,day,rid,'presentation_validation_failed',str(exc))
+
+
+def _finalize_presentation_work(root,day,rid,attempt,namespace):
+    from daily_agent.scheduling import _approved_items
+    from daily_agent.paper_visual_assets import request_visual_selection,prepare_visual_assets
+    from daily_agent.parent_writer import _folder as queue_folder,digest as queue_digest
+    cp=_presentation_checkpoint(root,day,rid);c=read_contract(root,day,rid)
+    folder=issue_dir(root,day,rid);config=scoped_config(root,day,rid)
+    carry={v['key'] for v in c['carry_forward']};rows=[]
+    for base in cp['approval']:
+        assert_active_generation(root,day,rid,expected_attempt=attempt,expected_namespace=namespace)
+        if base['key'] in carry or base['item_type']!='paper': rows.append(deepcopy(base));continue
+        path=folder/'presentation/results'/(digest(base['key'])+'.json')
+        if path.exists():
+            row=_presentation_read(path)['row'];_validate_display(base,row);rows.append(row);continue
+        execution=_PresentationOperation(root,day,rid,base['key'],attempt,namespace)
+        item=_approved_items([deepcopy(base)])[0]
+        # Always derive selection from source pixels; never trust stale raw selection.
+        request_visual_selection(item.material,config.root,timeout=90,execution=execution,
+                                 operation=(base['key'],'presentation','visual_selection',0))
+        prepare_visual_assets(item.material,config.reports_dir,config.sources.get('report_writing',{}))
+        row=item.to_dict();_validate_display(base,row)
+        evidence={'base_sha256':digest(base),'science':cp['science'][base['key']],
+                  'row':row,'completed_at':_now().isoformat(),'operation_sha256':None,'answer':None,'claim':None}
+        if execution.path.exists():
+            op=_presentation_read(execution.path)
+            answer=read_json(queue_folder(config.root)/(op['job_id']+'.answer.json'))
+            if (not isinstance(answer,dict) or answer.get('job_id')!=op['job_id']
+                    or answer.get('response_sha256')!=queue_digest(item.material.raw['paper_visual_selection'])
+                    or not answer.get('worker_id') or not answer.get('model')
+                    or _stamp(answer['received_at'])>_stamp(op['deadline']) or _now()>_stamp(op['deadline'])):
+                raise StateCorrupt('Presentation answer missing provenance or expired')
+            evidence.update(operation_sha256=digest(op),answer=answer,
+                            claim=read_json(queue_folder(config.root)/(op['job_id']+'.claim.json')))
+        _validate_presentation_result(root,day,rid,base,evidence,cp['science'][base['key']])
+        _presentation_write(path,evidence);rows.append(row)
+    _validate_presentation_final(root,day,rid,rows)
+    return _seal_ready_unlocked(root,day,rid,rows,presentation_owner=(attempt,namespace))
+
+
 def generate(root,day,revision_id,*,expected_attempt=None,expected_namespace=None):
+    from daily_agent.workflow_state import assert_issue_allowed
+    assert_issue_allowed(Path(root), day)
+    from daily_agent.workflow_state import assert_mutation_allowed
+    assert_mutation_allowed(Path(root))
     """Explicit bounded pool-only revision worker; never invoke legacy day pipeline.
 
     The canonical library and content-validated reading/PDF caches are shared.
@@ -688,6 +1083,8 @@ def generate(root,day,revision_id,*,expected_attempt=None,expected_namespace=Non
                 raise ValueError('Sealed revision cannot regenerate')
             c=read_contract(root,day,revision_id); config=scoped_config(root,day,revision_id)
             assert_active_generation(root,day,revision_id,expected_attempt=expected_attempt,expected_namespace=expected_namespace)
+            if c.get('presentation_policy') is not None and (folder/'presentation').exists():
+                return _finalize_presentation(root,day,revision_id,expected_attempt,expected_namespace)
             library=load_material_library(canonical)
             carried=_approved_items(carry_forward_rows(root,day,revision_id))
             records,drafts,reviews=[],[],[]
@@ -781,8 +1178,8 @@ def generate(root,day,revision_id,*,expected_attempt=None,expected_namespace=Non
                 snapshot={'rows':[i.to_dict() for i in approved], 'completed_batches':index+1,
                           'revision_id':revision_id,'contract_sha256':digest(c)}
                 atomic_json(folder/'progress.json',{'payload':snapshot,'sha256':digest(snapshot)})
-            # This worker does not change the exact parent rows to add links or
-            # presentation metadata. HTML rendering remains the handoff's job.
+            if c.get('presentation_policy') is not None:
+                return _checkpoint_presentation(root,day,revision_id)
             return _seal_ready_unlocked(root,day,revision_id,[i.to_dict() for i in approved])
     finally:
         if before is None: os.environ.pop('DAILY_AGENT_DISABLE_EXTERNAL_SECRETS',None)
@@ -791,6 +1188,8 @@ def generate(root,day,revision_id,*,expected_attempt=None,expected_namespace=Non
 
 
 def freeze_completed(root,day,revision_id):
+    from daily_agent.workflow_state import assert_issue_allowed
+    assert_issue_allowed(Path(root), day)
     """Stop admission and seal only committed, revalidated work without models.
 
     Caller must first settle/verify-stop an active child. Unfinished paper work
@@ -809,6 +1208,8 @@ def freeze_completed(root,day,revision_id):
         if _read_budget(root,day,revision_id).get('active_attempt_id'):
             raise ValueError('Verify-stop and settle active revision generation before freezing')
         c=read_contract(root,day,revision_id);config=scoped_config(root,day,revision_id)
+        if c.get('presentation_policy') is not None:
+            return _checkpoint_presentation(root,day,revision_id)
         carried=_approved_items(carry_forward_rows(root,day,revision_id))
         records,drafts,reviews=[],[],[]
         for index in range(c['max_batches']):
@@ -841,12 +1242,49 @@ def freeze_completed(root,day,revision_id):
         return _seal_ready_unlocked(root,day,revision_id,[i.to_dict() for i in approved])
 
 
+
+class ScienceRecoveryRequired(ValueError):
+    def __init__(self, payload):
+        self.payload = payload
+        super().__init__('Expired scientific operation requires authorized recovery')
+
+
+def _science_admission_guard(root, day, revision_id):
+    """Called under generation.lock before reserving another launch."""
+    from daily_agent.batch_dispatch import validate_response_payload
+    folder = issue_dir(root, day, revision_id)
+    state = read_json(folder/'generation.json')
+    if not state or not state.get('checkpoint'):
+        return
+    if state.get('revision_id') != revision_id:
+        raise StateCorrupt('Revision checkpoint identity mismatch')
+    checkpoint = validate_response_payload(state['checkpoint'], day)
+    if checkpoint is None:
+        raise StateCorrupt('Invalid revision generation checkpoint')
+    if checkpoint.get('auto_resume') is False:
+        # A separately authorized, fully validated presentation checkpoint freezes
+        # committed science and does not resume any expired scientific operation.
+        if (read_contract(root,day,revision_id).get('presentation_policy') is not None
+                and (folder/'presentation/checkpoint.json').exists()):
+            _presentation_checkpoint(root, day, revision_id)
+            return
+        raise ScienceRecoveryRequired({**checkpoint, 'state':'blocked_expired_parent_writer',
+                                       'revision_id':revision_id})
+
+
 def run_generation(root,day,revision_id,timeout=900):
+    from daily_agent.workflow_state import assert_issue_allowed
+    assert_issue_allowed(Path(root), day)
+    from daily_agent.workflow_state import assert_mutation_allowed
+    assert_mutation_allowed(Path(root))
     """Parent-supervised launch, every callback bound to immutable token+namespace."""
     import sys
     from daily_agent.workflow_runtime import run_process,CleanupPending
     folder=issue_dir(root,day,revision_id)
-    attempt=reserve_generation(root,day,revision_id,timeout)
+    try:
+        attempt=reserve_generation(root,day,revision_id,timeout)
+    except (PresentationBlocked, ScienceRecoveryRequired) as exc:
+        return exc.payload
     token,namespace=attempt['attempt_id'],attempt['namespace']
     launched=False
     def started(identity):
@@ -856,6 +1294,8 @@ def run_generation(root,day,revision_id,timeout=900):
     def tick():
         _generation_cas(root,day,revision_id,token,namespace,{'heartbeat_at':_now().isoformat()})
     start=time.monotonic()
+    output_log = folder/'logs'/'generation.out.log'
+    output_offset = output_log.stat().st_size if output_log.exists() else 0
     try:
         rc=run_process([sys.executable,'-m','daily_agent.production_revision','worker',
             '--root',str(_config(root).root),'--date',str(day),'--revision-id',revision_id,
@@ -868,11 +1308,30 @@ def run_generation(root,day,revision_id,timeout=900):
         if not launched:
             settle_generation(root,day,revision_id,token,1,time.monotonic()-start,expected_namespace=namespace)
         raise
-    settle_generation(root,day,revision_id,token,rc,time.monotonic()-start,expected_namespace=namespace)
-    return rc
+    from daily_agent.batch_dispatch import read_response_checkpoint
+    checkpoint = read_response_checkpoint(output_log, output_offset, day, revision_id=revision_id) if rc == 75 else None
+    with exclusive_lock(folder/'generation.lock'):
+        _, state = _owned_attempt(root,day,revision_id,token,namespace,allow_settled=True)
+        if checkpoint is not None and checkpoint.get('auto_resume') is False:
+            state['checkpoint'] = checkpoint
+            atomic_json(folder/'generation.json', state)
+        _settle_generation_unlocked(root,day,revision_id,token,rc,time.monotonic()-start,
+                                   expected_namespace=namespace)
+        _, state = _owned_attempt(root,day,revision_id,token,namespace,allow_settled=True)
+        state.pop('checkpoint', None)
+        if checkpoint is not None:
+            state['checkpoint'] = checkpoint
+        _owned_attempt(root,day,revision_id,token,namespace,allow_settled=True)
+        atomic_json(folder/'generation.json', state)
+    blocked=presentation_status(root,day,revision_id)
+    return blocked if blocked is not None else rc
 
 
 def recover_generation(root,day,revision_id):
+    from daily_agent.workflow_state import assert_issue_allowed
+    assert_issue_allowed(Path(root), day)
+    from daily_agent.workflow_state import assert_mutation_allowed
+    assert_mutation_allowed(Path(root))
     """Same-namespace verified cleanup; cross-namespace absence proves nothing."""
     from daily_agent.workflow_runtime import stop_verified_orphan,process_namespace
     folder=issue_dir(root,day,revision_id)
@@ -1048,6 +1507,8 @@ def _replacement_budget(snap,c):
 
 
 def retire_and_replace(root,day,old_id,*,expected_evidence_sha,authorization,expected_source_version,shared_lock_proof):
+    from daily_agent.workflow_state import assert_issue_allowed
+    assert_issue_allowed(Path(root), day)
     """Explicit transaction fence, never proof the unreachable old process died.
 
     The caller supplies root-approved evidence and a genuine cross-executor
@@ -1151,12 +1612,19 @@ def main(argv=None):
         from daily_agent.parent_writer import PendingResponse
         try: result=generate(a.root,day,a.revision_id,expected_attempt=a.expected_attempt,expected_namespace=a.expected_namespace)
         except PendingResponse as exc:
-            print(json.dumps({'state':'expired_parent_writer' if getattr(exc,'expired',False) else 'awaiting_parent_writer',
-                              'job_id':exc.job_id,'issue_date':str(day),'revision_id':a.revision_id}))
+            from daily_agent.batch_dispatch import response_payload
+            print(json.dumps({**response_payload(exc), 'issue_date':str(day), 'revision_id':a.revision_id}))
             return 75
-        print(json.dumps({'generated':True,'revision_id':a.revision_id,'approval_count':len(result['approval'])}))
+        if result.get('state')=='presentation_blocked':
+            print(json.dumps(result));return 0  # Terminal validation result, not a retryable process failure.
+        print(json.dumps({'generated':result.get('state')!='awaiting_presentation','state':result.get('state','ready'),
+                          'revision_id':a.revision_id,'approval_count':len(result['approval'])}))
         return 0
-    if a.action=='generate': return run_generation(a.root,day,a.revision_id,a.timeout)
+    if a.action=='generate':
+        result=run_generation(a.root,day,a.revision_id,a.timeout)
+        if isinstance(result,dict):
+            print(json.dumps(result));return 78
+        return result
     if a.action=='freeze':
         result=freeze_completed(a.root,day,a.revision_id)
     elif a.action=='prepare':result=prepare_handoff(a.root,day,a.revision_id)

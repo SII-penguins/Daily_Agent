@@ -8,12 +8,13 @@ from urllib.parse import urlparse
 from daily_agent.feedback.server import feedback_form_action
 from daily_agent.insights import build_daily_insights
 from daily_agent.rendering.composition import featured_keys, introduction, paper_paragraphs
-from daily_agent.rendering.notes import reading_label, card_gaps, must_read, result_conditions
+from daily_agent.rendering.notes import reading_label, card_gaps, must_read, result_conditions, assert_native_renderable
 from daily_agent.models import ApprovedItem, RunStatus
 from daily_agent.rendering.markdown import _citation_context_text, _list_value, _paper_time, _prefix_label, _recommendation_reason, _tags, _value
 
 
 def render_daily_html(items: list[ApprovedItem], run_date: date, status: RunStatus, insight_config: dict | None = None, writing_config: dict | None = None) -> str:
+    assert_native_renderable(items)
     ranks = {item.key: index for index, item in enumerate(items, start=1)}
     papers = [item for item in items if item.item_type == "paper"]
     repos = [item for item in items if item.item_type == "repo"]
@@ -61,6 +62,7 @@ def _insights_enabled_for_report(insight_config: dict | None) -> bool:
 
 
 def _render_papers(items: list[ApprovedItem], ranks: dict[str, int], run_date: date, writing_config: dict | None = None) -> str:
+    assert_native_renderable(items)
     lines = ['<section class="papers">', "<h2>最新论文</h2>"]
     if not items:
         return "\n".join(lines + ["<p>今日未筛选出论文条目。</p>", "</section>"])

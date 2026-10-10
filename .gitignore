@@ -53,3 +53,12 @@ secret.md
 sources/
 /感官体验站_素材组.zip
 /感官体验站素材/
+
+# Private operational checkpoints and transport receipts
+/production-state/
+/repair-evidence/
+/verification/
+/STATE-ORIGIN.json
+/STATE-MANIFEST.json
+/*library-receipts*.json
+/*recovery-registry*.json

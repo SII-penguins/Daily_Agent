@@ -1,25 +1,25 @@
 # 通过 API 验证 Daily Agent
 
-Canonical For: 固定素材的真实模型验收入口与 API 配置操作；当前结果见 ../progress.txt。
+Canonical For: 固定素材的真实模型验收入口与 API 配置操作；每次验证结果以对应输出目录中的 acceptance.json 为准。
 
 项目通过 Codex CLI 调用模型，API 提供商由 CLI 配置决定。使用第三方 API 包装器时：
 
 ```yaml
 llm_writer:
   provider: codex
-  command: /Users/wuzixie/bin/codex-rethink
+  command: /path/to/your/codex-wrapper
   load_user_config: true
 ```
 
-`load_user_config: true` 保留包装器指定的 CODEX_HOME/config.toml。否则 `--ignore-user-config` 会忽略第三方 provider，可能误连 api.openai.com 并报 401。本机包装器从 macOS Keychain 获取密钥，不把密钥写入项目。API 提供商应在 Codex 配置中指定 `model_provider`，以及 provider 的 `base_url`、`env_key`、`wire_api = "responses"`、`requires_openai_auth = false`。模型、reasoning 等根级设置应放在 TOML 表定义之前，不能误放进 provider 表内。
+`load_user_config: true` 保留包装器指定的 CODEX_HOME/config.toml。否则 `--ignore-user-config` 会忽略第三方 provider，可能误连 api.openai.com 并报 401。包装器应从操作系统密钥存储或授权的外部秘密配置获取密钥，不把密钥写入项目。API 提供商应在 Codex 配置中指定 `model_provider`，以及 provider 的 `base_url`、`env_key`、`wire_api = "responses"`、`requires_openai_auth = false`。模型、reasoning 等根级设置应放在 TOML 表定义之前，不能误放进 provider 表内。
 
-cc-connect 的代理权限和模型鉴权是两件事。当前修复会话已允许本机文件与网络操作；日报内部模型只负责读取传入内容，仍使用 read-only 执行模式。API 工作流不依赖 ChatGPT 登录，`codex login status` 不能作为 API 连通性的唯一判据。
+cc-connect 的代理权限和模型鉴权是两件事。宿主的文件与网络权限应按实际任务单独核实；日报内部模型只负责读取传入内容，仍使用 read-only 执行模式。API 工作流不依赖 ChatGPT 登录，`codex login status` 不能作为 API 连通性的唯一判据。
 
 ## 固定输入验证
 
 ```sh
-cd /Users/wuzixie/Daily_Agent
-/Users/wuzixie/anaconda3/bin/python scripts/validate_reading.py \
+cd /path/to/Daily_Agent
+python scripts/validate_reading.py \
   --input tmp/visual-repair/real-input.json \
   --output tmp/live-acceptance-example \
   --papers 1 --repos 0 --live

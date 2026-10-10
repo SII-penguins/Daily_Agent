@@ -6,6 +6,8 @@ Start with the [English project guide](../README.md) or [中文项目指南](../
 
 - [Local / Feishu reference](local-guide.md) · [本地 / 飞书参考](local-guide.zh-CN.md): installation, optional sources, external secrets, CLI, MCP, feedback and local schedule intent
 - [Cloud operations](cloud-migration.md): separate public-source `parent_queue` root, worker claims, resumable generation, immutable handoffs, backup/restore and private HTML transport
+- [GitHub persistence](github-persistence.md): `main` for source, `daily-artifacts` for public-safe HTML and assets, and separate private runtime recovery
+- [Restart-safe recovery](durable-recovery.md): complete private checkpoints, remote readback, mutation fences and interrupted-write reconciliation
 - [Workflow recovery](workflow-recovery.md): local controller state, cleanup, retry budgets and operator reconciliation
 - [Cloud delivery audit](cloud-delivery-audit.md): delivery-state invariants, ambiguous outcomes and recovery checks
 - [Incremental cloud execution](incremental_execution.md): per-paper completion, shared stage budgets, supervised attempts and recovery boundaries
@@ -31,4 +33,4 @@ The local full profile and cloud profile are separate. Never apply local full-pr
 - [8 October cloud acceptance record](cloud-acceptance-20261008.md): isolated pilot outcomes and remaining production boundary
 - [Cloud dependency lock](cloud-requirements.lock.txt): deployment dependency snapshot, not runtime state or credentials
 
-Historical test counts, pilot labels and migration observations describe their checkpoints, not ongoing monitoring or future guarantees. Read current policy and operation guides before using an old command or interpreting an old result.
+Historical test counts, pilot labels and migration observations describe their checkpoints, not ongoing monitoring or future guarantees. Public regression [fixtures](../tests/fixtures/README.md) use synthetic text and identities where original validation records cannot be redistributed. Read current policy and operation guides before using an old command or interpreting an old result.

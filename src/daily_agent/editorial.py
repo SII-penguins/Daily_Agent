@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from copy import deepcopy
+
 import json
 import re
 import subprocess
@@ -119,14 +121,24 @@ def draft_report_items(config: AppConfig, shortlist: list[MaterialRecord], use_l
 
 
 def _draft_report_items_uncached(config: AppConfig, shortlist: list[MaterialRecord], use_llm: bool = True, *, execution=None) -> list[EditorialDraft]:
-    from daily_agent.reading import CORE, read_papers, verify_draft, semantic_review
+    from daily_agent.reading import CORE, read_papers, semantic_review as legacy_semantic_review
+    from daily_agent.source_evidence_policy import (NATIVE, configured_policy, record_policy,
+        native_reading_config, bind_source_evidence, native_text_complete, verify_draft)
+    from daily_agent.native_claim_review import review_native_claims
+    def semantic_review(draft, record, invoke, timeout, **kwargs):
+        reviewer = review_native_claims if record_policy(record) == NATIVE else legacy_semantic_review
+        return reviewer(draft, record, invoke, timeout, **kwargs)
     settings = _llm_writer_settings(config)
     if execution is not None and settings['provider'] != 'parent_queue':
         raise ValueError('Explicit batch execution requires parent_queue transport')
-    def invoke(prompt, timeout, image_path=None, *, execution=None, operation=None):
+    if execution is not None:
+        from daily_agent.reading_batches import read_papers
+    def invoke(prompt, timeout, image_path=None, *, execution=None, operation=None, operations=None):
         if settings['provider'] == 'parent_queue':
             from daily_agent.parent_writer import request
             kwargs = {'execution': execution, 'operation': operation} if execution is not None else {}
+            if operations is not None:
+                kwargs = {'execution': execution, 'operations': operations}
             return request(settings['workdir'], prompt, timeout, image_path, **kwargs)
         command = _llm_writer_command(settings, prompt)
         if image_path:
@@ -136,27 +148,40 @@ def _draft_report_items_uncached(config: AppConfig, shortlist: list[MaterialReco
                                 capture_output=True, text=True, timeout=timeout)
         return _decode_model_json(result.stdout)
     structured = [r for r in shortlist if r.item_type == "paper" and r.paper_document]
-    # Preserve native extraction before any image-grounded replacement.
-    for record in structured:
+    policy = configured_policy(config)
+    native_records = [r for r in structured if policy == NATIVE and r.paper_document.get('source_type') == 'pdf']
+    strict_records = [r for r in structured if r not in native_records]
+    # The new policy reads the immutable extracted source directly. It never
+    # admits whole-page transcription/review/fallback jobs or fabricates strict
+    # fidelity. Raw-note identity remains the unchanged source reading contract.
+    kwargs = {'execution': execution} if execution is not None else {}
+    if native_records:
+        read_papers(native_records, native_reading_config(config), invoke if use_llm else None, **kwargs)
+        from daily_agent.native_visual_evidence import prepare_native_visual_evidence
+        for record in native_records:
+            bind_source_evidence(record, config)
+            if native_text_complete(record):
+                prepare_native_visual_evidence(record, config, invoke if use_llm else None, **kwargs)
+    # Preserve the old strict protocol and its exact repaired-document lineage.
+    for record in strict_records:
         if execution is None and record.paper_document and 'native_document' not in record.paper_document:
             record.paper_document['native_document'] = dict(record.paper_document)
-    kwargs = {'execution': execution} if execution is not None else {}
-    read_papers(structured, config, invoke if use_llm else None, **kwargs)
-    from daily_agent.visual_reading import read_visuals
-    # Screenshot presentation is independent of evidence verification.
-    read_visuals(structured, config, invoke if use_llm else None, **kwargs)
-    from daily_agent.visual_fidelity import repair_visuals
-    repair_visuals(structured, config, invoke if use_llm else None, **kwargs)
-    visual_results = {r.key:r.reading.get('visual', {}) for r in structured}
-    repaired_records = [r for r in structured if r.paper_document.get('evidence_basis') == 'image_transcription_reviewed']
-    # Re-chunked image transcription has a different evidence identity. Never
-    # synthesize it using notes or chunk IDs from the native extraction.
+    fidelity_first = execution is not None and config.sources.get('reading', {}).get('fidelity_enabled', False)
+    if not fidelity_first:
+        read_papers(strict_records, config, invoke if use_llm else None, **kwargs)
+    from daily_agent.visual_inventory import read_visual_evidence
+    read_visual_evidence(strict_records, config, invoke if use_llm else None, **kwargs)
+    visual_results = {r.key:r.reading.get('visual', {}) for r in strict_records}
+    repaired_records = [r for r in strict_records if r.paper_document.get('evidence_basis') == 'image_transcription_reviewed']
+    if fidelity_first:
+        legacy_native = [r for r in strict_records if r.paper_document.get('evidence_basis') != 'image_transcription_reviewed']
+        read_papers(legacy_native, config, invoke if use_llm else None, **kwargs)
     if execution is not None:
         for record in repaired_records:
             execution.bind_repaired(record)
     repaired_kwargs = {**kwargs, 'phase': 'repaired'} if execution is not None else {}
     read_papers(repaired_records, config, invoke if use_llm else None, **repaired_kwargs)
-    for record in structured:
+    for record in strict_records:
         visual = visual_results[record.key]
         record.reading['visual'] = visual
         if visual.get('required_pages') and not visual.get('strict_fidelity'):
@@ -191,12 +216,17 @@ def _draft_report_items_uncached(config: AppConfig, shortlist: list[MaterialReco
             rejected = [c for c in draft.verification.get("semantic_checks", []) if not c.get("supported")]
             claim_issues = [issue for issue in draft.verification.get("issues", [])
                             if issue.split(":", 1)[0] in CORE]
-            if use_llm and (rejected or claim_issues) and _primary_available(execution):
+            page_failure = draft.verification.get('native_claim_review', {}).get('diagnostic', {})
+            if use_llm and (rejected or claim_issues or page_failure) and _primary_available(execution):
                 # Exactly one evidence-guided rewrite; review thresholds do not change.
                 from daily_agent.reading import repair_evidence
                 feedback = {"rejected_claims": rejected,
                             "mechanical_issues": draft.verification.get("issues", []),
                             "source_chunks": repair_evidence(record, draft)}
+                if record_policy(record) == NATIVE:
+                    from daily_agent.native_claim_review import writer_citation_contract
+                    feedback['native_review_citation_contract'] = writer_citation_contract(record)
+                    feedback['page_budget_failure'] = page_failure
                 if execution is not None:
                     repaired = _draft_with_llm_batch([record], timeout_seconds=settings["timeout_seconds"],
                         feedback=feedback, execution=execution, settings=settings, substep='rewrite')
@@ -220,6 +250,11 @@ def _draft_report_items_uncached(config: AppConfig, shortlist: list[MaterialReco
                     if evidence_score(candidate) > evidence_score(draft):
                         drafts[drafts.index(draft)] = candidate
                         draft = candidate
+                    record.reading['semantic_rewrite'] = {
+                        'attempts': 1, 'maximum_attempts': 1,
+                        'status': 'passed' if candidate.verification.get('semantic_support') == 'model_checked' else 'exhausted',
+                        'candidate_review': deepcopy(candidate.verification.get('native_claim_review', {})),
+                        'selected_candidate': draft is candidate}
                 record.reading["verification"] = draft.verification
                 record.reading["semantic_rewrite_attempted"] = True
             if use_llm and draft.verification.get("semantic_support") == "model_checked" and _primary_available(execution):
@@ -232,6 +267,12 @@ def _draft_report_items_uncached(config: AppConfig, shortlist: list[MaterialReco
                 atomic_json(config.root / "data" / "reading" / record.reading["fingerprint"] / "draft-v3.json", draft.to_dict())
         elif draft.key in cached_drafts:
             by_key[draft.key].reading["verification"] = draft.verification
+        record = by_key.get(draft.key)
+        if record is not None and record_policy(record) == NATIVE:
+            # These are review-bound projections, not independent approvals.
+            record.detail = deepcopy(draft.draft_fields)
+            record.reading['claim_evidence'] = deepcopy(draft.claim_evidence)
+            record.reading['verification'] = deepcopy(draft.verification)
     return drafts
 
 
@@ -266,6 +307,13 @@ def approve_publication(
             material.reading["verification"] = draft.verification
             material.reading["claim_evidence"] = draft.claim_evidence
         material.detail = draft.draft_fields
+        from daily_agent.source_evidence_policy import (NATIVE, STRICT, record_policy,
+            expected_record_policy, native_review_supported)
+        if material.item_type == 'paper':
+            actual, expected = record_policy(material), expected_record_policy(config, material)
+            if actual != STRICT or expected == NATIVE:
+                if actual != NATIVE or expected != NATIVE or not native_review_supported(material, draft):
+                    continue
         approved.append(
             ApprovedItem(
                 key=draft.key,
@@ -283,7 +331,7 @@ def approve_publication(
         # limited PASS can stop refill or displace a fully reviewed candidate,
         # only to be removed by the independent handoff audit later.
         from daily_agent.cloud_workflow import _qualifying_rows
-        rows, _ = _qualifying_rows([item.to_dict() for item in approved])
+        rows, _ = _qualifying_rows([item.to_dict() for item in approved], config=config)
         qualifying = {row["key"] for row in rows}
         approved = [item for item in approved if item.key in qualifying]
     approved.sort(key=lambda item: (item.item_type == "paper" and item.material.reading.get("verification", {}).get("status") == "limited"))
@@ -946,6 +994,7 @@ def _llm_prompt(shortlist: list[MaterialRecord], max_input_chars_per_item: int =
     settings = settings if settings is not None else (_LLM_WRITER_SETTINGS.get() or {})
     input_limit = max(1, int(max_input_chars_per_item))
     from daily_agent.reading import synthesis_evidence
+    from daily_agent.visual_inventory import writer_visual_observations
     records = []
     for record in shortlist:
         records.append(
@@ -957,7 +1006,7 @@ def _llm_prompt(shortlist: list[MaterialRecord], max_input_chars_per_item: int =
                 "paper_section_notes": {} if record.paper_document else _paper_section_notes(record),
                 "reading_notes": synthesis_evidence(record, int(settings.get("synthesis_chars", 60000))) if record.paper_document else [],
                 "reading_coverage": {k:v for k,v in record.reading.items() if k not in {"notes", "visual"}},
-                "visual_observations": {k:v for k,v in record.reading.get("visual", {}).items() if k != "fidelity"},
+                "visual_observations": writer_visual_observations(record.reading.get("visual", {})),
                 "paper_text_excerpt": "" if record.paper_document else (record.paper_text_excerpt or "")[:input_limit],
                 "paper_text_status": record.paper_text_status,
                 "repo_description": record.repo_description,
@@ -974,12 +1023,18 @@ def _llm_prompt(shortlist: list[MaterialRecord], max_input_chars_per_item: int =
                 },
             }
         )
+        from daily_agent.source_evidence_policy import NATIVE, record_policy
+        if record_policy(record) == NATIVE:
+            from daily_agent.native_claim_review import writer_citation_contract
+            records[-1]['native_review_citation_contract'] = writer_citation_contract(record)
     return (
         "你是 Daily_Agent 编辑部写手，要像研究助理通览论文后写阅读笔记，而不是改写摘要。"
         "不要调用任何工具、不要读取本地文件、不要联网，只处理下面已经给出的输入。"
         "只基于输入素材写结构化草稿；没有来源依据就写 not_stated，禁止编造。"
         "有 reading_notes 时必须综合全部分块笔记与引句，abstract 仅作目录线索，不能替代已读正文。旧版无分块记录时才参考 paper_section_notes 和 paper_text_excerpt，并降低 confidence。"
         "visual_observations.strict_fidelity 为 true 时，reading_notes 来自经独立图片复核的重建文本；原生抽取差异保留用于审计，不代表重建文本仍有同样错误。模型复核不证明论文数学或科学结论正确。"
+        "source_evidence.policy为native_claim_evidence_v1时，笔记只证明原生全文文本阅读覆盖，不证明每字、表格或公式正确；最终引用结论须独立核对原页像素。明确保留局部抽取缺口，不猜补截断文本；图表/公式使用精选原图，不重建全篇。"
+        "提供native_review_citation_contract时，先联合规划所有字段的引证页并核对chunk_pages：全部保留claim_evidence必须能分入最多max_review_packs个包，每包不超过max_pages_per_review_pack页；每个字段的全部引证必须放在同一个包，不得拆开一句话的证据。优先共用充分支持多个字段的关键页。若超额，重写较次要主张及完整引证，绝不能仅删引句或截断送审页面，也不能删掉数字所需条件；无法忠实表达则相应字段写not_stated。"
         "metadata.citation_context 是 OpenAlex 引用脉络，可用于判断这篇论文的上游基础、下游引用和影响力，但不能代替正文证据。"
         "如果 paper_text_status.sufficient_for_deep_summary 为 false，必须在 writer_notes 里说明证据缺口，并降低 confidence。"
         "每篇论文都要回答：1) 发现/针对什么具体问题；2) 用什么方法解决；3) 为什么这个方法理论上或工程上能解决；4) 相对已有工作或关键参考的新意/差异；5) 实验/结果如何；6) 有什么局限；7) 对硬件感知量子线路综合/编译、QEC、量子真机或用户研究有什么可迁移点。"
