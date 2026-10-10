@@ -10,6 +10,7 @@ Start with the [English project guide](../README.md) or [中文项目指南](../
 - [Restart-safe recovery](durable-recovery.md): complete private checkpoints, remote readback, mutation fences and interrupted-write reconciliation
 - [Workflow recovery](workflow-recovery.md): local controller state, cleanup, retry budgets and operator reconciliation
 - [Cloud delivery audit](cloud-delivery-audit.md): delivery-state invariants, ambiguous outcomes and recovery checks
+- [Paper-first v3](paper-first-v3.md): opt-in two-job full-paper workflow, bounded repair, qualified partial HTML and small base/delta checkpoints
 - [Incremental cloud execution](incremental_execution.md): per-paper completion, shared stage budgets, supervised attempts and recovery boundaries
 - [Batch execution contract](batch_execution_contract.md): durable operation slots, conservative accounting and completion transactions
 - [Production revisions](production_revision.md): explicit republishing authorization, preserved original editions and transaction-fenced executor-loss recovery

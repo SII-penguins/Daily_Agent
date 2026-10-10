@@ -79,6 +79,10 @@ DAILY_AGENT_DISABLE_EXTERNAL_SECRETS=1 python -m daily_agent.cli quality check \
 
 This only creates and inspects the profile. It does not register a dispatcher, install a schedule, publish a Site or send a message. Complete the [cloud setup](docs/cloud-migration.md), including source access, job claims, recipient authorization, backup and readback, before scheduling. A queued-writer exit code of `75` is a resumable checkpoint, not successful generation.
 
+## Opt-in simpler paper workflow
+
+For a fresh issue, the [paper-first v3 workflow](docs/paper-first-v3.md) consolidates full-paper reading, explanation and visual selection into one job, followed by one independent claim-and-pixel review. It supports one bounded repair and qualified partial HTML. It is an explicit parent-assisted path; legacy production and delivery remain unchanged.
+
 ## Configuration
 
 - [`config/interests.yaml`](config/interests.yaml): research domains, include/expand/exclude terms, tags and daily targets

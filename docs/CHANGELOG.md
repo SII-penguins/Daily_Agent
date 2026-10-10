@@ -4,6 +4,10 @@
 
 This file separates development and acceptance milestones from the project guide. Dates are checkpoints, not continuing guarantees. Undated follow-ups below retain the original record's uncertainty. Passing tests, source readiness, scientific acceptance, external delivery and scheduled production acceptance are separate claims.
 
+## 2026-10-10: opt-in paper-first workflow
+
+Private deployment and trial details are retained in private operational records. Offline validation does not establish production delivery.
+
 ## 2026-10-08
 
 ### Research and report standard
