@@ -79,6 +79,10 @@ DAILY_AGENT_DISABLE_EXTERNAL_SECRETS=1 python -m daily_agent.cli quality check \
 
 这两步只创建并检查画像，不会注册任务分派器、安装定时任务、发布 Site 或发送消息。安排调度前，请完成[云端配置](docs/cloud-migration.md)，核实信源访问、任务认领、收件人授权、备份与回读。等待上层模型响应时返回 `75` 表示可恢复检查点，不表示生成成功。
 
+## 可选的精简论文流程
+
+新建一期时，可显式选择[paper-first v3](docs/paper-first-v3.md)：一次完整论文阅读、中文解释与原图选择，再做一次独立的论断和图像核验。支持一轮局部修正，以及只含已合格论文的部分 HTML。它仍需上层助手配合，不会自动替换既有生产任务或发送日报。
+
 ## 配置入口
 
 - [`config/interests.yaml`](config/interests.yaml)：研究领域、包含/扩展/排除关键词、标签与每日目标

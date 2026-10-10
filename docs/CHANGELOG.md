@@ -4,6 +4,10 @@
 
 This file separates development and acceptance milestones from the project guide. Dates are checkpoints, not continuing guarantees. Undated follow-ups below retain the original record's uncertainty. Passing tests, source readiness, scientific acceptance, external delivery and scheduled production acceptance are separate claims.
 
+## 2026-10-10: opt-in paper-first workflow
+
+Added a separate new-issue paper-sized reading/draft job plus independent claim-and-pixel review, one bounded local repair, qualified partial HTML and base/latest-delta private checkpoint helpers. Legacy production protocols and published editions are unchanged. The [two-paper pilot](paper-first-v3-pilot.md) reached complete qualified HTML in 12m34s and actual remote restore in 13m39s, including setup and one repair; this is not an 8+2 production guarantee. Full functional suite: 2,122 passed; final prompt clarification: 83 focused tests passed.
+
 ## 2026-10-08
 
 ### Research and report standard
