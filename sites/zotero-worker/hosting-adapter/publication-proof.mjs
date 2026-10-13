@@ -3,6 +3,10 @@
  * current registry/head discovery, audience and gateway checks remain with the host.
  */
 import assert from 'node:assert/strict';
+import { verifyCatalogAppend, catalogDataPath, verifyIssueAgainstArchive } from './reviewed-catalogs.mjs';
+import { validateReviewedRegistry } from '../src/reviewed-issues.mjs';
+import { verifyNavigationDelta, validateMappings } from './reading-navigation.mjs';
+import { verifyNavigationAppend } from './compose-navigation-append.mjs';
 import { readFile, lstat, realpath } from 'node:fs/promises';
 import { resolve, posix } from 'node:path';
 import { pathToFileURL, fileURLToPath } from 'node:url';
@@ -144,6 +148,32 @@ async function regularBytes(path,limit=256*1024*1024) {
   return readFile(path);
 }
 
+/** Reconstruct renderer insertion order from the bound complete manifest without
+ * hiding any observed file. The strict proof parser also rejects duplicate keys.
+ */
+export function orderedNavigationTree(files){
+  if(!(files instanceof Map) || !Buffer.isBuffer(files.get('manifest.json')))throw new Error('Complete navigation archive required');
+  const manifest=JSON.parse(files.get('manifest.json'));
+  if(!object(manifest.files))throw new Error('Navigation manifest file inventory required');
+  const paths=Object.keys(manifest.files);
+  same([...paths].sort(),[...files.keys()].filter(path=>path!=='manifest.json').sort(),'Navigation manifest differs from complete observed file set');
+  return new Map([...paths.map(path=>[path,files.get(path)]),['manifest.json',files.get('manifest.json')]]);
+}
+
+/** Mapping authority is a fully validated reviewed projection bound to its sealed
+ * entry. Callers separately require canonical compiled bytes (or explicit pinned
+ * prepared files before the existing post-refresh catalog append protocol).
+ */
+export async function reviewedNavigationMappings({issues,manifest,readHtml}) {
+  await validateReviewedRegistry(issues);
+  for (const issue of issues) await verifyIssueAgainstArchive(issue,manifest,readHtml);
+  if (!issues.length) return [];
+  return validateMappings(issues.map(issue=>({
+    from:'/'+issue.entry_path.slice(0,-'/index.html'.length)+'/reading.html',
+    to:'/zotero/reports/'+issue.issue_id
+  })));
+}
+
 export async function verifyPublication({registry,repo,dist,buildReceipt,deploymentFile,versionFile,artifact,expectedCommit,entryPath,htmlSha256,migrationVerification=false}) {
   if (!commitPattern.test(expectedCommit) || !sha.test(htmlSha256)) throw new Error('Exact commit and reviewed HTML SHA256 required');
   safeName(entryPath);
@@ -152,6 +182,7 @@ export async function verifyPublication({registry,repo,dist,buildReceipt,deploym
   const git = gitReader(repo);
   if (resolve(git.run('rev-parse','--show-toplevel').toString().trim()) !== repo) throw new Error('Use the exact private Site Git checkout root');
   try { await lstat(resolve(repo,'.sites-runtime/archive-refresh-pending.json')); throw new Error('Interrupted archive refresh must be reconciled before publication proof'); } catch (error) { if (error.code!=='ENOENT') throw error; }
+  try { await lstat(resolve(repo,'.sites-runtime/catalog-append-pending.json')); throw new Error('Interrupted catalog append must be reconciled before publication proof'); } catch (error) { if(error.code!=='ENOENT')throw error; }
   const committed = git.tree(expectedCommit);
   const hosting = JSON.parse(git.read(expectedCommit,'.openai/hosting.json'));
   const guarded = guardPublication({registry,hosting,projectId:hosting.project_id,migrationVerification});
@@ -168,10 +199,6 @@ export async function verifyPublication({registry,repo,dist,buildReceipt,deploym
     archivePrefix='dist/';
   }
   const priorFiles = priorTree.filter(r=>r.path.startsWith(archivePrefix) && ![archivePrefix+'index.html',archivePrefix+'manifest.json'].includes(r.path));
-  for (const previousFile of priorFiles) {
-    const translated = {...previousFile,path:'public/'+previousFile.path.slice(archivePrefix.length)};
-    same(committed.find(r=>r.path===translated.path),translated,'Previously published archive bytes changed or disappeared');
-  }
   const oldManifest = JSON.parse(git.read(guarded.profile.site_source_commit_sha,archivePrefix+'manifest.json'));
   const newManifest = JSON.parse(git.read(expectedCommit,'public/manifest.json'));
   if (!Array.isArray(oldManifest.entries) || !Array.isArray(newManifest.entries)) throw new Error('Archive manifest entries required');
@@ -181,7 +208,34 @@ export async function verifyPublication({registry,repo,dist,buildReceipt,deploym
     same(matches[0],oldEntry,'Prior archive entry record changed');
   }
   if (!migrationVerification) {
-    same(committed.filter(r=>!r.path.startsWith('public/')),priorTree.filter(r=>!r.path.startsWith('public/')),'Archive-only publication changed framework/runtime/manifests/migrations');
+    await verifyCatalogAppend({prior:priorTree.filter(r=>!r.path.startsWith('public/')),current:committed.filter(r=>!r.path.startsWith('public/')),
+      readCurrent:path=>git.read(expectedCommit,path),manifest:newManifest,oldManifest});
+  }
+  if(migrationVerification){
+    await verifyCatalogAppend({prior:[],current:committed.filter(r=>r.path.startsWith('zotero/reviewed-issues/')),
+      readCurrent:path=>git.read(expectedCommit,path),manifest:newManifest,oldManifest,migrationAdmission:true});
+  }
+  const reviewed=committed.filter(r=>catalogDataPath(r.path)).map(r=>JSON.parse(git.read(expectedCommit,r.path)));
+  const navigationMappings=await reviewedNavigationMappings({issues:reviewed,manifest:newManifest,readHtml:path=>git.read(expectedCommit,'public/'+path)});
+  let navigationProof=null;
+  if(navigationMappings.length){
+    const before=orderedNavigationTree(new Map(priorTree.filter(r=>r.path.startsWith(archivePrefix)).map(r=>[r.path.slice(archivePrefix.length),git.read(guarded.profile.site_source_commit_sha,r.path)])));
+    const after=orderedNavigationTree(new Map(committed.filter(r=>r.path.startsWith('public/')).map(r=>[r.path.slice(7),git.read(expectedCommit,r.path)])));
+    const oldKeys=new Set(oldManifest.entries.map(e=>e.key)),approvedEntries=newManifest.entries.filter(e=>!oldKeys.has(e.key));
+    if(migrationVerification){
+      if(approvedEntries.length)throw new Error('Initial navigation migration cannot append archive entries');
+      navigationProof=verifyNavigationDelta({before,after,mappings:navigationMappings,requireChange:false});
+    }else{
+      navigationProof=verifyNavigationAppend({baseline:before,candidate:after,approvedEntries,mappings:navigationMappings,after});
+    }
+  }
+  // These two global paths are accepted only after independent complete-tree
+  // re-derivation above, never as a blanket mutable-file exception.
+  for (const previousFile of priorFiles) {
+    const relativePath=previousFile.path.slice(archivePrefix.length);
+    if(navigationProof && ARCHIVE_UI_FILES.includes(relativePath))continue;
+    const translated = {...previousFile,path:'public/'+relativePath};
+    same(committed.find(r=>r.path===translated.path),translated,'Previously published archive bytes changed or disappeared');
   }
   const [receiptBytes,deploymentBytes,versionBytes,artifactBytes] = await Promise.all([
     regularBytes(buildReceipt,16*1024*1024),regularBytes(deploymentFile,1024*1024),regularBytes(versionFile,1024*1024),regularBytes(artifact)
@@ -203,6 +257,16 @@ export async function verifyPublication({registry,repo,dist,buildReceipt,deploym
   same(JSON.parse(await readOutput('.openai/hosting.json')),hosting,'Output hosting manifest differs from committed source');
   const wrangler = JSON.parse(await readOutput('server/wrangler.json'));
   if (wrangler.assets?.binding !== 'ASSETS' || wrangler.assets?.directory !== '../client' || wrangler.assets?.run_worker_first !== true || wrangler.assets?.not_found_handling !== 'none' || !wrangler.d1_databases?.some(b=>b.binding==='DB') || !wrangler.r2_buckets?.some(b=>b.binding==='BUCKET')) throw new Error('Worker-first ASSETS/DB/BUCKET build configuration required');
+  if(reviewed.length){
+    const workerText=(await readOutput('server/index.js')).toString('utf8');
+    for(const issue of reviewed)if(!workerText.includes(issue.projection_sha256))throw new Error('Reviewed projection missing from native server artifact');
+    for(const file of outputs){
+      if(file.path.endsWith('.map'))throw new Error('Reviewed projections forbid published source maps');
+      if(!file.path.startsWith('client/'))continue;
+      const content=(await readOutput(file.path)).toString('utf8');
+      if(reviewed.some(issue=>[issue.projection_sha256,issue.owner_id,issue.personal_scope,'daily-agent-reviewed-issue-v1'].some(pin=>content.includes(pin))))throw new Error('Server reviewed projection leaked into native client output');
+    }
+  }
   const archive = inputs.filter(r=>r.path.startsWith('public/')).map(r=>({...r,path:r.path.slice(7)}));
   for (const f of archive) same(output.get('client/'+f.path),{...f,path:'client/'+f.path},'Committed archive bytes differ from built assets');
   const archiveManifest = JSON.parse(git.read(expectedCommit,'public/manifest.json'));
@@ -285,7 +349,7 @@ export async function verifyPublication({registry,repo,dist,buildReceipt,deploym
     source_inputs:inputs,build_outputs:outputs,archive_files:archive,
     evidence:{build_receipt:metadata('build_receipt',receiptBytes),deployment:metadata('deployment',deploymentBytes),site_version:metadata('site_version',versionBytes),artifact:metadata('artifact',artifactBytes)},
     native_saved_artifact_verified:true,remote_http_verified:false,owner_audience_verified:false,gateway_identity_verified:false,
-    migration_verification:migrationVerification,registry_changed:false,chat_sent:false
+    migration_verification:migrationVerification,navigation_proof:navigationProof,registry_changed:false,chat_sent:false
   };
 }
 

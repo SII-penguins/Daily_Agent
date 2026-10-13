@@ -18,10 +18,12 @@ async function inputs(){
   return rows;
 }
 async function assertRefreshComplete(){
-  try{await lstat(resolve(root,'.sites-runtime/archive-refresh-pending.json'));throw new Error('Interrupted archive refresh: build is fenced until its saved transaction is reconciled');}catch(error){if(error.code!=='ENOENT')throw error;}
+  for(const pending of ['archive-refresh-pending.json','catalog-append-pending.json']){try{await lstat(resolve(root,'.sites-runtime',pending));throw new Error(pending==='archive-refresh-pending.json'?'Interrupted archive refresh: build is fenced until reconciled':'Interrupted catalog append: build is fenced until reconciled');}catch(error){if(error.code!=='ENOENT')throw error;}}
 }
 await assertRefreshComplete();
 const { loadPrivateBundles } = await import('./private-bundle-assets.mjs');
+const { loadReviewedIssues } = await import('../zotero/hosting-adapter/reviewed-catalogs.mjs');
+const reviewedIssues=await loadReviewedIssues(root);
 const before=await inputs();
 const privateManifest=await loadPrivateBundles(root);
 const result=spawnSync(process.execPath,['scripts/run-framework.mjs','build'],{cwd:root,stdio:'inherit'});
@@ -42,6 +44,18 @@ if(privateManifest){
   }
   if(pins.some(pin=>!worker.includes(pin)) || !worker.includes('PRIVATE_BUNDLE_PREPARATION_TEMPORARILY_UNAVAILABLE') || worker.includes('typeof __ZOTERO_PRIVATE_BUNDLE_MANIFEST__') || worker.includes('typeof __ZOTERO_PRIVATE_BUNDLE_UPLOAD_MODE__') || !worker.includes('daily-agent-owner-bundle-v1') || worker.includes('PRIVATE_ASSET_HASH_MISMATCH'))throw new Error('Private bundle manifest was not compiled into the actual server Worker');
 }
+if(reviewedIssues.length){
+  const worker=await readFile(resolve(root,'dist/server/index.js'),'utf8');
+  for(const issue of reviewedIssues){
+    if(!worker.includes(issue.projection_sha256))throw new Error('Reviewed issue projection missing from server Worker');
+    for(const asset of await tree(resolve(root,'dist/client'))){
+      const text=(await readFile(resolve(root,'dist/client',asset.path))).toString('utf8');
+      if([issue.projection_sha256,issue.owner_id,issue.personal_scope,'daily-agent-reviewed-issue-v1'].some(pin=>text.includes(pin)))throw new Error('Server reviewed projection leaked into client output');
+    }
+  }
+  if((await tree(resolve(root,'dist'))).some(f=>f.path.endsWith('.map')))throw new Error('Reviewed projection builds forbid source maps');
+}
+await loadReviewedIssues(root);
 const verify=spawnSync(process.execPath,['scripts/verify-archive.mjs','public','dist/client'],{cwd:root,stdio:'inherit'});
 if(verify.error||verify.status!==0)throw verify.error||new Error('Archive preservation failed');
 await assertRefreshComplete();

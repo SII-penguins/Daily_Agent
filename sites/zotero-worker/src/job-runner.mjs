@@ -72,11 +72,11 @@ const PIN_SQL=`EXISTS (SELECT 1 FROM zotero_report_catalogs c WHERE c.owner_id =
 const pinArgs=job=>[job.owner_id,job.report_id,job.catalog_id,job.catalog_version,job.catalog_sha256];
 const JOB_SQL='SELECT * FROM zotero_execution_jobs WHERE owner_id = ? AND job_id = ?';
 
-async function createJob({db,ownerId,request,connection,liveGate,now=Date.now}={}) {
+async function createJob({db,ownerId,request,connection,liveGate,now=Date.now,metadataFirst=false}={}) {
   await gate(liveGate);
   if(!db?.prepare||!db?.batch)fail('STORAGE_UNAVAILABLE',503);
   if(!request||typeof request!=='object')fail('INVALID_SAVE_REQUEST',400);
-  await activeConnection(db,ownerId,connection,request.pdf_intent==='open_access_if_available');
+  await activeConnection(db,ownerId,connection,!metadataFirst && request.pdf_intent==='open_access_if_available');
   const {row,catalog}=await loadCatalog(db,ownerId,request.report_id,request.catalog_id,connection.library_id);
   const selected=selectedPlan(catalog,request);
   if(request.catalog_version!==row.catalog_version)fail('CATALOG_VERSION_MISMATCH');
@@ -175,7 +175,7 @@ async function guard(context) {
     ...activeArgs(connection),...pinArgs(job)).run();
   if(update.meta?.changes!==1)fail('LEASE_OR_CONNECTION_LOST');
   // Permission downgrades at the same connection version must also fail closed.
-  await activeConnection(db,job.owner_id,connection,job.pdf_intent==='open_access_if_available');
+  await activeConnection(db,job.owner_id,connection,(!context.metadataFirst || context.pdfStage) && job.pdf_intent==='open_access_if_available');
   const cooldown=await first(db,'SELECT not_before FROM zotero_execution_leases WHERE library_id = ?',job.library_id);
   if(cooldown?.not_before>timestamp(now)){const error=new ExecutionError('LIBRARY_BACKOFF_ACTIVE');error.retryAfterMs=cooldown.not_before-timestamp(now);throw error;}
 }
@@ -346,7 +346,10 @@ async function privatePdf(context) {
   let bytes;
   try{bytes=await context.blobs.readBlob({ownerId:context.job.owner_id,reportId:context.job.report_id,
     catalogId:context.job.catalog_id,paperId:context.paper.paper_id,sha256:context.paper.pdf.sha256,size:context.paper.pdf.size});}
-  catch{return null;}
+  catch(error){
+    if(context.metadataFirst && error?.code==='REVIEWED_PDF_SOURCE_UNAVAILABLE')throw new ImportDomainError('REVIEWED_PDF_SOURCE_UNAVAILABLE');
+    return null;
+  }
   if(bytes===null||bytes===undefined)return null;
   return verifyPdfBytes(context.paper.pdf,bytes,context.hashBytes);
 }
@@ -456,17 +459,17 @@ async function recordFailure(context,error) {
 }
 
 async function advanceJob({db,ownerId,jobId,connection,liveGate,transportFactory,transport,
-  blobs,hashBytes,now=Date.now,maxSteps=1,leaseMs=120000}={}) {
+  blobs,hashBytes,now=Date.now,maxSteps=1,leaseMs=120000,metadataFirst=false}={}) {
   await gate(liveGate);
   if(!Number.isSafeInteger(maxSteps)||maxSteps<1||maxSteps>10||!Number.isSafeInteger(leaseMs)||leaseMs<1000||leaseMs>300000)fail('INVALID_EXECUTION_LIMIT',400);
   const job=await first(db,JOB_SQL,ownerId,jobId);if(!job)fail('EXECUTION_NOT_FOUND',404);
-  await activeConnection(db,ownerId,connection,job.pdf_intent==='open_access_if_available');
+  await activeConnection(db,ownerId,connection,!metadataFirst && job.pdf_intent==='open_access_if_available');
   if(job.library_id!==connection.library_id||job.connection_version!==connection.connection_version)fail('CONNECTION_STALE');
   const {row,catalog}=await loadCatalog(db,ownerId,job.report_id,job.catalog_id,job.library_id);
   if(row.catalog_version!==job.catalog_version||row.content_sha256!==job.catalog_sha256)fail('CATALOG_CHANGED');
   const cooldown=await first(db,'SELECT not_before FROM zotero_execution_leases WHERE library_id = ?',job.library_id);
   if(cooldown?.not_before>timestamp(now))return readExecutionJob({db,ownerId,jobId,connection,liveGate,now});
-  const context={db,job,connection,liveGate,now,leaseMs,catalog,blobs,hashBytes,failedWrite:false};
+  const context={db,job,connection,liveGate,now,leaseMs,catalog,blobs,hashBytes,metadataFirst,failedWrite:false};
   await claimLibrary(context);
   try {
     const items=await all(db,'SELECT * FROM zotero_execution_items WHERE owner_id = ? AND job_id = ? ORDER BY ordinal',ownerId,jobId),time=timestamp(now);
@@ -477,14 +480,17 @@ async function advanceJob({db,ownerId,jobId,connection,liveGate,transportFactory
     if(!context.paper)fail('CATALOG_CHANGED');
     try {
       context.transport=transportFactory?await transportFactory({guardRequest:()=>guard(context),noteBackoff:ms=>noteBackoff(context,ms)}):transport;
-      const permissions=await remote(context,'verifyCurrentKey',{requireWrite:true,requireNotes:false,requireFiles:job.pdf_intent!=='metadata_only'});
+      const permissions=await remote(context,'verifyCurrentKey',{requireWrite:true,requireNotes:false,requireFiles:!metadataFirst && job.pdf_intent!=='metadata_only'});
       if(String(permissions?.userID)!==job.library_id||permissions.library!==true||permissions.write!==true||
-         job.pdf_intent!=='metadata_only'&&permissions.files!==true)throw new ImportDomainError('KEY_OWNER_OR_PERMISSIONS_CHANGED');
+         !metadataFirst&&job.pdf_intent!=='metadata_only'&&permissions.files!==true)throw new ImportDomainError('KEY_OWNER_OR_PERMISSIONS_CHANGED');
       for(let step=0;step<maxSteps;step++) {
         await guard(context);
         if(!context.item.metadata_saved)await metadataStep(context);
         else if(!context.item.classification_saved)await classificationStep(context);
-        else if(job.pdf_intent!=='metadata_only'&&!context.item.pdf_verified)await pdfStep(context);
+        else if(job.pdf_intent!=='metadata_only'&&!context.item.pdf_verified){
+          if(metadataFirst && permissions.files!==true){await saveItem(context,{...clear,status:'pdf_pending',error_code:'PDF_PERMISSION_UNAVAILABLE',retryable:1,retry_at:timestamp(now)+60000});break;}
+          context.pdfStage=true;await pdfStep(context);
+        }
         else break;
         if(['complete','already_exists'].includes(context.item.status)||context.item.error_code)break;
       }

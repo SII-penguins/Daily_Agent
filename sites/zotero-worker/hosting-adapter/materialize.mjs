@@ -43,6 +43,8 @@ async function syncRuntime(destination) {
     await inventory(source); // Reject symlink escapes before copying anything.
     await cp(source, resolve(destination, 'zotero', name), { recursive: true, force: true, dereference: false });
   }
+  await mkdir(resolve(destination,'zotero/hosting-adapter'),{recursive:true});
+  await copyFile(fileURLToPath(new URL('reviewed-catalogs.mjs',import.meta.url)),resolve(destination,'zotero/hosting-adapter/reviewed-catalogs.mjs'));
   await writeFile(resolve(destination, 'zotero/package.json'), JSON.stringify({ private: true, type: 'module' }) + '\n');
   for (const name of ['prepare-migrations.mjs', 'verify-archive.mjs']) {
     await copyFile(fileURLToPath(new URL(name, import.meta.url)), resolve(destination, 'scripts', name));
@@ -66,7 +68,7 @@ async function main() {
   if (destinationStat && (!destinationStat.isDirectory() || destinationStat.isSymbolicLink())) throw new Error('Destination must be a real directory, not a symlink');
   if (inside(await realpath(publicSourceRoot), destination)) throw new Error('Private hosting checkout cannot be inside the public source snapshot');
   if (options['--refresh-runtime']) {
-    try { await lstat(resolve(destination,'.sites-runtime/archive-refresh-pending.json')); throw new Error('Interrupted archive refresh must be reconciled before source updates'); } catch (error) { if (error.code !== 'ENOENT') throw error; }
+    for(const pending of ['archive-refresh-pending.json','catalog-append-pending.json']){try { await lstat(resolve(destination,'.sites-runtime',pending)); throw new Error(pending==='archive-refresh-pending.json'?'Interrupted archive refresh must be reconciled before source updates':'Interrupted catalog append must be reconciled before source updates'); } catch (error) { if (error.code !== 'ENOENT') throw error; }}
     const marker = JSON.parse(await readFile(resolve(destination, '.sites-runtime/zotero-materialization.json'), 'utf8'));
     if (marker.kind !== 'daily-agent-private-vinext-checkout') throw new Error('Unrecognized destination');
     await syncRuntime(destination);

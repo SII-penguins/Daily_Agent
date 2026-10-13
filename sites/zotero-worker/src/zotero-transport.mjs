@@ -369,7 +369,7 @@ export function createZoteroTransport({
   }
 
   const methods = {
-    verifyCurrentKey: safe(async ({ requireWrite = true, requireFiles = true, requireNotes = false, exactPersonalScope = false } = {}) => {
+    verifyCurrentKey: safe(async ({ requireWrite = true, requireFiles = true, requireNotes = false, exactPersonalScope = false, allowMissingFiles = false } = {}) => {
       permission = null;
       const result = await api('/keys/current');
       if (!record(result) || String(result.userID) !== owner || !record(result.access?.user)) fail('KEY_OWNER_MISMATCH');
@@ -384,7 +384,7 @@ export function createZoteroTransport({
             || (own(result.access, 'groups') && (!record(result.access.groups) || Object.keys(result.access.groups).length))
             || Object.keys(grants).some(key => !['library', 'write', 'files', 'notes'].includes(key))
             || (own(grants, 'notes') && grants.notes !== false)
-            || !verified.library || !verified.write || !verified.files) fail('EXCESS_PERMISSION');
+            || !verified.library || !verified.write || !allowMissingFiles && !verified.files) fail('EXCESS_PERMISSION');
       }
       permission = { ...verified, expiresAt: now() + permissionTtlMs };
       return { userID: owner, ...verified }; // Deliberately omit raw key info/username/group grants.

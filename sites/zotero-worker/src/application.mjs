@@ -3,6 +3,8 @@ import { createZoteroTransport, ZoteroTransportError } from './zotero-transport.
 import { hashBytes } from './hash-bytes.mjs';
 import { createExecutionJob, advanceExecutionJob, readExecutionJob, ExecutionError } from './job-runner.mjs';
 import { readRegisteredCatalog, privateBlobKey } from './catalog-registration.mjs';
+import { handleReviewedIssueRoute } from './reviewed-routes.mjs';
+import { deploymentReviewedIssues } from './reviewed-issues.mjs';
 import { renderManagerPage } from './manager-ui.mjs';
 import { handleRegistrationRoute } from './registration-routes.mjs';
 import { renderRegistrationPage } from './registration-ui.mjs';
@@ -55,7 +57,7 @@ function boundCredential(env, ownerId, row) {
     && row.key_id === env.ZOTERO_ENCRYPTION_KEY_ID && row.cipher_version === 'AES-256-GCM.v1'
     && row.state === 'encrypted_pending_verification' && ID.test(row.grant_id);
 }
-function eligibleConnection(env, ownerId, active, credential, requireExecution = true) {
+function eligibleConnection(env, ownerId, active, credential, requireExecution = true, metadataFirst = false) {
   if (!(requireExecution ? runtimeReady(env) : connectionRuntimeReady(env)) || !boundCredential(env, ownerId, credential) || !active
       || active.owner_id !== ownerId || active.library_type !== 'user'
       || active.library_id !== credential.library_id || active.state !== 'active'
@@ -63,7 +65,7 @@ function eligibleConnection(env, ownerId, active, credential, requireExecution =
       || (providerMode(env) ? active.storage_mode !== 'provider-managed-d1' || active.credential_id !== credential.credential_id
         : active.storage_mode !== 'aead' || active.credential_key_id !== credential.key_id || active.grant_id !== credential.grant_id)) return false;
   const p = jsonObject(active.permissions_json);
-  return p.library === true && p.write === true && p.files === true && (!providerMode(env) || p.notes === false);
+  return p.library === true && p.write === true && (metadataFirst || p.files === true) && (!providerMode(env) || p.notes === false);
 }
 export async function applicationConnectionStatus(env, auth, legacy) {
   const base = providerMode(env) ? { credential_storage: 'not_stored', credential_entry_enabled: false, reason: 'setup_required' } : await legacy(env, auth);
@@ -136,7 +138,7 @@ async function revokeCredentialBinding(auth, credential) {
     auth.owner, credential.library_id, credential.key_id, credential.grant_id,
     credential.iv_b64, credential.ciphertext_b64).run();
 }
-async function transportFor(env, auth, credential, fail, fetchImpl, guardRequest = async () => {}, noteBackoff = async () => {}) {
+async function transportFor(env, auth, credential, fail, fetchImpl, guardRequest = async () => {}, noteBackoff = async () => {}, metadataFirst = false) {
   let apiKey = await decryptCredential(env, auth, credential, fail);
   try {
     const realFetch = fetchImpl || globalThis.fetch;
@@ -167,7 +169,7 @@ async function transportFor(env, auth, credential, fail, fetchImpl, guardRequest
     });
     return Object.freeze({ ...transport, async verifyCurrentKey(requirements) {
       try { return await transport.verifyCurrentKey(providerMode(env)
-        ? { requireWrite: true, requireFiles: true, requireNotes: false, exactPersonalScope: true } : requirements); }
+        ? { requireWrite: true, requireFiles: metadataFirst ? requirements.requireFiles : true, requireNotes: false, exactPersonalScope: true, allowMissingFiles: metadataFirst } : requirements); }
       catch (error) {
         if (error instanceof ZoteroTransportError && ['AUTHORIZATION_DENIED','KEY_OWNER_MISMATCH','INSUFFICIENT_PERMISSION','EXCESS_PERMISSION'].includes(error.code))
           await revokeCredentialBinding(auth, credential);
@@ -379,6 +381,17 @@ export async function handleApplicationRoute(request, env, auth, helpers, option
     __privateBundleContainment:options.bundleContainment === undefined ? deploymentBundleContainment() : options.bundleContainment};
   const url = new URL(request.url);
   try {
+    const reviewed=await handleReviewedIssueRoute(request,env,auth,helpers,{
+      issues:options.reviewedIssues===undefined?deploymentReviewedIssues():options.reviewedIssues,
+      connection:async()=>{
+        const [credential,connection]=await Promise.all([credentialRow(env,auth.db,auth.owner),activeRow(auth.db,auth.owner)]);
+        return eligibleConnection(env,auth.owner,connection,credential,true,true)?{credential,connection}:null;
+      },
+      transportFactory:(credential,guardRequest,noteBackoff)=>transportFor(env,auth,credential,fail,options.fetchImpl,guardRequest,noteBackoff,true),
+      readBlob:blobReader(env,auth,fail).readBlob,
+      pdfFetch:options.pdfFetchImpl,
+    });
+    if(reviewed)return reviewed;
     const bundles=await handlePrivateBundleRoute(request,env,auth,{...helpers,bundleConnection:()=>bundleConnection(env,auth)});
     if(bundles)return bundles;
     if((env.__privateBundleContainment || env.__privateBundleManifest || env.ZOTERO_PRIVATE_BUNDLES_REQUIRED==='approved') && url.pathname.startsWith('/api/zotero/catalog-registration')) fail(404,'not_found');

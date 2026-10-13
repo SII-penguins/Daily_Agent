@@ -403,3 +403,43 @@ test('runner rejects inventory without proof of non-note scope or containing pri
     assert.equal(f.transport.count('createItem'),0);assert.equal(f.transport.count('getItem'),0);
   }
 });
+
+test('reviewed mode preserves metadata/classification when PDF permission is absent, then retries only PDF',async()=>{
+  const f=await setup({withPdf:true,paperCount:1});
+  f.db.sqlite.prepare('UPDATE zotero_active_connections SET permissions_json=?').run(JSON.stringify({library:true,write:true,files:false,notes:false}));
+  const verify=f.transport.verifyCurrentKey.bind(f.transport);
+  f.transport.verifyCurrentKey=async input=>({...await verify(input),files:false});
+  await assert.rejects(f.create(),e=>e.code==='CONNECTION_UNVERIFIED'); // Legacy gate remains strict.
+  const job=await f.create({metadataFirst:true});
+  const pending=await advanceExecutionJob({...f.base,jobId:job.job_id,metadataFirst:true,maxSteps:10});
+  assert.equal(pending.items[0].metadata_saved,true);assert.equal(pending.items[0].classification_saved,true);
+  assert.equal(pending.items[0].error_code,'PDF_PERMISSION_UNAVAILABLE');assert.equal(f.transport.count('createStoredAttachment'),0);
+  const creates=f.transport.count('createItem'),patches=f.transport.count('patchItemMembership');
+  f.tick(60001);f.db.sqlite.prepare('UPDATE zotero_active_connections SET permissions_json=?').run(JSON.stringify({library:true,write:true,files:true,notes:false}));
+  f.transport.verifyCurrentKey=verify;
+  const complete=await run(f,job.job_id,{metadataFirst:true});assert.equal(complete.state,'complete');assert.equal(complete.items[0].pdf_verified,true);
+  assert.equal(f.transport.count('createItem'),creates);assert.equal(f.transport.count('patchItemMembership'),patches);
+});
+test('reviewed mode missing PDF leaves successful metadata; later verified blob completes without duplicate item',async()=>{
+  const f=await setup({withPdf:true,paperCount:1}),job=await f.create({metadataFirst:true});
+  const pending=await advanceExecutionJob({...f.base,jobId:job.job_id,metadataFirst:true,maxSteps:10,blobs:{readBlob:async()=>null}});
+  assert.equal(pending.items[0].metadata_saved,true);assert.equal(pending.items[0].classification_saved,true);assert.equal(pending.items[0].pdf_verified,false);assert.equal(pending.items[0].error_code,'VERIFIED_BLOB_UNAVAILABLE');
+  assert.equal(f.transport.count('createStoredAttachment'),0);const count=f.transport.count('createItem');
+  f.tick(60001);assert.equal((await run(f,job.job_id,{metadataFirst:true})).state,'complete');assert.equal(f.transport.count('createItem'),count);
+});
+test('reviewed mode preserves connection fencing for an existing job after reconnect',async()=>{
+  const f=await setup({withPdf:true,paperCount:1}),job=await f.create({metadataFirst:true});
+  f.db.sqlite.prepare('UPDATE zotero_active_connections SET connection_version=2').run();
+  await assert.rejects(advanceExecutionJob({...f.base,jobId:job.job_id,metadataFirst:true}),e=>e.code==='CONNECTION_STALE');
+  assert.equal(f.transport.count('createItem'),0);
+});
+
+test('reviewed unsupported source without verified cache retains citation success and stops endless PDF retries',async()=>{
+  const f=await setup({withPdf:true,paperCount:1}),job=await f.create({metadataFirst:true});let reads=0;
+  const blobs={readBlob:async()=>{reads++;throw error('REVIEWED_PDF_SOURCE_UNAVAILABLE');}};
+  const result=await advanceExecutionJob({...f.base,jobId:job.job_id,metadataFirst:true,maxSteps:10,blobs});
+  assert.equal(result.state,'pdf_pending');assert.equal(result.items[0].metadata_saved,true);assert.equal(result.items[0].classification_saved,true);
+  assert.equal(result.items[0].pdf_verified,false);assert.equal(result.items[0].error_code,'REVIEWED_PDF_SOURCE_UNAVAILABLE');assert.equal(result.items[0].retryable,false);assert.equal(result.retry_at,null);
+  assert.equal(f.transport.count('createStoredAttachment'),0);const before=f.transport.calls.length;f.tick(3600000);
+  await advanceExecutionJob({...f.base,jobId:job.job_id,metadataFirst:true,maxSteps:10,blobs});assert.equal(reads,1);assert.equal(f.transport.calls.length,before);
+});

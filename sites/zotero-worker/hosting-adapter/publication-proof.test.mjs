@@ -4,8 +4,11 @@ import { mkdtemp, mkdir, writeFile, readFile, rm, cp, symlink, rename } from 'no
 import { tmpdir } from 'node:os';
 import { resolve, dirname } from 'node:path';
 import { spawnSync } from 'node:child_process';
-import { guardPublication, verifyPublication, inspectArchiveIndex, archivePathAllowed, PROFILE_SCHEMA } from './publication-proof.mjs';
+import { guardPublication, verifyPublication, inspectArchiveIndex, archivePathAllowed, PROFILE_SCHEMA, orderedNavigationTree } from './publication-proof.mjs';
 import { inventory, digest } from './materialize.mjs';
+import { navigationFixture, writeTree, cloneTree, rehashManifest, setManifest } from './fixtures/navigation-test-fixture.mjs';
+import {composeNavigationAppend} from './compose-navigation-append.mjs';
+import { issueJson, issueHash } from '../src/reviewed-issues.mjs';
 
 const projectId='synthetic-project', siteUrl='https://synthetic.example.chatgpt.site';
 const hosting={project_id:projectId,d1:'DB',r2:'BUCKET'};
@@ -13,10 +16,10 @@ const registryBase=()=>({schema:'daily-agent-future-operations-registry-v1',glob
 const registryFor=commit=>({ ...registryBase(), global_delivery:{...registryBase().global_delivery,site_runtime_profile:{schema:PROFILE_SCHEMA,mode:'worker-assets',state:'active',project_id:projectId,site_source_commit_sha:commit,version_id:'synthetic-previous-version',deployment_id:'synthetic-previous-deployment'}}});
 const put=async (root,name,data)=>{await mkdir(dirname(resolve(root,name)),{recursive:true});await writeFile(resolve(root,name),typeof data==='object'&&!Buffer.isBuffer(data)?JSON.stringify(data):data);};
 function git(repo,...args){const r=spawnSync('git',['-C',repo,...args],{encoding:'utf8'});assert.equal(r.status,0,r.stderr);return r.stdout.trim();}
-const commit=repo=>{git(repo,'add','.');git(repo,'-c','user.name=Synthetic Test','-c','user.email=test@example.invalid','commit','-qm','synthetic test fixture');return git(repo,'rev-parse','HEAD');};
+const commit=repo=>{git(repo,'add','.');git(repo,'-c','user.name=Synthetic Test','-c','user.email=test@example.invalid','commit','--allow-empty','-qm','synthetic test fixture');return git(repo,'rev-parse','HEAD');};
 const archiveUiIndex=links=>`<html><head><script src="/assets/archive-browser.js" defer></script></head><body><form id="archive-filters" class="archive-filters" hidden role="search" aria-label="查找往期日报"><input id="archive-query" type="search" name="q"><select id="archive-year" name="year"></select><select id="archive-month" name="month"></select><input id="archive-date" type="date" name="date"><button type="submit">搜索</button><button id="archive-reset" type="button">重置筛选</button></form><div id="archive-days"><div id="archive-dynamic" hidden><p id="archive-status" aria-live="polite"></p><div id="archive-results"></div><nav id="archive-pagination"></nav></div><div id="archive-static">${links}</div></div></body></html>`;
 async function manifest(repo,entries){const files={};for(const f of await inventory(resolve(repo,'public'))){if(f.path!=='manifest.json')files[f.path]={size:f.bytes,sha256:f.sha256};}await put(repo,'public/manifest.json',{schema_version:1,entries,files});}
-async function fixture(fn,{staticBaseline=false,archiveUi=false}={}){
+async function fixture(fn,{staticBaseline=false,archiveUi=false,navigation=null}={}){
  const root=await mkdtemp(resolve(tmpdir(),'worker-proof-'));
  try{
   const repo=resolve(root,'repo');await mkdir(repo);git(repo,'init','-q');
@@ -31,14 +34,17 @@ async function fixture(fn,{staticBaseline=false,archiveUi=false}={}){
   if(archiveUi){const html=archiveUiIndex('<article><a href="reports/old/index.html">old</a></article>');await put(repo,'public/index.html',html);await put(repo,'public/archive/index.html',html);await put(repo,'public/assets/archive-browser.js','/* previously approved and immutable archive browser */');await put(repo,'public/reports/old/reading.html','immutable reading page');}
   const oldEntry={key:'reports/old',page:'reports/old/index.html',source_sha256:digest('immutable old report')};
   await manifest(repo,[oldEntry]);
+  if(navigation){await rm(resolve(repo,'public'),{recursive:true});await writeTree(resolve(repo,'public'),navigation.before);for(const issue of navigation.priorIssues)await put(repo,'zotero/reviewed-issues/'+issue.issue_id+'.json',issueJson(issue)+'\n');}
   if(staticBaseline){await rename(resolve(repo,'public'),resolve(repo,'dist'));await put(repo,'.gitignore','.sites-runtime/\n');await put(repo,'.openai/hosting.json',{project_id:projectId,static:{directory:'dist'}});}
   const baseline=commit(repo);
   if(staticBaseline){await rename(resolve(repo,'dist'),resolve(repo,'public'));await put(repo,'.gitignore','dist/\n.sites-runtime/\n');await put(repo,'.openai/hosting.json',hosting);}
-  const html='<html>synthetic reviewed edition</html>',htmlSha256=digest(html),entryPath=`reports/2026-10-11-test-01-${htmlSha256.slice(0,12)}/index.html`;
+  const html=navigation?Buffer.from(navigation.target.html):'<html>synthetic reviewed edition</html>',htmlSha256=digest(html),entryPath=navigation?navigation.target.entry.page:`reports/2026-10-11-test-01-${htmlSha256.slice(0,12)}/index.html`;
   const links=`<article><a href="reports/old/index.html">old</a></article><article><a href="${entryPath}">new</a></article>`;
-  await put(repo,'public/'+entryPath,html);await put(repo,'public/index.html',archiveUi?archiveUiIndex(links):links);await manifest(repo,[oldEntry,{key:entryPath.slice(0,-11),page:entryPath,source_sha256:htmlSha256,identity:htmlSha256,approval_sha256:'a'.repeat(64),category:'reports',date:'2026-10-11'}]);const current=commit(repo);
+  await put(repo,'public/'+entryPath,html);await put(repo,'public/index.html',archiveUi?archiveUiIndex(links):links);await manifest(repo,[oldEntry,{key:entryPath.slice(0,-11),page:entryPath,source_sha256:htmlSha256,identity:htmlSha256,approval_sha256:'a'.repeat(64),category:'reports',date:'2026-10-11'}]);
+  if(navigation){await rm(resolve(repo,'public'),{recursive:true});await writeTree(resolve(repo,'public'),navigation.after);for(const issue of navigation.issues)await put(repo,'zotero/reviewed-issues/'+issue.issue_id+'.json',issueJson(issue)+'\n');}
+  const current=commit(repo);
   const dist=resolve(repo,'dist');await mkdir(dist);await cp(resolve(repo,'public'),resolve(dist,'client'),{recursive:true});await cp(resolve(repo,'drizzle'),resolve(dist,'.openai/drizzle'),{recursive:true});
-  await put(dist,'.openai/hosting.json',hosting);await put(dist,'server/index.js','synthetic compiled worker');await put(dist,'server/chunk.js','synthetic imported chunk');
+  await put(dist,'.openai/hosting.json',hosting);await put(dist,'server/index.js','synthetic compiled worker '+(navigation?navigation.issues.map(i=>i.projection_sha256).join(' '):''));await put(dist,'server/chunk.js','synthetic imported chunk');
   await put(dist,'server/wrangler.json',{assets:{binding:'ASSETS',directory:'../client',run_worker_first:true,not_found_handling:'none'},d1_databases:[{binding:'DB'}],r2_buckets:[{binding:'BUCKET'}]});
   const tracked=git(repo,'ls-files').split('\n').filter(p=>p!=='.gitignore');const inputs=[];for(const path of tracked){const bytes=await readFile(resolve(repo,path));inputs.push({path,bytes:bytes.length,sha256:digest(bytes)});}
   const buildReceipt=resolve(root,'receipt.json'),deploymentFile=resolve(root,'deployment.json'),versionFile=resolve(root,'version.json'),artifact=resolve(root,'artifact.tar.gz');
@@ -214,3 +220,59 @@ test('ordinary proof cannot introduce the allowed JS filename as new executable 
  await put(args.repo,'public/assets/archive-browser.js','unapproved script');const archive=JSON.parse(await readFile(resolve(args.repo,'public/manifest.json')));await manifest(args.repo,archive.entries);await rebuild();
  await assert.rejects(verifyPublication(args),/New archive UI files/);
 }));
+
+
+test('initial reviewed navigation migration is an exact four-file remap with native artifact binding',async()=>{
+ const navigation=await navigationFixture();
+ await fixture(async({args})=>{const proof=await verifyPublication({...args,migrationVerification:true});assert.equal(proof.navigation_proof.exact_reverse_verified,true);assert.deepEqual(proof.navigation_proof.changed_files,['archive/index.html','assets/archive-browser.js','index.html','manifest.json']);assert.equal(proof.native_saved_artifact_verified,true);},{staticBaseline:true,navigation});
+});
+test('two-date compiled reviewed append re-derives exact global navigation and preserves historical files',async()=>{
+ const navigation=await navigationFixture({append:true});
+ await fixture(async({args})=>{const proof=await verifyPublication(args);assert.equal(proof.navigation_proof.historical_entry_records_byte_preserved,true);assert.equal(proof.navigation_proof.historical_reading_output_reused,true);assert.deepEqual(proof.navigation_proof.new_entries,[navigation.fresh.entry.key]);assert.equal(proof.native_saved_artifact_verified,true);},{navigation});
+});
+test('mapped initial migration rejects new entries rather than reusing migration mode as append permission',async()=>{
+ const navigation=await navigationFixture({append:true});
+ await fixture(async({args})=>{await assert.rejects(verifyPublication({...args,migrationVerification:true}),/cannot append archive entries/);},{staticBaseline:true,navigation});
+});
+test('fully rebuilt navigation cannot alter historical HTML, JS, entry records or mapped target',async()=>{
+ const original=await navigationFixture({append:true});
+ for(const mutation of ['old-html','js-tail','old-entry','mapping']){
+  const navigation={...original,after:cloneTree(original.after)};
+  if(mutation==='old-html')navigation.after.set(original.old.entry.key+'/reading.html',Buffer.from('altered old reading'));
+  if(mutation==='js-tail')navigation.after.set('assets/archive-browser.js',Buffer.concat([navigation.after.get('assets/archive-browser.js'),Buffer.from('\nalert(1)')]));
+  if(mutation==='old-entry'){const m=JSON.parse(navigation.after.get('manifest.json'));m.entries[0].audit='altered';setManifest(navigation.after,m);}
+  if(mutation==='mapping')for(const path of ['index.html','archive/index.html','assets/archive-browser.js','manifest.json'])navigation.after.set(path,Buffer.from(navigation.after.get(path).toString().replaceAll(original.mappings[1].to,original.mappings[1].to+'-uncompiled')));
+  rehashManifest(navigation.after);
+  await fixture(async({args})=>{await assert.rejects(verifyPublication(args),/Unapproved composed|behavior changed|Prior archive entry|Navigation row/);},{navigation});
+ }
+});
+test('changed prior compiled catalog is rejected before navigation can authorize any UI bytes',async()=>{
+ const navigation=await navigationFixture({append:true});
+ await fixture(async({args,rebuild})=>{const issue=structuredClone(navigation.old.issue);issue.issue_id+='-changed';const {projection_sha256,...payload}=issue;issue.projection_sha256=await issueHash(payload);await put(args.repo,'zotero/reviewed-issues/'+navigation.old.issue.issue_id+'.json',issueJson(issue)+'\n');await rebuild();await assert.rejects(verifyPublication(args),/prior catalog/);},{navigation});
+});
+test('projection-derived navigation rejects an uncompiled target and still checks native server inclusion',async()=>{
+ const navigation=await navigationFixture({append:true});
+ await fixture(async({args,rebuild})=>{await put(args.dist,'server/index.js','worker lacking compiled projection');await rebuild();await assert.rejects(verifyPublication(args),/projection missing from native server/);},{navigation});
+});
+
+test('mapped new edition without its committed canonical catalog cannot authorize navigation',async()=>{
+ const original=await navigationFixture({append:true}),navigation={...original,issues:[original.old.issue]};
+ await fixture(async({args})=>{await assert.rejects(verifyPublication(args),/Every new report requires a validated projection mapping/);},{navigation});
+});
+test('mapped append still rejects framework code and schema mutation before native evidence',async()=>{
+ const navigation=await navigationFixture({append:true});
+ for(const path of ['zotero/worker/index.js','zotero/migrations/0001_synthetic.sql'])await fixture(async({args})=>{await put(args.repo,path,'unapproved code or schema mutation');const expectedCommit=commit(args.repo);await assert.rejects(verifyPublication({...args,expectedCommit}),/framework\/runtime\/manifests\/migrations/);},{navigation});
+});
+
+
+test('new asset proof retains exact manifest row order despite sorted Git enumeration',async()=>{
+ const navigation=await navigationFixture({append:true}),candidate=cloneTree(navigation.after),bytes=Buffer.from('new sealed content-addressed illustration'),path='assets/'+digest(bytes)+'.png',m=JSON.parse(candidate.get('manifest.json'));
+ candidate.set(path,bytes);m.files[path]={sha256:digest(bytes),size:bytes.length};setManifest(candidate,m);
+ navigation.after=composeNavigationAppend({baseline:navigation.before,candidate,approvedEntries:[navigation.fresh.entry],mappings:navigation.mappings}).files;
+ await fixture(async({args})=>{const proof=await verifyPublication(args);assert.ok(proof.navigation_proof.new_files.includes(path));},{navigation});
+});
+test('manifest-order reconstruction refuses hidden extra observed files',async()=>{
+ const navigation=await navigationFixture(),files=cloneTree(navigation.after);files.set('assets/'+ 'a'.repeat(64)+'.png',Buffer.from('unlisted'));
+ assert.throws(()=>orderedNavigationTree(files),/complete observed file set/);
+ files.delete('assets/'+ 'a'.repeat(64)+'.png');files.delete(navigation.old.entry.page);assert.throws(()=>orderedNavigationTree(files),/complete observed file set/);
+});

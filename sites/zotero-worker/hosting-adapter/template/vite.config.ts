@@ -1,4 +1,5 @@
 import vinext from "vinext";
+import { loadReviewedIssues } from "./zotero/hosting-adapter/reviewed-catalogs.mjs";
 import { loadPrivateBundles } from "./scripts/private-bundle-assets.mjs";
 import { defineConfig } from "vite";
 import hostingConfig from "./.openai/hosting.json";
@@ -58,8 +59,9 @@ export default defineConfig(async ({ command }) => {
   const { cloudflare } = await import("@cloudflare/vite-plugin");
 
   const privateManifest = await loadPrivateBundles(process.cwd());
+  const reviewedIssues = await loadReviewedIssues(process.cwd());
   return {
-    define: { __ZOTERO_PRIVATE_BUNDLE_MANIFEST__: JSON.stringify(privateManifest),
+    define: { __ZOTERO_REVIEWED_ISSUES__: JSON.stringify(reviewedIssues), __ZOTERO_PRIVATE_BUNDLE_MANIFEST__: JSON.stringify(privateManifest),
       __ZOTERO_PRIVATE_BUNDLE_UPLOAD_MODE__: JSON.stringify(privateManifest ? 'owner-upload-v1' : null) },
     server: {
       ...(managedLinux

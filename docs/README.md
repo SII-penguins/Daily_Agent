@@ -6,7 +6,7 @@ Start with the [English project guide](../README.md) or [中文项目指南](../
 
 - [Local / Feishu reference](local-guide.md) · [本地 / 飞书参考](local-guide.zh-CN.md): installation, optional sources, external secrets, CLI, MCP, feedback and local schedule intent
 - [Cloud operations](cloud-migration.md): separate public-source `parent_queue` root, worker claims, resumable generation, immutable handoffs, backup/restore and private HTML transport
-- [GitHub persistence](github-persistence.md): `main` for public source and synthetic examples; a separate private repository for personal reports and runtime configuration
+- [GitHub persistence](github-persistence.md): `main` for source, `daily-artifacts` for public-safe HTML and assets, and separate private runtime recovery
 - [Restart-safe recovery](durable-recovery.md): complete private checkpoints, remote readback, mutation fences and interrupted-write reconciliation
 - [Workflow recovery](workflow-recovery.md): local controller state, cleanup, retry budgets and operator reconciliation
 - [Cloud delivery audit](cloud-delivery-audit.md): delivery-state invariants, ambiguous outcomes and recovery checks
@@ -25,8 +25,7 @@ The local full profile and cloud profile are separate. Never apply local full-pr
 - [Original scientific assets](ORIGINAL_SCIENTIFIC_ASSETS.md): original PDF figures, tables and equations, selection limits, captions and provenance
 - [Author and research-group context](author-research-context.md): primary evidence, explicit unknowns and bounded selected-paper research
 - [HTML reader and archive](html-report-ui.md): portable reports, accessible desktop/mobile reading and immutable date archives
-
-- [Zotero selected-paper import](zotero-import.md): guarded Worker, offline Python reference, selected-only imports and explicit runtime gates
+- [Zotero import foundation](zotero-import.md): disconnected selection prototype, tested mock adapter, durable receipts and remaining secure-connection gates
 
 ## Validation and history / 验收与历史
 

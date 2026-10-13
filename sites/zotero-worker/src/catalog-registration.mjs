@@ -218,8 +218,14 @@ export function registrationBinding(row) {
 
 /** Read-only/offline preparation. It validates ALL source bytes before a prepared
  * capability can be used to register. Bytes stay in a private WeakMap, never JSON. */
-export async function prepareTrustedCatalog({ binding, trustedPins, reportBytes, htmlBytes, catalogBytes,
-  readPdfBytes, maxPdfBytes = DEFAULT_MAX_PDF_BYTES, includeProtocolMd5 = true } = {}) {
+export async function prepareTrustedCatalog(input = {}) { return prepareCatalog(input, false); }
+
+/** Separate server-reviewed mode: validate every metadata/seal pin, without
+ * requiring attachment bytes. Never exposed as a browser registration endpoint. */
+export async function prepareReviewedCatalog(input = {}) { return prepareCatalog(input, true); }
+
+async function prepareCatalog({ binding, trustedPins, reportBytes, htmlBytes, catalogBytes,
+  readPdfBytes, maxPdfBytes = DEFAULT_MAX_PDF_BYTES, includeProtocolMd5 = true } = {}, metadataOnly) {
   if (typeof includeProtocolMd5 !== 'boolean') fail('INVALID_HASH_MODE');
   binding = validateBinding(binding);
   keys(trustedPins, [...BINDING_KEYS, 'report_sha256', 'catalog_sha256', 'html_sha256', 'report_edition_id', 'allowed_source_hosts']);
@@ -260,7 +266,7 @@ export async function prepareTrustedCatalog({ binding, trustedPins, reportBytes,
     if (!record(row) || !sourceRows.has(row.paper_id) || seen.has(row.paper_id)) fail('CATALOG_ALLOWLIST_MISMATCH');
     seen.add(row.paper_id);
     paper(row, sourceRows.get(row.paper_id), hosts, maxPdfBytes);
-    if (row.pdf) {
+    if (row.pdf && !metadataOnly) {
       if (pdfs.has(row.pdf.blob_id)) {
         if (pdfs.get(row.pdf.blob_id).size !== row.pdf.size) fail('PDF_SIZE_MISMATCH');
         continue;
