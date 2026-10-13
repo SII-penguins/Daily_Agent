@@ -26,6 +26,8 @@ The local full profile and cloud profile are separate. Never apply local full-pr
 - [Author and research-group context](author-research-context.md): primary evidence, explicit unknowns and bounded selected-paper research
 - [HTML reader and archive](html-report-ui.md): portable reports, accessible desktop/mobile reading and immutable date archives
 
+- [Zotero selected-paper import](zotero-import.md): guarded Worker, offline Python reference, selected-only imports and explicit runtime gates
+
 ## Validation and history / 验收与历史
 
 - [Reading validation](../scripts/VALIDATE_READING.md): full-document, visual-fidelity and claim-support checks

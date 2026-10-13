@@ -1,0 +1,20 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import {mkdtemp,mkdir,writeFile,readFile,readdir,symlink,rm,stat} from 'node:fs/promises';
+import {join,dirname} from 'node:path';
+import {tmpdir} from 'node:os';
+import {loadPrivateBundles} from './private-bundle-assets.mjs';
+import {fixture} from '../test/private-bundles-fixture.mjs';
+async function input(t){const root=await mkdtemp(join(tmpdir(),'synthetic-private-bundles-'));t.after(()=>rm(root,{recursive:true,force:true}));const f=fixture(),dir=join(root,'zotero/bundles');await mkdir(dir,{recursive:true});await writeFile(join(dir,'manifest.json'),JSON.stringify(f.manifest));for(const[path,bytes]of f.assets){const target=join(dir,path.replace('/__zotero_private_bundles/',''));await mkdir(dirname(target),{recursive:true});await writeFile(target,bytes);}return{root,dir,...f};}
+test('containment validates private source but packages zero private assets and clears stale output',async t=>{const f=await input(t),output=join(f.root,'dist/client');await mkdir(join(output,'__zotero_private_bundles'),{recursive:true});await writeFile(join(output,'__zotero_private_bundles/stale.pdf'),'old');assert.equal((await loadPrivateBundles(f.root)).paper_ids.length,2);assert.equal((await loadPrivateBundles(f.root,{copyTo:output})).batches.length,2);await assert.rejects(stat(join(output,'__zotero_private_bundles/stale.pdf')),{code:'ENOENT'});await assert.rejects(stat(join(output,'__zotero_private_bundles/manifest.json')),{code:'ENOENT'});for(const[path]of f.assets)await assert.rejects(stat(join(output,path)),{code:'ENOENT'});
+  assert.equal((await readdir(f.dir)).includes('manifest.json'),true);});
+test('packager rejects unlisted files, symlinks, altered pinned bytes and altered union',async t=>{for(const mode of ['extra','symlink','bytes','union']){const f=await input(t);if(mode==='extra')await writeFile(join(f.dir,'unreviewed.txt'),'forbidden');if(mode==='symlink')await symlink('/etc/hosts',join(f.dir,'foreign'));if(mode==='bytes')await writeFile(join(f.dir,'batch-1/report.html'),'changed');if(mode==='union'){f.manifest.paper_ids.push('phantom');await writeFile(join(f.dir,'manifest.json'),JSON.stringify(f.manifest));}await assert.rejects(loadPrivateBundles(f.root));}});
+test('generic reusable build without private input has no manifest and clears stale output',async t=>{const root=await mkdtemp(join(tmpdir(),'generic-bundle-build-'));t.after(()=>rm(root,{recursive:true,force:true}));const output=join(root,'dist/client');await mkdir(join(output,'__zotero_private_bundles'),{recursive:true});await writeFile(join(output,'__zotero_private_bundles/stale.pdf'),'old');assert.equal(await loadPrivateBundles(root,{copyTo:output}),null);await assert.rejects(stat(join(output,'__zotero_private_bundles')),{code:'ENOENT'});});
+test('asset-first dispatcher cannot bypass containment because former private files are absent for bare/query GET/HEAD',async t=>{
+  const f=await input(t),output=join(f.root,'dist/client');await loadPrivateBundles(f.root,{copyTo:output});await mkdir(join(output,'archive'),{recursive:true});await writeFile(join(output,'archive/public.txt'),'preserved public fixture');
+  const {default:worker}=await import('../worker/index.js');let workerCalls=0;
+  const dispatch=async request=>{const target=join(output,new URL(request.url).pathname);try{const bytes=await readFile(target);return new Response(request.method==='HEAD'?null:bytes);}catch(e){if(!['ENOENT','EISDIR'].includes(e.code))throw e;}workerCalls++;return worker.fetch(request,{ASSETS:{fetch:async()=>new Response('Not found',{status:404})}});};
+  assert.equal(await (await dispatch(new Request('https://synthetic.test/archive/public.txt'))).text(),'preserved public fixture');assert.equal(workerCalls,0);
+  for(const [path]of f.assets)for(const suffix of ['', '?test=1'])for(const method of ['GET','HEAD']){const response=await dispatch(new Request('https://synthetic.test'+path+suffix,{method,headers:{Range:'bytes=0-31'}}));assert.equal(response.status,404);assert.notEqual(response.headers.get('Content-Type'),'application/pdf');}
+  assert.equal(workerCalls,f.assets.size*4);
+});

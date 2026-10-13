@@ -1,0 +1,9 @@
+dist/
+.env
+.env.*
+.dev.vars
+.dev.vars.*
+
+# Hosting adapter source; overrides the repository-wide build-output ignore.
+!hosting-adapter/template/build/
+!hosting-adapter/template/build/**

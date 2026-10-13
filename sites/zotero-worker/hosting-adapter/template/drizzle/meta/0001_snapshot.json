@@ -1,0 +1,1135 @@
+{
+  "version": "6",
+  "dialect": "sqlite",
+  "id": "320861ee-59f4-44ad-b429-5d2e6fbc8aaf",
+  "prevId": "f3c8dec7-ffa7-45f9-974c-80c72ca7dc32",
+  "tables": {
+    "zotero_active_connections": {
+      "name": "zotero_active_connections",
+      "columns": {
+        "owner_id": {
+          "name": "owner_id",
+          "type": "text",
+          "primaryKey": true,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "library_type": {
+          "name": "library_type",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "library_id": {
+          "name": "library_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "connection_version": {
+          "name": "connection_version",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "state": {
+          "name": "state",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "verified_at": {
+          "name": "verified_at",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "credential_key_id": {
+          "name": "credential_key_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false,
+          "default": "''"
+        },
+        "grant_id": {
+          "name": "grant_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false,
+          "default": "''"
+        },
+        "permissions_json": {
+          "name": "permissions_json",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false,
+          "default": "'{}'"
+        }
+      },
+      "indexes": {},
+      "foreignKeys": {},
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "checkConstraints": {
+        "zotero_active_connections_check_0": {
+          "name": "zotero_active_connections_check_0",
+          "value": "library_type = 'user'"
+        },
+        "zotero_active_connections_check_1": {
+          "name": "zotero_active_connections_check_1",
+          "value": "connection_version > 0"
+        },
+        "zotero_active_connections_check_2": {
+          "name": "zotero_active_connections_check_2",
+          "value": "state IN ('active', 'revoked')"
+        }
+      }
+    },
+    "zotero_catalog_papers": {
+      "name": "zotero_catalog_papers",
+      "columns": {
+        "owner_id": {
+          "name": "owner_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "report_id": {
+          "name": "report_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "catalog_id": {
+          "name": "catalog_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "paper_id": {
+          "name": "paper_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "display_title": {
+          "name": "display_title",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "metadata_json": {
+          "name": "metadata_json",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false,
+          "default": "'{}'"
+        }
+      },
+      "indexes": {},
+      "foreignKeys": {
+        "zotero_catalog_papers_owner_id_report_id_catalog_id_zotero_report_catalogs_owner_id_report_id_catalog_id_fk": {
+          "name": "zotero_catalog_papers_owner_id_report_id_catalog_id_zotero_report_catalogs_owner_id_report_id_catalog_id_fk",
+          "tableFrom": "zotero_catalog_papers",
+          "tableTo": "zotero_report_catalogs",
+          "columnsFrom": [
+            "owner_id",
+            "report_id",
+            "catalog_id"
+          ],
+          "columnsTo": [
+            "owner_id",
+            "report_id",
+            "catalog_id"
+          ],
+          "onDelete": "no action",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {
+        "zotero_catalog_papers_owner_id_report_id_catalog_id_paper_id_pk": {
+          "columns": [
+            "owner_id",
+            "report_id",
+            "catalog_id",
+            "paper_id"
+          ],
+          "name": "zotero_catalog_papers_owner_id_report_id_catalog_id_paper_id_pk"
+        }
+      },
+      "uniqueConstraints": {},
+      "checkConstraints": {}
+    },
+    "zotero_encrypted_credentials": {
+      "name": "zotero_encrypted_credentials",
+      "columns": {
+        "owner_id": {
+          "name": "owner_id",
+          "type": "text",
+          "primaryKey": true,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "library_type": {
+          "name": "library_type",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "library_id": {
+          "name": "library_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "key_id": {
+          "name": "key_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "grant_id": {
+          "name": "grant_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "cipher_version": {
+          "name": "cipher_version",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "iv_b64": {
+          "name": "iv_b64",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "ciphertext_b64": {
+          "name": "ciphertext_b64",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "state": {
+          "name": "state",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        }
+      },
+      "indexes": {},
+      "foreignKeys": {
+        "zotero_encrypted_credentials_owner_id_grant_id_zotero_setup_grants_consumed_owner_id_grant_id_fk": {
+          "name": "zotero_encrypted_credentials_owner_id_grant_id_zotero_setup_grants_consumed_owner_id_grant_id_fk",
+          "tableFrom": "zotero_encrypted_credentials",
+          "tableTo": "zotero_setup_grants_consumed",
+          "columnsFrom": [
+            "owner_id",
+            "grant_id"
+          ],
+          "columnsTo": [
+            "owner_id",
+            "grant_id"
+          ],
+          "onDelete": "no action",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "checkConstraints": {
+        "zotero_encrypted_credentials_check_0": {
+          "name": "zotero_encrypted_credentials_check_0",
+          "value": "library_type = 'user'"
+        },
+        "zotero_encrypted_credentials_check_1": {
+          "name": "zotero_encrypted_credentials_check_1",
+          "value": "cipher_version = 'AES-256-GCM.v1'"
+        },
+        "zotero_encrypted_credentials_check_2": {
+          "name": "zotero_encrypted_credentials_check_2",
+          "value": "state = 'encrypted_pending_verification'"
+        }
+      }
+    },
+    "zotero_execution_collections": {
+      "name": "zotero_execution_collections",
+      "columns": {
+        "owner_id": {
+          "name": "owner_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "job_id": {
+          "name": "job_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "path_json": {
+          "name": "path_json",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "depth": {
+          "name": "depth",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "reserved_key": {
+          "name": "reserved_key",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "collection_key": {
+          "name": "collection_key",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "pending_operation": {
+          "name": "pending_operation",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "uncertain": {
+          "name": "uncertain",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false,
+          "default": "0"
+        }
+      },
+      "indexes": {},
+      "foreignKeys": {
+        "zotero_execution_collections_owner_id_job_id_zotero_execution_jobs_owner_id_job_id_fk": {
+          "name": "zotero_execution_collections_owner_id_job_id_zotero_execution_jobs_owner_id_job_id_fk",
+          "tableFrom": "zotero_execution_collections",
+          "tableTo": "zotero_execution_jobs",
+          "columnsFrom": [
+            "owner_id",
+            "job_id"
+          ],
+          "columnsTo": [
+            "owner_id",
+            "job_id"
+          ],
+          "onDelete": "no action",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {
+        "zotero_execution_collections_owner_id_job_id_path_json_pk": {
+          "columns": [
+            "owner_id",
+            "job_id",
+            "path_json"
+          ],
+          "name": "zotero_execution_collections_owner_id_job_id_path_json_pk"
+        }
+      },
+      "uniqueConstraints": {},
+      "checkConstraints": {}
+    },
+    "zotero_execution_items": {
+      "name": "zotero_execution_items",
+      "columns": {
+        "owner_id": {
+          "name": "owner_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "job_id": {
+          "name": "job_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "paper_id": {
+          "name": "paper_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "ordinal": {
+          "name": "ordinal",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "reserved_key": {
+          "name": "reserved_key",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "attachment_reserved_key": {
+          "name": "attachment_reserved_key",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "item_key": {
+          "name": "item_key",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "attachment_key": {
+          "name": "attachment_key",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "status": {
+          "name": "status",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false,
+          "default": "'queued'"
+        },
+        "metadata_saved": {
+          "name": "metadata_saved",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false,
+          "default": "0"
+        },
+        "classification_saved": {
+          "name": "classification_saved",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false,
+          "default": "0"
+        },
+        "existing_item": {
+          "name": "existing_item",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false,
+          "default": "0"
+        },
+        "pdf_verified": {
+          "name": "pdf_verified",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false,
+          "default": "0"
+        },
+        "pdf_proof_json": {
+          "name": "pdf_proof_json",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "pending_operation": {
+          "name": "pending_operation",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "pending_key": {
+          "name": "pending_key",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "uncertain": {
+          "name": "uncertain",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false,
+          "default": "0"
+        },
+        "error_code": {
+          "name": "error_code",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "retryable": {
+          "name": "retryable",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false,
+          "default": "0"
+        },
+        "retry_at": {
+          "name": "retry_at",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "updated_at": {
+          "name": "updated_at",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        }
+      },
+      "indexes": {
+        "zotero_execution_items_pending": {
+          "name": "zotero_execution_items_pending",
+          "columns": [
+            "owner_id",
+            "job_id",
+            "ordinal"
+          ],
+          "isUnique": false
+        }
+      },
+      "foreignKeys": {
+        "zotero_execution_items_owner_id_job_id_zotero_execution_jobs_owner_id_job_id_fk": {
+          "name": "zotero_execution_items_owner_id_job_id_zotero_execution_jobs_owner_id_job_id_fk",
+          "tableFrom": "zotero_execution_items",
+          "tableTo": "zotero_execution_jobs",
+          "columnsFrom": [
+            "owner_id",
+            "job_id"
+          ],
+          "columnsTo": [
+            "owner_id",
+            "job_id"
+          ],
+          "onDelete": "no action",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {
+        "zotero_execution_items_owner_id_job_id_paper_id_pk": {
+          "columns": [
+            "owner_id",
+            "job_id",
+            "paper_id"
+          ],
+          "name": "zotero_execution_items_owner_id_job_id_paper_id_pk"
+        }
+      },
+      "uniqueConstraints": {},
+      "checkConstraints": {}
+    },
+    "zotero_execution_jobs": {
+      "name": "zotero_execution_jobs",
+      "columns": {
+        "owner_id": {
+          "name": "owner_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "job_id": {
+          "name": "job_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "library_type": {
+          "name": "library_type",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "library_id": {
+          "name": "library_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "connection_version": {
+          "name": "connection_version",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "report_id": {
+          "name": "report_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "catalog_id": {
+          "name": "catalog_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "catalog_version": {
+          "name": "catalog_version",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "catalog_sha256": {
+          "name": "catalog_sha256",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "paper_ids_json": {
+          "name": "paper_ids_json",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "pdf_intent": {
+          "name": "pdf_intent",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "state": {
+          "name": "state",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false,
+          "default": "'queued'"
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "updated_at": {
+          "name": "updated_at",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        }
+      },
+      "indexes": {
+        "zotero_execution_jobs_owner_created": {
+          "name": "zotero_execution_jobs_owner_created",
+          "columns": [
+            "owner_id",
+            "\"created_at\" desc"
+          ],
+          "isUnique": false
+        }
+      },
+      "foreignKeys": {
+        "zotero_execution_jobs_owner_id_report_id_catalog_id_catalog_version_zotero_report_catalogs_owner_id_report_id_catalog_id_catalog_version_fk": {
+          "name": "zotero_execution_jobs_owner_id_report_id_catalog_id_catalog_version_zotero_report_catalogs_owner_id_report_id_catalog_id_catalog_version_fk",
+          "tableFrom": "zotero_execution_jobs",
+          "tableTo": "zotero_report_catalogs",
+          "columnsFrom": [
+            "owner_id",
+            "report_id",
+            "catalog_id",
+            "catalog_version"
+          ],
+          "columnsTo": [
+            "owner_id",
+            "report_id",
+            "catalog_id",
+            "catalog_version"
+          ],
+          "onDelete": "no action",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {
+        "zotero_execution_jobs_owner_id_job_id_pk": {
+          "columns": [
+            "owner_id",
+            "job_id"
+          ],
+          "name": "zotero_execution_jobs_owner_id_job_id_pk"
+        }
+      },
+      "uniqueConstraints": {},
+      "checkConstraints": {
+        "zotero_execution_jobs_check_0": {
+          "name": "zotero_execution_jobs_check_0",
+          "value": "library_type = 'user'"
+        },
+        "zotero_execution_jobs_check_1": {
+          "name": "zotero_execution_jobs_check_1",
+          "value": "pdf_intent IN ('metadata_only', 'open_access_if_available')"
+        }
+      }
+    },
+    "zotero_execution_leases": {
+      "name": "zotero_execution_leases",
+      "columns": {
+        "library_id": {
+          "name": "library_id",
+          "type": "text",
+          "primaryKey": true,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "owner_id": {
+          "name": "owner_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "job_id": {
+          "name": "job_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "token": {
+          "name": "token",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "generation": {
+          "name": "generation",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false,
+          "default": "0"
+        },
+        "expires_at": {
+          "name": "expires_at",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false,
+          "default": "0"
+        },
+        "not_before": {
+          "name": "not_before",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false,
+          "default": "0"
+        }
+      },
+      "indexes": {},
+      "foreignKeys": {},
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "checkConstraints": {}
+    },
+    "zotero_import_intents": {
+      "name": "zotero_import_intents",
+      "columns": {
+        "owner_id": {
+          "name": "owner_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "job_id": {
+          "name": "job_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "idempotency_key": {
+          "name": "idempotency_key",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "report_id": {
+          "name": "report_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "catalog_id": {
+          "name": "catalog_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "catalog_version": {
+          "name": "catalog_version",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "catalog_sha256": {
+          "name": "catalog_sha256",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "paper_ids_json": {
+          "name": "paper_ids_json",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "pdf_intent": {
+          "name": "pdf_intent",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "state": {
+          "name": "state",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        }
+      },
+      "indexes": {
+        "zotero_import_intents_owner_created": {
+          "name": "zotero_import_intents_owner_created",
+          "columns": [
+            "owner_id",
+            "\"created_at\" desc"
+          ],
+          "isUnique": false
+        },
+        "zotero_import_intents_owner_id_idempotency_key_unique": {
+          "name": "zotero_import_intents_owner_id_idempotency_key_unique",
+          "columns": [
+            "owner_id",
+            "idempotency_key"
+          ],
+          "isUnique": true
+        }
+      },
+      "foreignKeys": {
+        "zotero_import_intents_owner_id_report_id_catalog_id_catalog_version_zotero_report_catalogs_owner_id_report_id_catalog_id_catalog_version_fk": {
+          "name": "zotero_import_intents_owner_id_report_id_catalog_id_catalog_version_zotero_report_catalogs_owner_id_report_id_catalog_id_catalog_version_fk",
+          "tableFrom": "zotero_import_intents",
+          "tableTo": "zotero_report_catalogs",
+          "columnsFrom": [
+            "owner_id",
+            "report_id",
+            "catalog_id",
+            "catalog_version"
+          ],
+          "columnsTo": [
+            "owner_id",
+            "report_id",
+            "catalog_id",
+            "catalog_version"
+          ],
+          "onDelete": "no action",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {
+        "zotero_import_intents_owner_id_job_id_pk": {
+          "columns": [
+            "owner_id",
+            "job_id"
+          ],
+          "name": "zotero_import_intents_owner_id_job_id_pk"
+        }
+      },
+      "uniqueConstraints": {},
+      "checkConstraints": {
+        "zotero_import_intents_check_0": {
+          "name": "zotero_import_intents_check_0",
+          "value": "pdf_intent IN ('metadata_only', 'open_access_if_available')"
+        },
+        "zotero_import_intents_check_1": {
+          "name": "zotero_import_intents_check_1",
+          "value": "state IN ('blocked_connection', 'preview_only')"
+        }
+      }
+    },
+    "zotero_report_catalogs": {
+      "name": "zotero_report_catalogs",
+      "columns": {
+        "owner_id": {
+          "name": "owner_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "report_id": {
+          "name": "report_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "catalog_id": {
+          "name": "catalog_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "catalog_version": {
+          "name": "catalog_version",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "content_sha256": {
+          "name": "content_sha256",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "enabled": {
+          "name": "enabled",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false,
+          "default": "0"
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "catalog_blob_json": {
+          "name": "catalog_blob_json",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "report_sha256": {
+          "name": "report_sha256",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "report_day": {
+          "name": "report_day",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "personal_scope": {
+          "name": "personal_scope",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "source_catalog_sha256": {
+          "name": "source_catalog_sha256",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "registration_sha256": {
+          "name": "registration_sha256",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        }
+      },
+      "indexes": {
+        "zotero_report_catalogs_owner_id_report_id_catalog_id_catalog_version_unique": {
+          "name": "zotero_report_catalogs_owner_id_report_id_catalog_id_catalog_version_unique",
+          "columns": [
+            "owner_id",
+            "report_id",
+            "catalog_id",
+            "catalog_version"
+          ],
+          "isUnique": true
+        }
+      },
+      "foreignKeys": {},
+      "compositePrimaryKeys": {
+        "zotero_report_catalogs_owner_id_report_id_catalog_id_pk": {
+          "columns": [
+            "owner_id",
+            "report_id",
+            "catalog_id"
+          ],
+          "name": "zotero_report_catalogs_owner_id_report_id_catalog_id_pk"
+        }
+      },
+      "uniqueConstraints": {},
+      "checkConstraints": {
+        "zotero_report_catalogs_check_0": {
+          "name": "zotero_report_catalogs_check_0",
+          "value": "catalog_version > 0"
+        },
+        "zotero_report_catalogs_check_1": {
+          "name": "zotero_report_catalogs_check_1",
+          "value": "length(content_sha256) = 64"
+        },
+        "zotero_report_catalogs_check_2": {
+          "name": "zotero_report_catalogs_check_2",
+          "value": "enabled IN (0, 1)"
+        }
+      }
+    },
+    "zotero_setup_grants_consumed": {
+      "name": "zotero_setup_grants_consumed",
+      "columns": {
+        "owner_id": {
+          "name": "owner_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "grant_id": {
+          "name": "grant_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "used_at": {
+          "name": "used_at",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        }
+      },
+      "indexes": {},
+      "foreignKeys": {},
+      "compositePrimaryKeys": {
+        "zotero_setup_grants_consumed_owner_id_grant_id_pk": {
+          "columns": [
+            "owner_id",
+            "grant_id"
+          ],
+          "name": "zotero_setup_grants_consumed_owner_id_grant_id_pk"
+        }
+      },
+      "uniqueConstraints": {},
+      "checkConstraints": {}
+    }
+  },
+  "views": {},
+  "enums": {},
+  "_meta": {
+    "schemas": {},
+    "tables": {},
+    "columns": {}
+  },
+  "internal": {
+    "indexes": {
+      "zotero_execution_jobs_owner_created": {
+        "columns": {
+          "\"created_at\" desc": {
+            "isExpression": true
+          }
+        }
+      },
+      "zotero_import_intents_owner_created": {
+        "columns": {
+          "\"created_at\" desc": {
+            "isExpression": true
+          }
+        }
+      }
+    }
+  }
+}

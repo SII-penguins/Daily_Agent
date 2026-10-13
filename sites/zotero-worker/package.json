@@ -1,0 +1,15 @@
+{
+  "name": "daily-agent-zotero-disconnected-reference",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Owner-only Worker/D1 Zotero manager with gated transport and durable selected-paper imports; disconnected by default.",
+  "scripts": {
+    "test": "node --test test/*.test.mjs hosting-adapter/*.test.mjs",
+    "check": "node --check worker/index.js && node --test test/*.test.mjs hosting-adapter/*.test.mjs",
+    "build": "node scripts/build.mjs"
+  },
+  "engines": {
+    "node": ">=24"
+  }
+}

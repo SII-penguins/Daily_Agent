@@ -1,0 +1,19 @@
+{
+  "version": 1,
+  "migrations": [
+    {
+      "source": "0001_zotero_reference.sql",
+      "output": "0000_0001_zotero_reference.sql",
+      "source_sha256": "ab1a722ced56e8b5a6cbd627a4bb58e8373f64399cf3ce2cb49b80d3761c6a41",
+      "output_sha256": "3695758ed55c01dacd00ec4cdbc16a312060474fc13ac5cf66eac84f6cbd0a6b",
+      "statement_count": 7
+    },
+    {
+      "source": "0002_zotero_execution.sql",
+      "output": "0001_0002_zotero_execution.sql",
+      "source_sha256": "350834dadb23de014821ada28ed28ddfbd968a320e62284f7c4f8946e06f92dc",
+      "output_sha256": "a639806026498b9af805413df8f094fdd6abd696f3852ab3bf341378fba5e266",
+      "statement_count": 13
+    }
+  ]
+}
