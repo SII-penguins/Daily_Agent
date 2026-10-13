@@ -93,7 +93,7 @@ DAILY_AGENT_DISABLE_EXTERNAL_SECRETS=1 python -m daily_agent.cli quality check \
 
 凭证放在环境变量或项目外部 secret 文件，不提交到 YAML。可选集成使用 `GITHUB_TOKEN`、`SEMANTIC_SCHOLAR_API_KEY`、`SERPAPI_API_KEY`、`CORE_API_KEY`、`IEEE_XPLORE_API_KEY` 和 `UNPAYWALL_EMAIL`；飞书另有凭证。[本地参考](docs/local-guide.zh-CN.md#配置)说明模板、优先级和缺失凭证的处理。云端运行使用 `DAILY_AGENT_DISABLE_EXTERNAL_SECRETS=1`，避免导入旧本地凭证。
 
-Set topics, quotas, timezone, schedules and delivery in your private runtime configuration. Repository defaults are illustrative; no production acceptance or installed schedule is implied.
+在独立的私人运行目录配置主题、配额、时区、调度和投递。公开仓库中的参数仅作示例，不代表已安装调度或完成生产验收。
 
 ## 文档地图
 
@@ -119,7 +119,7 @@ docs/              使用指南、技术约定与带日期的验收记录
 
 运行产物 `data/`、`reports/`、`logs/`、`tmp/` 已被 Git 忽略，不等于自动备份；可变状态与源码应分别保存。本地反馈服务监听 `127.0.0.1`。私有归档访问控制和发布属于部署责任，静态 HTML 本身不保证私密性。尊重信源访问限制，缺失证据保持可见。
 
-Set topics, quotas, timezone, schedules and delivery in your private runtime configuration. Repository defaults are illustrative; no production acceptance or installed schedule is implied.
+在独立的私人运行目录配置主题、配额、时区、调度和投递。公开仓库中的参数仅作示例，不代表已安装调度或完成生产验收。
 
 ## 许可
 
@@ -127,4 +127,4 @@ Set topics, quotas, timezone, schedules and delivery in your private runtime con
 
 ## GitHub 持久化与恢复
 
-Public code, documentation and synthetic examples belong here. Personal reports and non-secret runtime configuration belong in a separate private repository. Never publish personal reports to this repository or its branches. See [repository separation](docs/github-persistence.md).
+本公开仓库仅存通用代码、文档和明确标注的合成示例。个人日报及不含密钥的专用运行配置存入独立私有仓库，不能上传到本仓库的任何分支。详见[双仓库分离说明](docs/github-persistence.md)。

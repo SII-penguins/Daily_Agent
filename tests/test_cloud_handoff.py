@@ -162,6 +162,12 @@ def test_recipe_section_is_method_evidence_not_automatic_acceptance():
 def test_issue_date_defaults_to_configured_timezone(cloud,monkeypatch):
     import daily_agent.cloud_workflow as workflow
     from datetime import datetime,timezone
+    # The public example timezone is independent of this timezone-boundary test.
+    import yaml
+    path = cloud / 'config' / 'delivery.yaml'
+    config = yaml.safe_load(path.read_text())
+    config['report']['timezone'] = 'Asia/Shanghai'
+    path.write_text(yaml.safe_dump(config))
     monkeypatch.setattr(workflow,'_clock',lambda:datetime(2026,10,7,16,10,tzinfo=timezone.utc))
     assert workflow._local_day(cloud)==date(2026,10,8)
 

@@ -28,8 +28,6 @@ Private deployment and trial details are retained in private operational records
 
 Private deployment and trial details are retained in private operational records. Offline validation does not establish production delivery.
 
-Private deployment and trial details are retained in private operational records. Offline validation does not establish production delivery.
-
 ## 2026-10-02 — Reading recovery
 
 - Full-text retrieval followed explicit PDF metadata on landing pages and retried abstract/partial caches. Parser upgrades first reused hash-verified PDFs.

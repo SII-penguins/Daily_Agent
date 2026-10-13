@@ -16,11 +16,11 @@ def test_build_schedule_jobs_uses_delivery_schedule_times(tmp_path):
     config.delivery["schedule"]["production_time"] = "03:17"
     config.delivery["schedule"]["review_time"] = "07:21"
     config.delivery["schedule"]["target_time"] = "08:23"
+    config.delivery['schedule']['delivery_time'] = '07:50'
 
     jobs = build_schedule_jobs(config)
 
     assert [job.name for job in jobs] == ["overnight-dry-run", "morning-review-checkpoint", "formal-feishu-delivery"]
-    config.delivery['schedule']['delivery_time'] = '07:50'
     assert [job.time.cron for job in jobs] == ['17 3 * * *', '21 7 * * *', '50 7 * * *']
     for job, stage in zip(jobs, ['overnight', 'review', 'delivery']):
         assert f'--stage {stage}' in job.command
@@ -129,6 +129,7 @@ def test_ready_delivery_uses_sealed_issue_and_is_idempotent(tmp_path, monkeypatc
     from daily_agent.models import MaterialRecord, ApprovedItem, DeliveryStatus
     cfg = load_config()
     object.__setattr__(cfg, 'root', tmp_path)
+    cfg.delivery['delivery']['cc_connect']['enabled'] = True  # Mocked delivery fixture.
     cfg.delivery['schedule']['recovery']['require_target_counts'] = False
     day = date(2026, 9, 30)
     cfg.reports_dir.mkdir(parents=True)

@@ -122,7 +122,7 @@ Public code, documentation and synthetic examples belong here. Personal reports 
 
 Runtime `data/`, `reports/`, `logs/` and `tmp/` are ignored by Git. They are not automatically backed up; preserve mutable state separately from source code. Local feedback listens on `127.0.0.1`. Private archive access and publication are deployment responsibilities, not guarantees provided by static HTML. Respect source access restrictions; missing evidence stays visible.
 
-Set topics, quotas, timezone, schedules and delivery in your private runtime configuration. Repository defaults are illustrative; no production acceptance or installed schedule is implied.
+Offline tests verify implementation contracts. Validate unattended generation and delivery separately in the private deployment.
 
 ## License
 
