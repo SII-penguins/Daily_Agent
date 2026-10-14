@@ -12,7 +12,7 @@ class Element{
 }
 const tick=()=>new Promise(resolve=>setImmediate(resolve));
 async function harness(){
-  const elements=new Map(['panel','status','save','refresh','retry','results'].map(id=>['da-z-'+id,new Element()]));elements.get('da-z-panel').dataset.issue='synthetic-issue';
+  const elements=new Map(['panel','status','save','refresh','retry','results','close','toggle','count'].map(id=>['da-z-'+id,new Element()]));elements.get('da-z-panel').dataset.issue='synthetic-issue';
   const choices=[1,2].map(n=>{const e=new Element();e.dataset.daZPaper='paper-'+n;return e;}),radios=['metadata_only','open_access_if_available'].map(value=>{const e=new Element();e.value=value;return e;}),labels=[1,2].map(n=>{const e=new Element();e.dataset.daZResult='paper-'+n;return e;});
   const pdfLabels=[1,2].map(n=>{const e=new Element();e.dataset.daZPdf='paper-'+n;return e;});
   const calls=[],info={live_ready:true,projection_sha256:'a'.repeat(64),connection_version:7,papers:[1,2].map(n=>({paper_id:'paper-'+n,title:'Synthetic title '+n}))};
@@ -99,4 +99,16 @@ test('late pre-hide read cannot replace the restored page status or resume any m
   const h=await harness();let finish;h.setReadDelay(new Promise(r=>finish=r));const oldRefresh=h.get('refresh').emit('click');await tick();
   await h.emitWindow('pagehide',{persisted:true});await h.emitWindow('pageshow',{persisted:true});const status=h.get('status').textContent;
   finish();await oldRefresh;assert.equal(h.get('status').textContent,status);assert.ok(h.calls.every(c=>c.method==='GET'));assert.equal(h.get('refresh').disabled,false);
+});
+
+test('collapsed controls count selection and close without importing',async()=>{
+ const h=await harness();assert.equal(h.get('count').textContent,'0');
+ h.choices[0].checked=true;await h.choices[0].emit('change');assert.equal(h.get('count').textContent,'1');
+ h.get('panel').open=true;await h.get('close').emit('click');assert.equal(h.get('panel').open,false);
+ assert.ok(h.calls.every(c=>c.method==='GET'));assert.equal(h.get('save').disabled,true);
+});
+test('Escape collapses without a save or loss of selections',async()=>{
+ const h=await harness();h.choices[0].checked=true;h.get('panel').open=true;
+ h.get('panel').listeners.keydown({key:'Escape',preventDefault(){}});
+ assert.equal(h.get('panel').open,false);assert.equal(h.choices[0].checked,true);assert.ok(h.calls.every(c=>c.method==='GET'));
 });
